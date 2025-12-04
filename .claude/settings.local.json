@@ -7,7 +7,8 @@
       "Read(//Users/efitz/Projects/**)",
       "Bash(mkdir:*)",
       "Bash(uv sync:*)",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "Bash(wc:*)"
     ],
     "deny": [],
     "ask": []
