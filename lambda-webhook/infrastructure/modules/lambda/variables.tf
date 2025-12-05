@@ -93,6 +93,18 @@ variable "canary_weight" {
   type        = number
 }
 
+variable "llm_provider" {
+  description = "LLM provider (anthropic, xai, or gemini)"
+  type        = string
+  default     = "anthropic"
+}
+
+variable "llm_model" {
+  description = "LLM model name (optional, uses provider default if not specified)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

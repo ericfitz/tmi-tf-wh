@@ -29,10 +29,23 @@ class LambdaConfig:
         self.tmi_server_url: str = os.getenv("TMI_SERVER_URL", "https://api.tmi.dev")
         self.tmi_oauth_idp: str = "google"  # Not used for client credentials
 
-        # Claude API Configuration
-        self.anthropic_api_key: str = secrets.get('anthropic_api_key', '')
-        if not self.anthropic_api_key:
-            raise ValueError("anthropic_api_key not found in Secrets Manager")
+        # LLM Provider Configuration
+        self.llm_provider: str = os.getenv('LLM_PROVIDER', 'anthropic')  # anthropic, xai, or gemini
+        self.llm_model: Optional[str] = os.getenv('LLM_MODEL')  # Optional model override
+
+        # Anthropic (Claude) API Configuration
+        self.anthropic_api_key: Optional[str] = secrets.get('anthropic_api_key')
+
+        # x.ai (Grok) API Configuration
+        self.xai_api_key: Optional[str] = secrets.get('xai_api_key')
+
+        # Google Cloud (Gemini) Configuration
+        self.gcp_service_account_key: Optional[str] = secrets.get('gcp_service_account_key')
+        self.gcp_project_id: Optional[str] = secrets.get('gcp_project_id')
+        self.gcp_location: str = secrets.get('gcp_location', 'us-central1')
+
+        # Validate that required credentials exist for selected provider
+        self._validate_llm_credentials()
 
         # GitHub API Configuration (optional)
         self.github_token: Optional[str] = secrets.get('github_token')
@@ -83,10 +96,30 @@ class LambdaConfig:
             logger.error(f"Failed to load configuration: {e}")
             raise
 
+    def _validate_llm_credentials(self):
+        """Validate that required credentials exist for the selected LLM provider."""
+        if self.llm_provider == 'anthropic':
+            if not self.anthropic_api_key:
+                raise ValueError("anthropic_api_key required when LLM_PROVIDER=anthropic")
+        elif self.llm_provider == 'xai':
+            if not self.xai_api_key:
+                raise ValueError("xai_api_key required when LLM_PROVIDER=xai")
+        elif self.llm_provider == 'gemini':
+            if not self.gcp_service_account_key:
+                raise ValueError("gcp_service_account_key required when LLM_PROVIDER=gemini")
+            if not self.gcp_project_id:
+                raise ValueError("gcp_project_id required when LLM_PROVIDER=gemini")
+        else:
+            raise ValueError(
+                f"Invalid LLM_PROVIDER: {self.llm_provider}. "
+                f"Must be 'anthropic', 'xai', or 'gemini'"
+            )
+
     def __repr__(self) -> str:
         """Return string representation of config (without secrets)."""
         return (
-            f"LambdaConfig(tmi_server_url={self.tmi_server_url}, "
-            f"max_repos={self.max_repos}, "
-            f"github_token={'***' if self.github_token else 'None'})"
+            f"LambdaConfig(llm_provider={self.llm_provider}, "
+            f"llm_model={self.llm_model or 'default'}, "
+            f"tmi_server_url={self.tmi_server_url}, "
+            f"max_repos={self.max_repos})"
         )

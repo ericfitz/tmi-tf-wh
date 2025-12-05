@@ -138,6 +138,25 @@ variable "canary_weight" {
   }
 }
 
+# LLM Configuration
+
+variable "llm_provider" {
+  description = "LLM provider for analysis (anthropic, xai, or gemini)"
+  type        = string
+  default     = "anthropic"
+
+  validation {
+    condition     = contains(["anthropic", "xai", "gemini"], var.llm_provider)
+    error_message = "LLM provider must be anthropic, xai, or gemini"
+  }
+}
+
+variable "llm_model" {
+  description = "LLM model name (optional - uses provider default if empty)"
+  type        = string
+  default     = ""
+}
+
 # Feature Flags
 
 variable "enable_xray_tracing" {

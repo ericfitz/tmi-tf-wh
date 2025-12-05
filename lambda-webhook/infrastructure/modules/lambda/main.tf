@@ -246,6 +246,8 @@ resource "aws_lambda_function" "analyzer" {
       TMI_SERVER_URL  = var.tmi_server_url
       SECRETS_ARN     = var.secrets_manager_arn
       ENVIRONMENT     = var.environment
+      LLM_PROVIDER    = var.llm_provider
+      LLM_MODEL       = var.llm_model
     }
   }
 

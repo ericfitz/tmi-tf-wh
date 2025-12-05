@@ -104,6 +104,8 @@ module "lambda" {
   enable_xray_tracing                 = var.enable_xray_tracing
   enable_canary                       = var.enable_canary
   canary_weight                       = var.canary_weight
+  llm_provider                        = var.llm_provider
+  llm_model                           = var.llm_model
 
   tags = local.common_tags
 }

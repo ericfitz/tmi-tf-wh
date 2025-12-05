@@ -37,11 +37,14 @@ from lambda_auth import LambdaOAuthClient
 from lambda_config import LambdaConfig
 from lambda_markdown import generate_webhook_report, generate_error_report
 
-# Import original tmi_tf modules (these will be copied/symlinked during deployment)
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+# Import original tmi_tf modules (copied into analyzer directory)
 from tmi_tf.tmi_client_wrapper import TMIClient
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
+
+# Import all LLM analyzers
 from tmi_tf.claude_analyzer import ClaudeAnalyzer
+from xai_analyzer import XaiAnalyzer
+from gemini_analyzer import GeminiAnalyzer
 
 # Initialize AWS clients
 dynamodb = boto3.client('dynamodb')
@@ -122,22 +125,43 @@ def analyze_repository(
 
         logger.info(f"Found {len(tf_repo.terraform_files)} Terraform files")
 
-        # Analyze with Claude
-        claude = ClaudeAnalyzer(config)
-        analysis_result = claude.analyze_repository(tf_repo)
+        # Select LLM analyzer based on provider
+        logger.info(f"Using LLM provider: {config.llm_provider}")
+        if config.llm_provider == 'anthropic':
+            llm_analyzer = ClaudeAnalyzer(config)
+        elif config.llm_provider == 'xai':
+            llm_analyzer = XaiAnalyzer(config)
+        elif config.llm_provider == 'gemini':
+            llm_analyzer = GeminiAnalyzer(config)
+        else:
+            raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")
 
-        if not analysis_result or not analysis_result.analysis:
-            raise ValueError("Claude analysis returned empty result")
+        # Analyze repository
+        analysis_result = llm_analyzer.analyze_repository(tf_repo)
 
-        logger.info("Claude analysis completed successfully")
+        if not analysis_result or not analysis_result.get('analysis'):
+            raise ValueError("LLM analysis returned empty result")
+
+        logger.info(
+            f"LLM analysis completed: {analysis_result.get('input_tokens', 0)} input tokens, "
+            f"{analysis_result.get('output_tokens', 0)} output tokens, "
+            f"cost: ${analysis_result.get('total_cost', 0):.4f}"
+        )
 
         # Generate markdown report with webhook metadata
         markdown = generate_webhook_report(
             threat_model_id=threat_model_id,
             repository=repository,
-            analysis_content=analysis_result.analysis,
+            analysis_content=analysis_result.get('analysis', ''),
             webhook_metadata=webhook_metadata,
-            lambda_request_id=lambda_request_id
+            lambda_request_id=lambda_request_id,
+            llm_metadata={
+                'provider': analysis_result.get('provider', config.llm_provider),
+                'model': analysis_result.get('model', 'unknown'),
+                'input_tokens': analysis_result.get('input_tokens', 0),
+                'output_tokens': analysis_result.get('output_tokens', 0),
+                'total_cost': analysis_result.get('total_cost', 0.0)
+            }
         )
 
         # Create or update note in TMI
