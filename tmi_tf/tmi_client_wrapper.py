@@ -20,7 +20,6 @@ from tmi_client.api_client import ApiClient  # noqa: E402
 from tmi_client.configuration import Configuration  # noqa: E402
 from tmi_client.models import (  # noqa: E402
     CreateDiagramRequest,
-    DfdDiagramInput,
     DiagramListItem,
     Note,
     NoteInput,
@@ -312,7 +311,7 @@ class TMIClient:
         self, threat_model_id: str, diagram_id: str, cells: List[dict]
     ) -> dict:
         """
-        Update diagram with cells.
+        Update diagram with cells using JSON Patch.
 
         Args:
             threat_model_id: Threat model UUID
@@ -326,15 +325,18 @@ class TMIClient:
             f"Updating diagram {diagram_id} with {len(cells)} cells in threat model {threat_model_id}"
         )
         try:
-            # Create DfdDiagramInput object for update
-            dfd_diagram_input = DfdDiagramInput(
-                type="DFD-1.0.0",
-                name="Infrastructure Data Flow Diagram",
-                cells=cells,
-            )
+            # Use JSON Patch to update the cells field
+            # JSON Patch operation: replace the /cells path with new cells
+            patch_operations = [
+                {
+                    "op": "replace",
+                    "path": "/cells",
+                    "value": cells
+                }
+            ]
 
-            diagram = self.sub_resources_api.update_threat_model_diagram(
-                dfd_diagram_input, threat_model_id, diagram_id
+            diagram = self.sub_resources_api.patch_threat_model_diagram(
+                patch_operations, threat_model_id, diagram_id
             )
             logger.info("Diagram updated successfully")
             return diagram.to_dict()
