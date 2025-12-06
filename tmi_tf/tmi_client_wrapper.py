@@ -232,7 +232,7 @@ class TMIClient:
 
             note_input = NoteInput(name=name, content=sanitized_content, description=sanitized_description)
             note = self.sub_resources_api.update_threat_model_note(
-                threat_model_id, note_id, note_input
+                note_input, threat_model_id, note_id
             )
             logger.info("Note updated successfully")
             return note
