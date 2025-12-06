@@ -12,6 +12,7 @@ from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
+from tmi_tf.threat_processor import ThreatProcessor
 from tmi_tf.tmi_client_wrapper import TMIClient
 
 # Configure logging
@@ -59,6 +60,11 @@ def cli():
     is_flag=True,
     help="Skip generating data flow diagram",
 )
+@click.option(
+    "--skip-threats",
+    is_flag=True,
+    help="Skip extracting and creating threat objects from security issues",
+)
 def analyze(
     threat_model_id: str,
     max_repos: int,
@@ -67,6 +73,7 @@ def analyze(
     force_auth: bool,
     verbose: bool,
     skip_diagram: bool,
+    skip_threats: bool,
 ):
     """
     Analyze Terraform repositories for a threat model.
@@ -239,6 +246,61 @@ def analyze(
 
         elif skip_diagram:
             logger.info("\n[8/7] Skipping diagram generation (--skip-diagram)")
+
+        # Create threats from security issues
+        if not skip_threats and not dry_run:
+            logger.info(
+                "\n[9/7] Extracting and creating threats from security issues..."
+            )
+            try:
+                threat_processor = ThreatProcessor(config)
+                all_threats = []
+
+                # Extract threats from each successful analysis
+                for analysis in analyses:
+                    if analysis.success:
+                        threats = threat_processor.extract_threats_from_analysis(
+                            analysis.analysis_content, analysis.repo_name
+                        )
+                        all_threats.extend(threats)
+
+                logger.info(f"Extracted {len(all_threats)} total threats from analyses")
+
+                if all_threats:
+                    # Get diagram_id if diagram was created
+                    diagram_id = None
+                    if not skip_diagram:
+                        try:
+                            existing_diagram = tmi_client.find_diagram_by_name(
+                                threat_model_id, config.diagram_name
+                            )
+                            if existing_diagram:
+                                diagram_id = existing_diagram.id
+                        except Exception as e:
+                            logger.warning(f"Could not get diagram ID: {e}")
+
+                    # Create threats in TMI
+                    created_threats = threat_processor.create_threats_in_tmi(
+                        threats=all_threats,
+                        threat_model_id=threat_model_id,
+                        tmi_client=tmi_client,
+                        diagram_id=diagram_id,
+                    )
+                    logger.info(
+                        f"Successfully created {len(created_threats)} threats in TMI"
+                    )
+                else:
+                    logger.info("No threats extracted from analyses")
+
+            except Exception as e:
+                # Don't fail the entire analysis if threat creation fails
+                logger.error(f"Failed to create threats: {e}")
+                logger.info("Continuing without threat creation...")
+
+        elif skip_threats:
+            logger.info("\n[9/7] Skipping threat creation (--skip-threats)")
+        elif dry_run:
+            logger.info("\n[9/7] Dry run - skipping threat creation")
 
         logger.info("\n" + "=" * 80)
         logger.info("Analysis complete!")

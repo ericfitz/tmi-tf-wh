@@ -24,6 +24,7 @@ from tmi_client.models import (  # noqa: E402
     Note,
     NoteInput,
     Repository,
+    ThreatInput,
     ThreatModel,
 )
 
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 def sanitize_content_for_api(content: str) -> str:
     """
-    Sanitize content to match TMI API pattern: ^[\u0020-\uFFFF\n\r\t]*$
+    Sanitize content to match TMI API pattern: ^[\u0020-\uffff\n\r\t]*$
 
     This removes:
     - Control characters (U+0000-U+001F) except \n, \r, \t
@@ -61,9 +62,9 @@ def sanitize_content_for_api(content: str) -> str:
         if 0x0020 <= code <= 0xFFFF:
             return char
         # Replace everything else with space
-        return ' '
+        return " "
 
-    sanitized = ''.join(char_filter(c) for c in content)
+    sanitized = "".join(char_filter(c) for c in content)
     return sanitized
 
 
@@ -172,9 +173,13 @@ class TMIClient:
         try:
             # Sanitize content to match API requirements
             sanitized_content = sanitize_content_for_api(content)
-            sanitized_description = sanitize_content_for_api(description) if description else description
+            sanitized_description = (
+                sanitize_content_for_api(description) if description else description
+            )
 
-            note_input = NoteInput(name=name, content=sanitized_content, description=sanitized_description)
+            note_input = NoteInput(
+                name=name, content=sanitized_content, description=sanitized_description
+            )
             note = self.sub_resources_api.create_threat_model_note(
                 note_input, threat_model_id
             )
@@ -228,9 +233,13 @@ class TMIClient:
         try:
             # Sanitize content to match API requirements
             sanitized_content = sanitize_content_for_api(content)
-            sanitized_description = sanitize_content_for_api(description) if description else description
+            sanitized_description = (
+                sanitize_content_for_api(description) if description else description
+            )
 
-            note_input = NoteInput(name=name, content=sanitized_content, description=sanitized_description)
+            note_input = NoteInput(
+                name=name, content=sanitized_content, description=sanitized_description
+            )
             note = self.sub_resources_api.update_threat_model_note(
                 note_input, threat_model_id, note_id
             )
@@ -327,13 +336,7 @@ class TMIClient:
         try:
             # Use JSON Patch to update the cells field
             # JSON Patch operation: replace the /cells path with new cells
-            patch_operations = [
-                {
-                    "op": "replace",
-                    "path": "/cells",
-                    "value": cells
-                }
-            ]
+            patch_operations = [{"op": "replace", "path": "/cells", "value": cells}]
 
             diagram = self.sub_resources_api.patch_threat_model_diagram(
                 patch_operations, threat_model_id, diagram_id
@@ -404,3 +407,53 @@ class TMIClient:
             logger.info(f"Creating new diagram '{name}'...")
             diagram_id = self.create_diagram(threat_model_id, name)
             return self.update_diagram_cells(threat_model_id, diagram_id, cells)
+
+    def create_threat(
+        self,
+        threat_model_id: str,
+        name: str,
+        threat_type: str,
+        description: str = None,
+        mitigation: str = None,
+        severity: str = None,
+        status: str = None,
+        diagram_id: str = None,
+        cell_id: str = None,
+    ) -> dict:
+        """
+        Create a new threat in a threat model.
+
+        Args:
+            threat_model_id: Threat model UUID
+            name: Threat name (required)
+            threat_type: Type or category of the threat (required)
+            description: Description of the threat and risk
+            mitigation: Recommended or planned mitigation(s)
+            severity: Severity level (e.g., Critical, High, Medium, Low)
+            status: Current status (e.g., Open, In Progress, Resolved)
+            diagram_id: Associated diagram UUID
+            cell_id: Associated cell UUID in the diagram
+
+        Returns:
+            Created Threat object as dict
+        """
+        logger.info(f"Creating threat '{name}' in threat model {threat_model_id}")
+        try:
+            threat_input = ThreatInput(
+                name=name,
+                threat_type=threat_type,
+                description=description,
+                mitigation=mitigation,
+                severity=severity,
+                status=status,
+                diagram_id=diagram_id,
+                cell_id=cell_id,
+            )
+            threat = self.sub_resources_api.create_threat_model_threat(
+                threat_input, threat_model_id
+            )
+            logger.info(f"Threat created successfully with ID: {threat.id}")
+            return threat.to_dict()
+        except Exception as e:
+            logger.error(f"Failed to create threat: {e}")
+            raise
