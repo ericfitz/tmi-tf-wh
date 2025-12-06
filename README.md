@@ -252,12 +252,6 @@ This is a proof-of-concept tool. Potential improvements:
 
 Apache License 2.0 - See LICENSE file
 
-## Acknowledgments
-
-- **TMI**: Threat modeling platform (https://github.com/xvnpw/tmi)
-- **Anthropic**: Claude AI API
-- **OpenAI**: Inspiration from infrastructure analysis tools
-
 ## Support
 
 For issues and questions:
