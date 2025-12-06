@@ -34,6 +34,40 @@ from tmi_tf.config import Config  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+def sanitize_content_for_api(content: str) -> str:
+    """
+    Sanitize content to match TMI API pattern: ^[\u0020-\uFFFF\n\r\t]*$
+
+    This removes:
+    - Control characters (U+0000-U+001F) except \n, \r, \t
+    - Characters above U+FFFF (emoji and supplementary Unicode)
+
+    Args:
+        content: Raw content string
+
+    Returns:
+        Sanitized content string that matches API requirements
+    """
+    if not content:
+        return content
+
+    # Replace characters outside the allowed range
+    # Keep: U+0020-U+FFFF, \n (U+000A), \r (U+000D), \t (U+0009)
+    def char_filter(char: str) -> str:
+        code = ord(char)
+        # Allow newline, carriage return, tab
+        if code in (0x0A, 0x0D, 0x09):
+            return char
+        # Allow space through U+FFFF
+        if 0x0020 <= code <= 0xFFFF:
+            return char
+        # Replace everything else with space
+        return ' '
+
+    sanitized = ''.join(char_filter(c) for c in content)
+    return sanitized
+
+
 class TMIClient:
     """Wrapper around TMI API client with authentication."""
 
@@ -137,7 +171,11 @@ class TMIClient:
         """
         logger.info(f"Creating note '{name}' in threat model {threat_model_id}")
         try:
-            note_input = NoteInput(name=name, content=content, description=description)
+            # Sanitize content to match API requirements
+            sanitized_content = sanitize_content_for_api(content)
+            sanitized_description = sanitize_content_for_api(description) if description else description
+
+            note_input = NoteInput(name=name, content=sanitized_content, description=sanitized_description)
             note = self.sub_resources_api.create_threat_model_note(
                 note_input, threat_model_id
             )
@@ -189,7 +227,11 @@ class TMIClient:
         """
         logger.info(f"Updating note {note_id} in threat model {threat_model_id}")
         try:
-            note_input = NoteInput(name=name, content=content, description=description)
+            # Sanitize content to match API requirements
+            sanitized_content = sanitize_content_for_api(content)
+            sanitized_description = sanitize_content_for_api(description) if description else description
+
+            note_input = NoteInput(name=name, content=sanitized_content, description=sanitized_description)
             note = self.sub_resources_api.update_threat_model_note(
                 threat_model_id, note_id, note_input
             )
