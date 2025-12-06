@@ -1,6 +1,7 @@
 """Claude AI integration for Terraform analysis."""
 
 import logging
+import time
 from pathlib import Path
 
 from anthropic import Anthropic
@@ -15,7 +16,14 @@ class TerraformAnalysis:
     """Result of Terraform analysis."""
 
     def __init__(
-        self, repo_name: str, repo_url: str, analysis_content: str, success: bool = True
+        self,
+        repo_name: str,
+        repo_url: str,
+        analysis_content: str,
+        success: bool = True,
+        elapsed_time: float = 0.0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
     ):
         """
         Initialize analysis result.
@@ -25,11 +33,17 @@ class TerraformAnalysis:
             repo_url: Repository URL
             analysis_content: Analysis markdown content from Claude
             success: Whether analysis was successful
+            elapsed_time: Time taken for analysis in seconds
+            input_tokens: Number of input tokens sent to LLM
+            output_tokens: Number of output tokens received from LLM
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
         self.analysis_content = analysis_content
         self.success = success
+        self.elapsed_time = elapsed_time
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
     def __repr__(self) -> str:
         """Return string representation."""
@@ -170,6 +184,8 @@ Provide a mermaid diagram showing the architecture and relationships between com
 
             # Call Claude API
             logger.info(f"Sending request to Claude ({self.model})...")
+            start_time = time.time()
+
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=16000,
@@ -177,10 +193,15 @@ Provide a mermaid diagram showing the architecture and relationships between com
                 messages=[{"role": "user", "content": user_prompt}],
             )
 
+            elapsed_time = time.time() - start_time
+
             analysis_content = response.content[0].text
+            input_tokens = response.usage.input_tokens
+            output_tokens = response.usage.output_tokens
+
             logger.info(
-                f"Analysis complete. Output tokens: {response.usage.output_tokens}, "
-                f"Input tokens: {response.usage.input_tokens}"
+                f"Analysis complete in {elapsed_time:.2f}s. "
+                f"Input tokens: {input_tokens}, Output tokens: {output_tokens}"
             )
 
             return TerraformAnalysis(
@@ -188,6 +209,9 @@ Provide a mermaid diagram showing the architecture and relationships between com
                 repo_url=terraform_repo.url,
                 analysis_content=analysis_content,
                 success=True,
+                elapsed_time=elapsed_time,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
             )
 
         except Exception as e:
