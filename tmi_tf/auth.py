@@ -1,7 +1,10 @@
 """Authentication module for TMI OAuth flow."""
 
+import base64
+import hashlib
 import json
 import logging
+import secrets
 import webbrowser
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -116,6 +119,9 @@ class TMIAuthenticator:
         self.token_cache = TokenCache(config.token_cache_file)
         self.callback_port = 8888
         self.redirect_uri = f"http://localhost:{self.callback_port}/callback"
+        # PKCE state
+        self.code_verifier: Optional[str] = None
+        self.code_challenge: Optional[str] = None
 
     def get_token(self, force_refresh: bool = False) -> str:
         """
@@ -135,13 +141,34 @@ class TMIAuthenticator:
         logger.info("Starting OAuth authentication flow")
         return self._perform_oauth_flow()
 
+    def _generate_pkce_params(self):
+        """Generate PKCE code verifier and challenge."""
+        # Generate a cryptographically random code verifier
+        # Must be 43-128 characters from [A-Z, a-z, 0-9, -, ., _, ~]
+        self.code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(
+            "utf-8"
+        )
+        # Remove padding
+        self.code_verifier = self.code_verifier.rstrip("=")
+
+        # Generate code challenge using S256 method
+        challenge_bytes = hashlib.sha256(self.code_verifier.encode("utf-8")).digest()
+        self.code_challenge = base64.urlsafe_b64encode(challenge_bytes).decode("utf-8")
+        # Remove padding
+        self.code_challenge = self.code_challenge.rstrip("=")
+
+        logger.debug(f"Generated PKCE challenge: {self.code_challenge}")
+
     def _perform_oauth_flow(self) -> str:
         """
-        Perform OAuth 2.0 authorization code flow.
+        Perform OAuth 2.0 authorization code flow with PKCE.
 
         Returns:
             JWT access token
         """
+        # Generate PKCE parameters
+        self._generate_pkce_params()
+
         # Step 1: Get authorization URL
         auth_url = self._get_authorization_url()
         logger.info(f"Opening browser for authentication: {auth_url}")
@@ -160,7 +187,7 @@ class TMIAuthenticator:
 
     def _get_authorization_url(self) -> str:
         """
-        Get OAuth authorization URL from TMI server.
+        Get OAuth authorization URL from TMI server with PKCE.
 
         Returns:
             Authorization URL to open in browser
@@ -170,6 +197,8 @@ class TMIAuthenticator:
             "idp": self.config.tmi_oauth_idp,
             "client_callback": self.redirect_uri,
             "scope": "openid profile email",
+            "code_challenge": self.code_challenge,
+            "code_challenge_method": "S256",
         }
 
         try:
