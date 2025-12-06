@@ -8,7 +8,7 @@ The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructu
 
 ## Features
 
-- **OAuth Authentication**: Seamless integration with TMI server using Google Sign-In
+- **OAuth Authentication**: Seamless integration with TMI server using Google Sign-In (when run from the command line) or using Client Credentials (when run as a Lambda function triggered via webhook).
 - **Smart Repository Discovery**: Automatically identifies GitHub repositories with Terraform code from threat models
 - **Sparse Cloning**: Efficiently clones only Terraform and documentation files
 - **AI-Powered Analysis**: Leverages Claude Sonnet 4.5 to analyze infrastructure security
