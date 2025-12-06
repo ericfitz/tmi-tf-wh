@@ -26,6 +26,57 @@ Understanding proper containment relationships is critical:
 - **gateway** resources sit at network boundaries
 - **actor** resources are external and not contained by anything
 
+## Layout Optimization Guidelines
+
+To ensure clear, readable diagrams, follow these nesting principles:
+
+1. **Minimize Nesting Depth**: Avoid deeply nested hierarchies that create visual stacking. Prefer flatter structures where possible.
+
+2. **Sibling Components**: When multiple components of the same type exist (e.g., multiple subnets, multiple compute instances), they should be siblings (share the same parent_id) rather than nested within each other.
+
+3. **Network Boundaries**:
+   - Create **separate** subnet components for logically distinct networks (public vs private, different availability zones)
+   - Place compute/storage resources as children of their respective subnets
+   - Do NOT nest subnets within security groups - security groups should reference resources via metadata, not containment
+
+4. **Logical Grouping**: Group components by their functional tier or layer:
+   - Public tier: Load balancers, bastion hosts (in public subnets)
+   - Application tier: Web servers, application servers (in private subnets)
+   - Data tier: Databases, storage (in private/database subnets)
+   - Each tier's resources should be siblings within their respective subnet containers
+
+5. **Gateway Placement**: Gateways (IGW, NAT Gateway, VPN Gateway) should typically be children of the VPC/VCN, not nested inside subnets, as they serve the entire network.
+
+6. **Avoid Single-Child Containers**: If a boundary component would only contain one child, consider whether that boundary is necessary or if the child could be elevated to the parent's level with appropriate metadata.
+
+**Example of GOOD structure (flat, clear layout):**
+```
+tenancy
+├── vpc
+│   ├── internet-gateway
+│   ├── nat-gateway
+│   ├── subnet-public-az1
+│   │   ├── load-balancer
+│   │   ├── bastion-host
+│   ├── subnet-private-az1
+│   │   ├── web-server-1
+│   │   ├── web-server-2
+│   ├── subnet-database-az1
+│   │   ├── rds-primary
+├── actor-internet
+```
+
+**Example of BAD structure (too much nesting, stacking):**
+```
+tenancy
+├── vpc
+│   ├── subnet-public
+│   │   ├── security-group-lb
+│   │   │   ├── load-balancer
+│   │   │   │   ├── security-group-web
+│   │   │   │   │   ├── web-server
+```
+
 # Output Format
 
 Generate a JSON object with two main sections: "components" and "flows".
@@ -99,6 +150,15 @@ Each data flow should include:
       }
     },
     {
+      "id": "igw-1",
+      "name": "Internet Gateway",
+      "type": "gateway",
+      "subtype": "internet_gateway",
+      "description": "VPC internet gateway",
+      "parent_id": "vpc-1",
+      "metadata": {}
+    },
+    {
       "id": "subnet-public-1",
       "name": "Public Subnet AZ1",
       "type": "network",
@@ -107,7 +167,21 @@ Each data flow should include:
       "parent_id": "vpc-1",
       "metadata": {
         "cidr": "10.0.1.0/24",
-        "availability_zone": "us-west-2a"
+        "availability_zone": "us-west-2a",
+        "tier": "public"
+      }
+    },
+    {
+      "id": "subnet-private-1",
+      "name": "Private Subnet AZ1",
+      "type": "network",
+      "subtype": "subnet",
+      "description": "Private subnet for application tier",
+      "parent_id": "vpc-1",
+      "metadata": {
+        "cidr": "10.0.2.0/24",
+        "availability_zone": "us-west-2a",
+        "tier": "private"
       }
     },
     {
@@ -123,11 +197,22 @@ Each data flow should include:
     },
     {
       "id": "web-server-1",
-      "name": "Web Server Instance",
+      "name": "Web Server 1",
       "type": "compute",
       "subtype": "ec2",
-      "description": "Nginx web server",
-      "parent_id": "subnet-public-1",
+      "description": "Nginx web server instance 1",
+      "parent_id": "subnet-private-1",
+      "metadata": {
+        "instance_type": "t3.medium"
+      }
+    },
+    {
+      "id": "web-server-2",
+      "name": "Web Server 2",
+      "type": "compute",
+      "subtype": "ec2",
+      "description": "Nginx web server instance 2",
+      "parent_id": "subnet-private-1",
       "metadata": {
         "instance_type": "t3.medium"
       }
@@ -155,9 +240,19 @@ Each data flow should include:
     },
     {
       "id": "flow-2",
-      "name": "HTTP Backend Traffic",
+      "name": "HTTP to Web Server 1",
       "source_id": "alb-1",
       "target_id": "web-server-1",
+      "protocol": "HTTP",
+      "port": 80,
+      "data_type": "Proxied requests",
+      "bidirectional": true
+    },
+    {
+      "id": "flow-3",
+      "name": "HTTP to Web Server 2",
+      "source_id": "alb-1",
+      "target_id": "web-server-2",
       "protocol": "HTTP",
       "port": 80,
       "data_type": "Proxied requests",
@@ -170,5 +265,12 @@ Each data flow should include:
 # Instructions
 
 Analyze the infrastructure provided and generate the JSON output following the above format. Include ALL infrastructure components you can identify, properly nested according to cloud provider hierarchies. Infer reasonable data flows based on typical application architectures and the resources present.
+
+**CRITICAL**: Apply the Layout Optimization Guidelines to create a flat, clear hierarchy:
+- Keep nesting depth reasonable and justified by actual containment relationships (typically: tenancy → vpc → subnet → resource, or tenancy → container → network → subnet → resource)
+- Make similar resources siblings of each other, not nested
+- Avoid creating unnecessary intermediate container components
+- Place gateways at the VPC level when they serve the entire network
+- Separate subnets should be siblings within the VPC, each containing their own resources
 
 Return ONLY the JSON object with no additional commentary.
