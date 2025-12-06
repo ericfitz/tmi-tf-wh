@@ -235,14 +235,18 @@ class TMIAuthenticator:
             Access token
         """
         url = f"{self.config.tmi_server_url}/oauth2/token"
+        params = {
+            "idp": self.config.tmi_oauth_idp,
+        }
         data = {
+            "grant_type": "authorization_code",
             "code": code,
             "code_verifier": self.code_verifier,
-            "client_callback": self.redirect_uri,
+            "redirect_uri": self.redirect_uri,
         }
 
         try:
-            response = requests.post(url, json=data)
+            response = requests.post(url, params=params, json=data)
             response.raise_for_status()
 
             token_data = response.json()
@@ -260,6 +264,12 @@ class TMIAuthenticator:
 
         except requests.RequestException as e:
             logger.error(f"Failed to exchange code for token: {e}")
+            # Log response body for debugging
+            try:
+                if hasattr(e, "response") and e.response is not None:
+                    logger.error(f"Response body: {e.response.text}")
+            except Exception:
+                pass
             return None
 
     def _wait_for_callback(self) -> Optional[str]:
