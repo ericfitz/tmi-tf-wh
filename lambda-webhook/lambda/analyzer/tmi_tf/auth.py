@@ -25,6 +25,7 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
     access_token: Optional[str] = None
     refresh_token: Optional[str] = None
     expires_in: Optional[int] = None
+    authorization_code: Optional[str] = None
     error: Optional[str] = None
 
     def do_GET(self):
@@ -33,28 +34,36 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         params = parse_qs(parsed.query)
 
-        # Extract tokens from callback (TMI sends tokens directly when using client_callback)
+        # Check for error first
+        OAuthCallbackHandler.error = params.get("error", [None])[0]
+
+        # Extract tokens from callback (TMI may send tokens directly)
         OAuthCallbackHandler.access_token = params.get("access_token", [None])[0]
         OAuthCallbackHandler.refresh_token = params.get("refresh_token", [None])[0]
         expires_in_str = params.get("expires_in", [None])[0]
         OAuthCallbackHandler.expires_in = (
             int(expires_in_str) if expires_in_str else None
         )
-        OAuthCallbackHandler.error = params.get("error", [None])[0]
+
+        # Or extract authorization code (for PKCE flow)
+        OAuthCallbackHandler.authorization_code = params.get("code", [None])[0]
 
         # Send response
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
 
-        if OAuthCallbackHandler.access_token:
+        if OAuthCallbackHandler.access_token or OAuthCallbackHandler.authorization_code:
             self.wfile.write(
                 b"<html><body><h1>Authentication successful!</h1>"
                 b"<p>You can close this window and return to the terminal.</p>"
                 b"</body></html>"
             )
         else:
-            error_msg = OAuthCallbackHandler.error or "No access token received"
+            error_msg = (
+                OAuthCallbackHandler.error
+                or "No access token or authorization code received"
+            )
             self.wfile.write(
                 f"<html><body><h1>Authentication failed!</h1>"
                 f"<p>{error_msg}</p>"
@@ -215,6 +224,44 @@ class TMIAuthenticator:
         except requests.RequestException as e:
             raise RuntimeError(f"Failed to get authorization URL: {e}")
 
+    def _exchange_code_for_token(self, code: str) -> Optional[str]:
+        """
+        Exchange authorization code for access token using PKCE.
+
+        Args:
+            code: Authorization code from OAuth callback
+
+        Returns:
+            Access token
+        """
+        url = f"{self.config.tmi_server_url}/oauth2/token"
+        data = {
+            "code": code,
+            "code_verifier": self.code_verifier,
+            "client_callback": self.redirect_uri,
+        }
+
+        try:
+            response = requests.post(url, json=data)
+            response.raise_for_status()
+
+            token_data = response.json()
+            access_token = token_data.get("access_token")
+            expires_in = token_data.get("expires_in", 3600)
+
+            if access_token:
+                # Cache the token
+                self.token_cache.save_token(access_token, expires_in)
+                logger.info("Successfully exchanged code for access token")
+                return access_token
+            else:
+                logger.error("No access token in token exchange response")
+                return None
+
+        except requests.RequestException as e:
+            logger.error(f"Failed to exchange code for token: {e}")
+            return None
+
     def _wait_for_callback(self) -> Optional[str]:
         """
         Start local HTTP server and wait for OAuth callback.
@@ -226,6 +273,7 @@ class TMIAuthenticator:
         OAuthCallbackHandler.access_token = None
         OAuthCallbackHandler.refresh_token = None
         OAuthCallbackHandler.expires_in = None
+        OAuthCallbackHandler.authorization_code = None
         OAuthCallbackHandler.error = None
 
         # Start server
@@ -235,17 +283,29 @@ class TMIAuthenticator:
         # Handle one request (the callback)
         server.handle_request()
 
-        # Check if we received an access token
+        # Check for errors
+        if OAuthCallbackHandler.error:
+            logger.error(f"OAuth callback error: {OAuthCallbackHandler.error}")
+            return None
+
+        # Check if we received an access token directly
         if OAuthCallbackHandler.access_token:
             # Cache the token
             expires_in = OAuthCallbackHandler.expires_in or 3600
             self.token_cache.save_token(OAuthCallbackHandler.access_token, expires_in)
             logger.info("Successfully obtained and cached access token")
             return OAuthCallbackHandler.access_token
-        else:
-            error = OAuthCallbackHandler.error or "No access token in callback"
-            logger.error(f"OAuth callback failed: {error}")
-            return None
+
+        # Check if we received an authorization code (PKCE flow)
+        if OAuthCallbackHandler.authorization_code:
+            logger.info("Received authorization code, exchanging for token...")
+            return self._exchange_code_for_token(
+                OAuthCallbackHandler.authorization_code
+            )
+
+        # No token or code received
+        logger.error("No access token or authorization code in callback")
+        return None
 
     def clear_cached_token(self):
         """Clear cached authentication token."""
