@@ -76,30 +76,34 @@ class ThreatProcessor:
         logger.info(f"Extracting threats from analysis for {repo_name}")
 
         # Build prompt for threat extraction
-        system_prompt = """You are a security threat modeling expert. Your task is to extract and structure security threats from infrastructure analysis content.
+        system_prompt = """You are a security threat modeling expert specializing in the STRIDE framework. Your task is to extract and structure security threats from infrastructure analysis content.
 
 For each security issue or concern mentioned in the analysis:
 1. Create a clear, concise threat name (max 100 characters)
 2. Provide a detailed description of the threat and risk
-3. Classify the threat type using STRIDE or common categories:
-   - Spoofing (S) - Identity impersonation
-   - Tampering (T) - Data/code modification
-   - Repudiation (R) - Denial of actions
-   - Information Disclosure (I) - Unauthorized data access
-   - Denial of Service (D) - Service unavailability
-   - Elevation of Privilege (E) - Unauthorized access escalation
-   - Configuration Issue (C) - Misconfiguration
-   - Data Protection (DP) - Encryption/data security
-   - Network Security (NS) - Network controls
-4. Assign severity: Critical, High, Medium, or Low based on risk
-5. Suggest mitigation strategies
+3. Classify the threat using the STRIDE framework. Choose the most appropriate category (or multiple if applicable):
+   - Spoofing: Identity impersonation, authentication bypass, credential theft
+   - Tampering: Unauthorized modification of data, code, or configuration
+   - Repudiation: Inability to prove actions occurred (lack of logging/auditing)
+   - Information Disclosure: Unauthorized access to sensitive data, data leakage
+   - Denial of Service: Service disruption, resource exhaustion, availability issues
+   - Elevation of Privilege: Unauthorized access escalation, privilege abuse
+4. Assign severity based on risk:
+   - Critical: Immediate exploitation risk with severe impact
+   - High: Significant security risk requiring urgent attention
+   - Medium: Moderate risk that should be addressed
+   - Low: Minor risk or defense-in-depth improvement
+5. Suggest specific, actionable mitigation strategies
+
+IMPORTANT: The threat_type field must contain one or more STRIDE categories separated by commas.
+Examples: "Information Disclosure", "Tampering, Elevation of Privilege", "Denial of Service"
 
 Return your response as a JSON array of threat objects with this structure:
 [
   {
     "name": "Brief threat title",
     "description": "Detailed threat description including risk and impact",
-    "threat_type": "STRIDE category or descriptive type",
+    "threat_type": "One or more STRIDE categories (comma-separated)",
     "severity": "Critical|High|Medium|Low",
     "mitigation": "Recommended mitigation strategies"
   }

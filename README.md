@@ -12,9 +12,10 @@ The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructu
 - **Smart Repository Discovery**: Automatically identifies GitHub repositories with Terraform code from threat models
 - **Sparse Cloning**: Efficiently clones only Terraform and documentation files
 - **AI-Powered Analysis**: Leverages Claude Sonnet 4.5 to analyze infrastructure security
-- **Visual Diagrams**: Generates mermaid diagrams showing architecture and data flows
+- **Visual Diagrams**: Generates data flow diagrams showing architecture and component relationships
+- **Automatic Threat Extraction**: Extracts security vulnerabilities from analysis and creates structured threat objects using STRIDE framework
 - **Comprehensive Reports**: Creates detailed markdown reports with security observations
-- **TMI Integration**: Stores analysis results as notes in threat models for easy collaboration
+- **TMI Integration**: Stores analysis results as notes and threats in threat models for easy collaboration
 
 ## Prerequisites
 
@@ -100,6 +101,8 @@ Options:
 - `--output PATH`: Save markdown report to file
 - `--force-auth`: Force new authentication (ignore cached token)
 - `--verbose`: Enable verbose logging
+- `--skip-diagram`: Skip generating data flow diagram
+- `--skip-threats`: Skip extracting and creating threat objects from security issues
 
 ### Examples
 
@@ -131,7 +134,9 @@ uv run tmi-tf analyze abc-123-def-456 --max-repos 1 --verbose
 4. **Cloning**: Sparse clones each repository (only .tf, .tfvars, and documentation files)
 5. **Analysis**: Sends Terraform code to Claude for security analysis
 6. **Report Generation**: Aggregates findings into a comprehensive markdown report
-7. **Storage**: Creates or updates a note in the TMI threat model
+7. **Note Storage**: Creates or updates a note in the TMI threat model
+8. **Diagram Generation**: Creates a data flow diagram (DFD) visualizing infrastructure components and flows
+9. **Threat Extraction**: Automatically extracts security vulnerabilities and creates threat objects using STRIDE framework
 
 ## Project Structure
 
@@ -146,7 +151,10 @@ tmi-tf/
 │   ├── github_client.py        # GitHub API integration
 │   ├── repo_analyzer.py        # Repository cloning and extraction
 │   ├── claude_analyzer.py      # Claude AI integration
-│   └── markdown_generator.py   # Report generation
+│   ├── markdown_generator.py   # Report generation
+│   ├── dfd_llm_generator.py    # Data flow diagram generation
+│   ├── diagram_builder.py      # DFD cell builder
+│   └── threat_processor.py     # Threat extraction and STRIDE classification
 ├── prompts/
 │   ├── terraform_analysis_system.txt  # System prompt for Claude
 │   └── terraform_analysis_user.txt    # User prompt template
@@ -158,17 +166,34 @@ tmi-tf/
 
 ## Analysis Output
 
-The generated markdown report includes:
+The tool generates the following artifacts in your TMI threat model:
 
-1. **Executive Summary**: Overview of analyzed repositories
-2. **Per-Repository Analysis**:
-   - Infrastructure inventory (compute, storage, network, security)
-   - Component relationships and dependencies
-   - Data flow mapping
-   - Security observations and concerns
-   - Architecture summary
-   - Mermaid diagram of infrastructure
-3. **Consolidated Findings**: Cross-repository insights and threat modeling recommendations
+### 1. Analysis Report (Note)
+A comprehensive markdown report including:
+- **Executive Summary**: Overview of analyzed repositories
+- **Per-Repository Analysis**:
+  - Infrastructure inventory (compute, storage, network, security)
+  - Component relationships and dependencies
+  - Data flow mapping
+  - Security observations and concerns
+  - Architecture summary
+  - Mermaid diagram of infrastructure
+- **Consolidated Findings**: Cross-repository insights and threat modeling recommendations
+
+### 2. Data Flow Diagram (DFD)
+An interactive diagram showing:
+- Infrastructure components (processes, data stores, external entities)
+- Data flows between components
+- Trust boundaries and security zones
+
+### 3. Threat Objects (STRIDE-classified)
+Structured threat objects automatically extracted from security analysis, including:
+- **Name**: Clear, concise threat description
+- **Type**: STRIDE classification (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege)
+- **Description**: Detailed threat description and risk assessment
+- **Severity**: Critical, High, Medium, or Low
+- **Mitigation**: Recommended security controls and remediation strategies
+- **Status**: Open (default for new threats)
 
 ## Customization
 
