@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 
 from anthropic import Anthropic
 
@@ -18,7 +18,7 @@ class SecurityThreat:
         self,
         name: str,
         description: str,
-        threat_type: str,
+        threat_type: Union[str, List[str]],
         severity: str = "Medium",
         mitigation: str = None,
         status: str = "Open",
@@ -29,14 +29,19 @@ class SecurityThreat:
         Args:
             name: Threat name/title
             description: Detailed description of the threat
-            threat_type: Type/category of threat (e.g., STRIDE classification)
+            threat_type: Type/category of threat (STRIDE classification as string or list)
             severity: Severity level (Critical, High, Medium, Low)
             mitigation: Recommended mitigation strategies
             status: Threat status (Open, In Progress, Resolved, Accepted)
         """
         self.name = name
         self.description = description
-        self.threat_type = threat_type
+        # Convert threat_type to list if it's a string
+        if isinstance(threat_type, str):
+            # Split comma-separated values and strip whitespace
+            self.threat_type = [t.strip() for t in threat_type.split(',') if t.strip()]
+        else:
+            self.threat_type = threat_type
         self.severity = severity
         self.mitigation = mitigation
         self.status = status

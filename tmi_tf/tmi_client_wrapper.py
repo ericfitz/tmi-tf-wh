@@ -3,7 +3,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 # Add tmi-client to path
 tmi_client_path = Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
@@ -427,7 +427,7 @@ class TMIClient:
         self,
         threat_model_id: str,
         name: str,
-        threat_type: str,
+        threat_type: Union[str, List[str]],
         description: str = None,
         mitigation: str = None,
         severity: str = None,
@@ -441,7 +441,7 @@ class TMIClient:
         Args:
             threat_model_id: Threat model UUID
             name: Threat name (required)
-            threat_type: Type or category of the threat (required)
+            threat_type: Type or category of threat as list or string (required)
             description: Description of the threat and risk
             mitigation: Recommended or planned mitigation(s)
             severity: Severity level (e.g., Critical, High, Medium, Low)
@@ -454,9 +454,15 @@ class TMIClient:
         """
         logger.info(f"Creating threat '{name}' in threat model {threat_model_id}")
         try:
+            # Ensure threat_type is a list
+            if isinstance(threat_type, str):
+                threat_type_list = [t.strip() for t in threat_type.split(',') if t.strip()]
+            else:
+                threat_type_list = threat_type
+
             threat_input = ThreatInput(
                 name=name,
-                threat_type=threat_type,
+                threat_type=threat_type_list,
                 description=description,
                 mitigation=mitigation,
                 severity=severity,
