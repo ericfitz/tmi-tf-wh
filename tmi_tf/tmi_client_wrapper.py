@@ -90,6 +90,21 @@ class TMIClient:
             tmi_config.api_key["bearerAuth"] = auth_token
             tmi_config.api_key_prefix["bearerAuth"] = "Bearer"
 
+            # WORKAROUND: The generated client has an empty auth_settings() method
+            # We need to monkey-patch it to properly set the Authorization header
+            def auth_settings_override(self):
+                return {
+                    'bearerAuth': {
+                        'type': 'api_key',
+                        'in': 'header',
+                        'key': 'Authorization',
+                        'value': self.get_api_key_with_prefix('bearerAuth')
+                    }
+                }
+
+            # Bind the override method to the configuration instance
+            tmi_config.auth_settings = auth_settings_override.__get__(tmi_config, Configuration)
+
         self.api_client = ApiClient(configuration=tmi_config)
         self.threat_models_api = tmi_client.ThreatModelsApi(self.api_client)
         self.sub_resources_api = tmi_client.ThreatModelSubResourcesApi(self.api_client)
