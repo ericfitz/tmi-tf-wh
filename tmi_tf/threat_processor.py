@@ -89,13 +89,22 @@ class ThreatProcessor:
 For each security issue or concern mentioned in the analysis:
 1. Create a clear, concise threat name (max 100 characters)
 2. Provide a detailed description of the threat and risk
-3. Classify the threat using the STRIDE framework. Choose the most appropriate category (or multiple if applicable):
-   - Spoofing: Identity impersonation, authentication bypass, credential theft
-   - Tampering: Unauthorized modification of data, code, or configuration
-   - Repudiation: Inability to prove actions occurred (lack of logging/auditing)
-   - Information Disclosure: Unauthorized access to sensitive data, data leakage
-   - Denial of Service: Service disruption, resource exhaustion, availability issues
-   - Elevation of Privilege: Unauthorized access escalation, privilege abuse
+3. Classify the threat using the STRIDE framework by evaluating ALL categories and including EVERY applicable one:
+
+   STRIDE Category Evaluation Questions:
+   - Spoofing (Authenticity): Could an attacker impersonate a valid user, system, or process?
+   - Tampering (Integrity): Could an attacker modify data, code, or configurations without authorization?
+   - Repudiation (Non-repudiability): Could a user or system deny having performed a specific action, and would you have proof otherwise (e.g., via logs)?
+   - Information Disclosure (Confidentiality): Could an attacker gain unauthorized access to sensitive data?
+   - Denial of Service (Availability): Could an attacker disrupt the system's availability or performance for legitimate users?
+   - Elevation of Privilege (Authorization): Could an attacker gain higher privileges or permissions than they are entitled to?
+
+   IMPORTANT: A single threat may violate multiple security properties. Include ALL applicable STRIDE categories.
+   Examples:
+   - Missing authentication AND exposed data → "Spoofing, Information Disclosure"
+   - Modifiable config file with admin access → "Tampering, Elevation of Privilege"
+   - Unencrypted data that can be modified → "Information Disclosure, Tampering"
+
 4. Assign severity based on risk:
    - Critical: Immediate exploitation risk with severe impact
    - High: Significant security risk requiring urgent attention
@@ -103,15 +112,12 @@ For each security issue or concern mentioned in the analysis:
    - Low: Minor risk or defense-in-depth improvement
 5. Suggest specific, actionable mitigation strategies
 
-IMPORTANT: The threat_type field must contain one or more STRIDE categories separated by commas.
-Examples: "Information Disclosure", "Tampering, Elevation of Privilege", "Denial of Service"
-
 Return your response as a JSON array of threat objects with this structure:
 [
   {
     "name": "Brief threat title",
     "description": "Detailed threat description including risk and impact",
-    "threat_type": "One or more STRIDE categories (comma-separated)",
+    "threat_type": "Comma-separated list of ALL applicable STRIDE categories",
     "severity": "Critical|High|Medium|Low",
     "mitigation": "Recommended mitigation strategies"
   }
