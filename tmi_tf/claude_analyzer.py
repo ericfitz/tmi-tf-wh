@@ -62,7 +62,10 @@ class ClaudeAnalyzer:
             config: Application configuration
         """
         self.config = config
-        self.client = Anthropic(api_key=config.anthropic_api_key)
+        self.client = Anthropic(
+            api_key=config.anthropic_api_key,
+            timeout=300.0,  # 5 minute timeout for large analysis requests
+        )
         self.model = "claude-sonnet-4-5"  # Claude Sonnet 4.5
 
         # Load prompts

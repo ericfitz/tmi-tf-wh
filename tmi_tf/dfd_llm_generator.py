@@ -26,7 +26,10 @@ class DFDLLMGenerator:
             api_key: Anthropic API key
             model: Claude model to use (default: Claude Sonnet 4.5)
         """
-        self.client = Anthropic(api_key=api_key)
+        self.client = Anthropic(
+            api_key=api_key,
+            timeout=180.0,  # 3 minute timeout for diagram generation
+        )
         self.model = model
         self._load_prompt_template()
 
