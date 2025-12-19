@@ -572,8 +572,8 @@ Each diagram contains cells in this format:
     "target": {"cell": "web-server-id", "port": "port-in"},
     "zIndex": 20,
     "labels": [{"attrs": {"text": {"text": "HTTPS (443)"}}}],
-    "router": {"name": "manhattan"},
-    "connector": {"name": "rounded"}
+    "router": {"name": "normal"},
+    "connector": {"name": "smooth"}
 }
 ```
 

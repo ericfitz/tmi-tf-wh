@@ -267,8 +267,8 @@ class DFDBuilder:
                 }
             },
             "labels": [{"attrs": {"text": {"text": label_text}}}],
-            "router": {"name": "manhattan"},
-            "connector": {"name": "rounded"},
+            "router": {"name": "normal"},
+            "connector": {"name": "smooth"},
         }
 
         # Add ports if available
