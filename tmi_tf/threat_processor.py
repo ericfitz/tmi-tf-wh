@@ -59,6 +59,14 @@ class SecurityThreat:
 class ThreatProcessor:
     """Processes analysis content to extract and structure security threats."""
 
+    # LiteLLM model prefixes for each provider
+    MODEL_PREFIXES = {
+        "anthropic": "anthropic/",
+        "openai": "openai/",
+        "xai": "xai/",
+        "gemini": "gemini/",
+    }
+
     def __init__(self, config: Config):
         """
         Initialize threat processor.
@@ -68,10 +76,31 @@ class ThreatProcessor:
         """
         self.config = config
         self.provider = getattr(config, "llm_provider", "anthropic")
-        self.model = config.llm_model or Config.DEFAULT_MODELS.get(
+        model_name = config.llm_model or Config.DEFAULT_MODELS.get(
             self.provider, Config.DEFAULT_MODELS["anthropic"]
         )
+        self.model = self._normalize_model_name(model_name)
         self._configure_api_keys()
+
+    def _normalize_model_name(self, model: str) -> str:
+        """
+        Normalize model name to include proper LiteLLM prefix.
+
+        Args:
+            model: Model name from config
+
+        Returns:
+            Normalized model name with appropriate prefix
+        """
+        # If model already has a prefix, return as-is
+        if "/" in model:
+            return model
+
+        # Add prefix based on provider
+        prefix = self.MODEL_PREFIXES.get(self.provider, "")
+        if prefix:
+            return f"{prefix}{model}"
+        return model
 
     def _configure_api_keys(self):
         """Configure API keys for LiteLLM based on the selected provider."""

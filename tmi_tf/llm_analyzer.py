@@ -90,10 +90,10 @@ class LLMAnalyzer:
 
     # LiteLLM model prefixes for each provider
     MODEL_PREFIXES = {
-        "anthropic": "",  # LiteLLM auto-detects anthropic models
-        "openai": "",  # LiteLLM auto-detects openai models
-        "xai": "xai/",  # x.ai uses xai/ prefix
-        "gemini": "gemini/",  # Google uses gemini/ prefix
+        "anthropic": "anthropic/",
+        "openai": "openai/",
+        "xai": "xai/",
+        "gemini": "gemini/",
     }
 
     def __init__(self, config):

@@ -23,6 +23,14 @@ litellm.suppress_debug_info = True
 class DFDLLMGenerator:
     """Generates structured DFD data using LLM."""
 
+    # LiteLLM model prefixes for each provider
+    MODEL_PREFIXES = {
+        "anthropic": "anthropic/",
+        "openai": "openai/",
+        "xai": "xai/",
+        "gemini": "gemini/",
+    }
+
     def __init__(
         self, config=None, api_key: Optional[str] = None, model: Optional[str] = None
     ):
@@ -39,18 +47,39 @@ class DFDLLMGenerator:
             self.provider = getattr(config, "llm_provider", "anthropic")
             from tmi_tf.config import Config
 
-            self.model = config.llm_model or Config.DEFAULT_MODELS.get(
+            model_name = config.llm_model or Config.DEFAULT_MODELS.get(
                 self.provider, Config.DEFAULT_MODELS["anthropic"]
             )
+            self.model = self._normalize_model_name(model_name)
             self._configure_api_keys_from_config(config)
         else:
             # Backwards compatibility: direct api_key and model
             self.provider = "anthropic"
-            self.model = model or "claude-sonnet-4-5-20241022"
+            self.model = model or "anthropic/claude-sonnet-4-5-20241022"
             if api_key:
                 os.environ["ANTHROPIC_API_KEY"] = api_key
 
         self._load_prompt_template()
+
+    def _normalize_model_name(self, model: str) -> str:
+        """
+        Normalize model name to include proper LiteLLM prefix.
+
+        Args:
+            model: Model name from config
+
+        Returns:
+            Normalized model name with appropriate prefix
+        """
+        # If model already has a prefix, return as-is
+        if "/" in model:
+            return model
+
+        # Add prefix based on provider
+        prefix = self.MODEL_PREFIXES.get(self.provider, "")
+        if prefix:
+            return f"{prefix}{model}"
+        return model
 
     def _configure_api_keys_from_config(self, config):
         """Configure API keys for LiteLLM based on the config."""
