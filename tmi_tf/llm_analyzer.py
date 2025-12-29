@@ -1,15 +1,21 @@
-"""Claude AI integration for Terraform analysis."""
+"""Unified LLM analyzer for Terraform analysis using LiteLLM.
+
+This module provides a single analyzer class that supports multiple LLM providers
+(Anthropic, OpenAI, x.ai, Google Gemini, etc.) through the LiteLLM library.
+"""
 
 import logging
 import time
 from pathlib import Path
 
-from anthropic import Anthropic
+import litellm
 
-from tmi_tf.config import Config
 from tmi_tf.repo_analyzer import TerraformRepository
 
 logger = logging.getLogger(__name__)
+
+# Suppress LiteLLM's verbose logging
+litellm.suppress_debug_info = True
 
 
 class TerraformAnalysis:
@@ -24,6 +30,9 @@ class TerraformAnalysis:
         elapsed_time: float = 0.0,
         input_tokens: int = 0,
         output_tokens: int = 0,
+        model: str = "",
+        provider: str = "",
+        total_cost: float = 0.0,
     ):
         """
         Initialize analysis result.
@@ -31,11 +40,14 @@ class TerraformAnalysis:
         Args:
             repo_name: Repository name
             repo_url: Repository URL
-            analysis_content: Analysis markdown content from Claude
+            analysis_content: Analysis markdown content from LLM
             success: Whether analysis was successful
             elapsed_time: Time taken for analysis in seconds
             input_tokens: Number of input tokens sent to LLM
             output_tokens: Number of output tokens received from LLM
+            model: Model used for analysis
+            provider: Provider name (anthropic, openai, xai, gemini)
+            total_cost: Estimated cost in USD
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
@@ -44,36 +56,115 @@ class TerraformAnalysis:
         self.elapsed_time = elapsed_time
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
+        self.model = model
+        self.provider = provider
+        self.total_cost = total_cost
 
     def __repr__(self) -> str:
         """Return string representation."""
         status = "success" if self.success else "failed"
-        return f"TerraformAnalysis(repo={self.repo_name}, status={status})"
+        return f"TerraformAnalysis(repo={self.repo_name}, status={status}, model={self.model})"
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for Lambda compatibility."""
+        return {
+            "analysis": self.analysis_content,
+            "model": self.model,
+            "provider": self.provider,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_cost": self.total_cost,
+        }
 
 
-class ClaudeAnalyzer:
-    """Claude AI analyzer for Terraform files."""
+class LLMAnalyzer:
+    """Unified LLM analyzer for Terraform files using LiteLLM."""
 
-    def __init__(self, config: Config):
+    # Default models for each provider
+    DEFAULT_MODELS = {
+        "anthropic": "claude-sonnet-4-5-20241022",
+        "openai": "gpt-4o",
+        "xai": "xai/grok-beta",
+        "gemini": "gemini/gemini-2.0-flash-exp",
+    }
+
+    # LiteLLM model prefixes for each provider
+    MODEL_PREFIXES = {
+        "anthropic": "",  # LiteLLM auto-detects anthropic models
+        "openai": "",  # LiteLLM auto-detects openai models
+        "xai": "xai/",  # x.ai uses xai/ prefix
+        "gemini": "gemini/",  # Google uses gemini/ prefix
+    }
+
+    def __init__(self, config):
         """
-        Initialize Claude analyzer.
+        Initialize LLM analyzer.
 
         Args:
-            config: Application configuration
+            config: Application configuration with LLM provider settings
         """
         self.config = config
-        self.client = Anthropic(
-            api_key=config.anthropic_api_key,
-            timeout=300.0,  # 5 minute timeout for large analysis requests
-        )
-        self.model = config.llm_model or Config.DEFAULT_MODELS["anthropic"]
+        self.provider = getattr(config, "llm_provider", "anthropic")
+
+        # Determine the model to use
+        if hasattr(config, "llm_model") and config.llm_model:
+            self.model = self._normalize_model_name(config.llm_model)
+        else:
+            self.model = self.DEFAULT_MODELS.get(
+                self.provider, self.DEFAULT_MODELS["anthropic"]
+            )
+
+        # Set up API keys for LiteLLM based on provider
+        self._configure_api_keys()
 
         # Load prompts
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
         self.system_prompt = self._load_prompt("terraform_analysis_system.txt")
         self.user_prompt_template = self._load_prompt("terraform_analysis_user.txt")
 
-        logger.info(f"Claude analyzer initialized with model: {self.model}")
+        logger.info(
+            f"LLM analyzer initialized: provider={self.provider}, model={self.model}"
+        )
+
+    def _normalize_model_name(self, model: str) -> str:
+        """
+        Normalize model name to include proper LiteLLM prefix.
+
+        Args:
+            model: Model name from config
+
+        Returns:
+            Normalized model name with appropriate prefix
+        """
+        # If model already has a prefix, return as-is
+        if "/" in model:
+            return model
+
+        # Add prefix based on provider
+        prefix = self.MODEL_PREFIXES.get(self.provider, "")
+        if prefix and not model.startswith(prefix):
+            return f"{prefix}{model}"
+        return model
+
+    def _configure_api_keys(self):
+        """Configure API keys for LiteLLM based on the selected provider."""
+        import os
+
+        if self.provider == "anthropic":
+            if (
+                hasattr(self.config, "anthropic_api_key")
+                and self.config.anthropic_api_key
+            ):
+                os.environ["ANTHROPIC_API_KEY"] = self.config.anthropic_api_key
+        elif self.provider == "openai":
+            if hasattr(self.config, "openai_api_key") and self.config.openai_api_key:
+                os.environ["OPENAI_API_KEY"] = self.config.openai_api_key
+        elif self.provider == "xai":
+            if hasattr(self.config, "xai_api_key") and self.config.xai_api_key:
+                os.environ["XAI_API_KEY"] = self.config.xai_api_key
+        elif self.provider == "gemini":
+            if hasattr(self.config, "gemini_api_key") and self.config.gemini_api_key:
+                os.environ["GEMINI_API_KEY"] = self.config.gemini_api_key
 
     def _load_prompt(self, filename: str) -> str:
         """
@@ -146,7 +237,7 @@ Provide a mermaid diagram showing the architecture and relationships between com
         self, terraform_repo: TerraformRepository
     ) -> TerraformAnalysis:
         """
-        Analyze Terraform repository using Claude.
+        Analyze Terraform repository using LLM.
 
         Args:
             terraform_repo: Terraform repository to analyze
@@ -185,26 +276,34 @@ Provide a mermaid diagram showing the architecture and relationships between com
                     "Consider reducing file count."
                 )
 
-            # Call Claude API
-            logger.info(f"Sending request to Claude ({self.model})...")
+            # Call LLM API via LiteLLM
+            logger.info(f"Sending request to {self.provider} ({self.model})...")
             start_time = time.time()
 
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=self.model,
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
                 max_tokens=16000,
-                system=self.system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
+                temperature=0.3,
+                timeout=300.0,
             )
 
             elapsed_time = time.time() - start_time
 
-            analysis_content = response.content[0].text
-            input_tokens = response.usage.input_tokens
-            output_tokens = response.usage.output_tokens
+            analysis_content = response.choices[0].message.content
+            input_tokens = response.usage.prompt_tokens
+            output_tokens = response.usage.completion_tokens
+
+            # Calculate cost using LiteLLM's cost tracking
+            total_cost = litellm.completion_cost(completion_response=response)
 
             logger.info(
                 f"Analysis complete in {elapsed_time:.2f}s. "
-                f"Input tokens: {input_tokens}, Output tokens: {output_tokens}"
+                f"Input tokens: {input_tokens}, Output tokens: {output_tokens}, "
+                f"Cost: ${total_cost:.4f}"
             )
 
             return TerraformAnalysis(
@@ -215,6 +314,9 @@ Provide a mermaid diagram showing the architecture and relationships between com
                 elapsed_time=elapsed_time,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                model=self.model,
+                provider=self.provider,
+                total_cost=total_cost,
             )
 
         except Exception as e:
@@ -225,6 +327,8 @@ Provide a mermaid diagram showing the architecture and relationships between com
                 repo_url=terraform_repo.url,
                 analysis_content=error_message,
                 success=False,
+                model=self.model,
+                provider=self.provider,
             )
 
     def _format_terraform_contents(self, tf_contents: dict[str, str]) -> str:
@@ -279,3 +383,7 @@ Provide a mermaid diagram showing the architecture and relationships between com
         """
         # Rough estimate: ~4 characters per token
         return len(text) // 4
+
+
+# Keep backward compatibility alias
+ClaudeAnalyzer = LLMAnalyzer

@@ -18,11 +18,12 @@ logger = logging.getLogger(__name__)
 class LambdaConfig:
     """Configuration for Lambda environment (mirrors tmi_tf.Config structure)."""
 
-    # Default models for each provider
+    # Default models for each provider (LiteLLM format)
     DEFAULT_MODELS = {
-        "anthropic": "claude-sonnet-4-5",
-        "xai": "grok-beta",
-        "gemini": "gemini-2.0-flash-exp",
+        "anthropic": "claude-sonnet-4-5-20241022",
+        "openai": "gpt-4o",
+        "xai": "xai/grok-beta",
+        "gemini": "gemini/gemini-2.0-flash-exp",
     }
 
     def __init__(self, secrets: Dict[str, str]):
@@ -37,19 +38,20 @@ class LambdaConfig:
         self.tmi_oauth_idp: str = "google"  # Not used for client credentials
 
         # LLM Provider Configuration
-        self.llm_provider: str = os.getenv('LLM_PROVIDER', 'anthropic')  # anthropic, xai, or gemini
+        self.llm_provider: str = os.getenv('LLM_PROVIDER', 'anthropic')
         self.llm_model: Optional[str] = os.getenv('LLM_MODEL')  # Optional model override
 
         # Anthropic (Claude) API Configuration
         self.anthropic_api_key: Optional[str] = secrets.get('anthropic_api_key')
 
+        # OpenAI API Configuration
+        self.openai_api_key: Optional[str] = secrets.get('openai_api_key')
+
         # x.ai (Grok) API Configuration
         self.xai_api_key: Optional[str] = secrets.get('xai_api_key')
 
-        # Google Cloud (Gemini) Configuration
-        self.gcp_service_account_key: Optional[str] = secrets.get('gcp_service_account_key')
-        self.gcp_project_id: Optional[str] = secrets.get('gcp_project_id')
-        self.gcp_location: str = secrets.get('gcp_location', 'us-central1')
+        # Google (Gemini) API Configuration
+        self.gemini_api_key: Optional[str] = secrets.get('gemini_api_key')
 
         # Validate that required credentials exist for selected provider
         self._validate_llm_credentials()
@@ -111,18 +113,19 @@ class LambdaConfig:
         if self.llm_provider == 'anthropic':
             if not self.anthropic_api_key:
                 raise ValueError("anthropic_api_key required when LLM_PROVIDER=anthropic")
+        elif self.llm_provider == 'openai':
+            if not self.openai_api_key:
+                raise ValueError("openai_api_key required when LLM_PROVIDER=openai")
         elif self.llm_provider == 'xai':
             if not self.xai_api_key:
                 raise ValueError("xai_api_key required when LLM_PROVIDER=xai")
         elif self.llm_provider == 'gemini':
-            if not self.gcp_service_account_key:
-                raise ValueError("gcp_service_account_key required when LLM_PROVIDER=gemini")
-            if not self.gcp_project_id:
-                raise ValueError("gcp_project_id required when LLM_PROVIDER=gemini")
+            if not self.gemini_api_key:
+                raise ValueError("gemini_api_key required when LLM_PROVIDER=gemini")
         else:
             raise ValueError(
                 f"Invalid LLM_PROVIDER: {self.llm_provider}. "
-                f"Must be 'anthropic', 'xai', or 'gemini'"
+                f"Must be 'anthropic', 'openai', 'xai', or 'gemini'"
             )
 
     def __repr__(self) -> str:

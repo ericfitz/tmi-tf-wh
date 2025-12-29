@@ -1,14 +1,19 @@
 """Threat extraction and processing from security analysis."""
 
+import json
 import logging
+import os
 import re
 from typing import List, Dict, Any, Union
 
-from anthropic import Anthropic
+import litellm
 
 from tmi_tf.config import Config
 
 logger = logging.getLogger(__name__)
+
+# Suppress LiteLLM's verbose logging
+litellm.suppress_debug_info = True
 
 
 class SecurityThreat:
@@ -39,7 +44,7 @@ class SecurityThreat:
         # Convert threat_type to list if it's a string
         if isinstance(threat_type, str):
             # Split comma-separated values and strip whitespace
-            self.threat_type = [t.strip() for t in threat_type.split(',') if t.strip()]
+            self.threat_type = [t.strip() for t in threat_type.split(",") if t.strip()]
         else:
             self.threat_type = threat_type
         self.severity = severity
@@ -62,11 +67,29 @@ class ThreatProcessor:
             config: Application configuration
         """
         self.config = config
-        self.client = Anthropic(
-            api_key=config.anthropic_api_key,
-            timeout=180.0,  # 3 minute timeout for threat extraction
+        self.provider = getattr(config, "llm_provider", "anthropic")
+        self.model = config.llm_model or Config.DEFAULT_MODELS.get(
+            self.provider, Config.DEFAULT_MODELS["anthropic"]
         )
-        self.model = config.llm_model or Config.DEFAULT_MODELS["anthropic"]
+        self._configure_api_keys()
+
+    def _configure_api_keys(self):
+        """Configure API keys for LiteLLM based on the selected provider."""
+        if self.provider == "anthropic":
+            if (
+                hasattr(self.config, "anthropic_api_key")
+                and self.config.anthropic_api_key
+            ):
+                os.environ["ANTHROPIC_API_KEY"] = self.config.anthropic_api_key
+        elif self.provider == "openai":
+            if hasattr(self.config, "openai_api_key") and self.config.openai_api_key:
+                os.environ["OPENAI_API_KEY"] = self.config.openai_api_key
+        elif self.provider == "xai":
+            if hasattr(self.config, "xai_api_key") and self.config.xai_api_key:
+                os.environ["XAI_API_KEY"] = self.config.xai_api_key
+        elif self.provider == "gemini":
+            if hasattr(self.config, "gemini_api_key") and self.config.gemini_api_key:
+                os.environ["GEMINI_API_KEY"] = self.config.gemini_api_key
 
     def extract_threats_from_analysis(
         self, analysis_content: str, repo_name: str
@@ -137,30 +160,25 @@ Analysis Content:
 Extract and structure all security threats found in this analysis."""
 
         try:
-            response = self.client.messages.create(
+            response = litellm.completion(
                 model=self.model,
-                max_tokens=4096,
-                system=system_prompt,
                 messages=[
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    }
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ],
+                max_tokens=4096,
+                temperature=0.3,
+                timeout=180.0,
             )
 
             # Extract JSON from response
-            response_text = response.content[0].text.strip()
+            response_text = response.choices[0].message.content.strip()
 
             # Try to find JSON array in the response
             json_match = re.search(r"\[[\s\S]*\]", response_text)
             if not json_match:
-                logger.warning(
-                    f"No JSON array found in Claude response for {repo_name}"
-                )
+                logger.warning(f"No JSON array found in LLM response for {repo_name}")
                 return []
-
-            import json
 
             threats_data = json.loads(json_match.group(0))
 

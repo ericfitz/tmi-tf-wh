@@ -94,16 +94,18 @@ class TMIClient:
             # We need to monkey-patch it to properly set the Authorization header
             def auth_settings_override(self):
                 return {
-                    'bearerAuth': {
-                        'type': 'api_key',
-                        'in': 'header',
-                        'key': 'Authorization',
-                        'value': self.get_api_key_with_prefix('bearerAuth')
+                    "bearerAuth": {
+                        "type": "api_key",
+                        "in": "header",
+                        "key": "Authorization",
+                        "value": self.get_api_key_with_prefix("bearerAuth"),
                     }
                 }
 
             # Bind the override method to the configuration instance
-            tmi_config.auth_settings = auth_settings_override.__get__(tmi_config, Configuration)
+            tmi_config.auth_settings = auth_settings_override.__get__(
+                tmi_config, Configuration
+            )
 
         self.api_client = ApiClient(configuration=tmi_config)
         self.threat_models_api = tmi_client.ThreatModelsApi(self.api_client)
@@ -456,7 +458,9 @@ class TMIClient:
         try:
             # Ensure threat_type is a list
             if isinstance(threat_type, str):
-                threat_type_list = [t.strip() for t in threat_type.split(',') if t.strip()]
+                threat_type_list = [
+                    t.strip() for t in threat_type.split(",") if t.strip()
+                ]
             else:
                 threat_type_list = threat_type
 

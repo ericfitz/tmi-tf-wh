@@ -4,11 +4,8 @@ boto3>=1.28.0
 # HTTP requests (for OAuth token exchange)
 requests>=2.31.0
 
-# LLM Provider SDKs
-anthropic>=0.39.0  # Claude (Anthropic)
-openai>=1.0.0      # Grok (x.ai - OpenAI-compatible API)
-google-cloud-aiplatform>=1.38.0  # Gemini (Google Vertex AI)
-google-auth>=2.23.0              # Google authentication
+# LLM Provider - unified interface for all providers
+litellm>=1.55.0
 
 # TMI Client dependencies (from tmi_tf)
 python-dotenv>=1.0.0

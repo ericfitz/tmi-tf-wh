@@ -9,7 +9,7 @@ Flow:
 2. Authenticate with TMI using OAuth client credentials
 3. Fetch repository details from TMI
 4. Clone repository (sparse checkout - .tf files only)
-5. Analyze with Claude Sonnet 4.5
+5. Analyze with LLM (supports Anthropic, OpenAI, x.ai, Gemini via LiteLLM)
 6. Generate markdown report with webhook metadata
 7. Create/update note in TMI threat model
 8. Update DynamoDB with completion status
@@ -18,6 +18,8 @@ Environment Variables Required:
 - TMI_SERVER_URL: TMI API base URL (e.g., https://api.tmi.dev)
 - SECRETS_ARN: ARN of AWS Secrets Manager secret
 - DYNAMODB_TABLE: DynamoDB table for delivery tracking
+- LLM_PROVIDER: LLM provider (anthropic, openai, xai, gemini)
+- LLM_MODEL: Optional model override
 """
 
 import json
@@ -41,10 +43,8 @@ from lambda_markdown import generate_webhook_report, generate_error_report
 from tmi_tf.tmi_client_wrapper import TMIClient
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
 
-# Import all LLM analyzers
-from tmi_tf.claude_analyzer import ClaudeAnalyzer
-from xai_analyzer import XaiAnalyzer
-from gemini_analyzer import GeminiAnalyzer
+# Import unified LLM analyzer
+from llm_analyzer import LLMAnalyzer
 
 # Initialize AWS clients
 dynamodb = boto3.client('dynamodb')
@@ -125,16 +125,9 @@ def analyze_repository(
 
         logger.info(f"Found {len(tf_repo.terraform_files)} Terraform files")
 
-        # Select LLM analyzer based on provider
+        # Initialize unified LLM analyzer (supports all providers via LiteLLM)
         logger.info(f"Using LLM provider: {config.llm_provider}")
-        if config.llm_provider == 'anthropic':
-            llm_analyzer = ClaudeAnalyzer(config)
-        elif config.llm_provider == 'xai':
-            llm_analyzer = XaiAnalyzer(config)
-        elif config.llm_provider == 'gemini':
-            llm_analyzer = GeminiAnalyzer(config)
-        else:
-            raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")
+        llm_analyzer = LLMAnalyzer(config)
 
         # Analyze repository
         analysis_result = llm_analyzer.analyze_repository(tf_repo)

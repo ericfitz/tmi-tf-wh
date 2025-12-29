@@ -5,8 +5,8 @@ import sys
 
 import click
 
-from tmi_tf.claude_analyzer import ClaudeAnalyzer
-from tmi_tf.config import Config, get_config
+from tmi_tf.config import get_config
+from tmi_tf.llm_analyzer import LLMAnalyzer
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
@@ -103,7 +103,7 @@ def analyze(
         tmi_client = TMIClient.create_authenticated(config, force_refresh=force_auth)
         github_client = GitHubClient(config)
         repo_analyzer = RepositoryAnalyzer(config)
-        claude_analyzer = ClaudeAnalyzer(config)
+        llm_analyzer = LLMAnalyzer(config)
         markdown_gen = MarkdownGenerator()
 
         # Get threat model
@@ -151,7 +151,7 @@ def analyze(
                 ) as tf_repo:
                     if tf_repo:
                         # Analyze with Claude
-                        analysis = claude_analyzer.analyze_repository(tf_repo)
+                        analysis = llm_analyzer.analyze_repository(tf_repo)
                         analyses.append(analysis)
                     else:
                         logger.warning(
@@ -207,10 +207,7 @@ def analyze(
             logger.info("\n[8/7] Generating data flow diagram...")
             try:
                 # Initialize DFD generator
-                dfd_generator = DFDLLMGenerator(
-                    api_key=config.anthropic_api_key,
-                    model=config.llm_model or Config.DEFAULT_MODELS["anthropic"],
-                )
+                dfd_generator = DFDLLMGenerator(config=config)
 
                 # Generate structured data from the analysis
                 structured_data = dfd_generator.generate_structured_components(

@@ -1,37 +1,71 @@
 """
 LLM-based DFD Generator.
 
-This module uses Claude to generate structured component and flow data
+This module uses LiteLLM to generate structured component and flow data
 from Terraform analysis markdown.
 """
 
 import json
 import logging
+import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from anthropic import Anthropic
+import litellm
 
 logger = logging.getLogger(__name__)
 
+# Suppress LiteLLM's verbose logging
+litellm.suppress_debug_info = True
+
 
 class DFDLLMGenerator:
-    """Generates structured DFD data using Claude LLM."""
+    """Generates structured DFD data using LLM."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-5"):
+    def __init__(
+        self, config=None, api_key: Optional[str] = None, model: Optional[str] = None
+    ):
         """
         Initialize the DFD LLM generator.
 
         Args:
-            api_key: Anthropic API key
-            model: Claude model to use (default: Claude Sonnet 4.5)
+            config: Application configuration (preferred). If provided, api_key and model are ignored.
+            api_key: API key (deprecated, for backwards compatibility)
+            model: Model to use (deprecated, for backwards compatibility)
         """
-        self.client = Anthropic(
-            api_key=api_key,
-            timeout=180.0,  # 3 minute timeout for diagram generation
-        )
-        self.model = model
+        if config:
+            # New-style initialization with config
+            self.provider = getattr(config, "llm_provider", "anthropic")
+            from tmi_tf.config import Config
+
+            self.model = config.llm_model or Config.DEFAULT_MODELS.get(
+                self.provider, Config.DEFAULT_MODELS["anthropic"]
+            )
+            self._configure_api_keys_from_config(config)
+        else:
+            # Backwards compatibility: direct api_key and model
+            self.provider = "anthropic"
+            self.model = model or "claude-sonnet-4-5-20241022"
+            if api_key:
+                os.environ["ANTHROPIC_API_KEY"] = api_key
+
         self._load_prompt_template()
+
+    def _configure_api_keys_from_config(self, config):
+        """Configure API keys for LiteLLM based on the config."""
+        if self.provider == "anthropic":
+            if hasattr(config, "anthropic_api_key") and config.anthropic_api_key:
+                os.environ["ANTHROPIC_API_KEY"] = config.anthropic_api_key
+        elif self.provider == "openai":
+            if hasattr(config, "openai_api_key") and config.openai_api_key:
+                os.environ["OPENAI_API_KEY"] = config.openai_api_key
+        elif self.provider == "xai":
+            if hasattr(config, "xai_api_key") and config.xai_api_key:
+                os.environ["XAI_API_KEY"] = config.xai_api_key
+        elif self.provider == "gemini":
+            if hasattr(config, "gemini_api_key") and config.gemini_api_key:
+                os.environ["GEMINI_API_KEY"] = config.gemini_api_key
 
     def _load_prompt_template(self):
         """Load the DFD generation prompt template."""
@@ -65,20 +99,21 @@ class DFDLLMGenerator:
             # Build the full prompt
             full_prompt = f"{self.prompt_template}\n\n# Infrastructure Analysis\n\n{analysis_markdown}"
 
-            # Call Claude API
-            response = self.client.messages.create(
+            # Call LLM API via LiteLLM
+            response = litellm.completion(
                 model=self.model,
+                messages=[{"role": "user", "content": full_prompt}],
                 max_tokens=16000,
                 temperature=0,  # Deterministic output for structured data
-                messages=[{"role": "user", "content": full_prompt}],
+                timeout=180.0,
             )
 
             # Extract the response content
-            if not response.content or len(response.content) == 0:
-                logger.error("Empty response from Claude API")
+            if not response.choices or len(response.choices) == 0:
+                logger.error("Empty response from LLM API")
                 return None
 
-            response_text = response.content[0].text
+            response_text = response.choices[0].message.content
 
             # Parse JSON from response
             structured_data = self._extract_json(response_text)
@@ -123,8 +158,6 @@ class DFDLLMGenerator:
             pass
 
         # Try extracting from code block
-        import re
-
         # Look for JSON in code blocks (```json or ```)
         code_block_pattern = r"```(?:json)?\s*\n(.*?)\n```"
         matches = re.findall(code_block_pattern, text, re.DOTALL)

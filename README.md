@@ -1,17 +1,17 @@
 # TMI Terraform Analysis Tool
 
-Automated Terraform infrastructure analysis tool for threat modeling using Claude AI.
+Automated Terraform infrastructure analysis tool for threat modeling using LLM providers (Claude, GPT-4, Grok, Gemini).
 
 ## Overview
 
-The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructure code associated with threat models in the TMI (Threat Modeling Improved) platform. It uses LLM providers (Claude, Grok, or Gemini) to analyze infrastructure components, relationships, data flows, and security considerations, then generates comprehensive markdown reports stored as notes in TMI.
+The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructure code associated with threat models in the TMI (Threat Modeling Improved) platform. It uses LLM providers (Claude, GPT-4, Grok, or Gemini) via [LiteLLM](https://github.com/BerriAI/litellm) to analyze infrastructure components, relationships, data flows, and security considerations, then generates comprehensive markdown reports stored as notes in TMI.
 
 ## Features
 
 - **OAuth Authentication**: Seamless integration with TMI server using Google Sign-In (when run from the command line) or using Client Credentials (when run as a Lambda function triggered via webhook).
 - **Smart Repository Discovery**: Automatically identifies GitHub repositories with Terraform code from threat models
 - **Sparse Cloning**: Efficiently clones only Terraform and documentation files
-- **AI-Powered Analysis**: Leverages multiple LLM providers (Claude, Grok, Gemini) to analyze infrastructure security
+- **AI-Powered Analysis**: Leverages multiple LLM providers (Claude, GPT-4, Grok, Gemini) via LiteLLM to analyze infrastructure security
 - **Visual Diagrams**: Generates data flow diagrams showing architecture and component relationships
 - **Automatic Threat Extraction**: Extracts security vulnerabilities from analysis and creates structured threat objects using STRIDE framework
 - **Comprehensive Reports**: Creates detailed markdown reports with security observations
@@ -25,8 +25,9 @@ The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructu
 - Access to a TMI server (https://api.tmi.dev)
 - API key for at least one LLM provider:
   - Anthropic API key (for Claude) - default
+  - OpenAI API key (for GPT-4)
   - x.ai API key (for Grok)
-  - Google Cloud service account (for Gemini)
+  - Google API key (for Gemini)
 - Optional: GitHub personal access token (for higher API rate limits)
 
 ## Installation
@@ -65,10 +66,9 @@ All configuration is managed through the `.env` file:
 | `LLM_PROVIDER` | LLM provider to use | `anthropic` |
 | `LLM_MODEL` | Model override (optional) | Provider default |
 | `ANTHROPIC_API_KEY` | Claude API key | Required if `LLM_PROVIDER=anthropic` |
+| `OPENAI_API_KEY` | OpenAI API key | Required if `LLM_PROVIDER=openai` |
 | `XAI_API_KEY` | x.ai API key | Required if `LLM_PROVIDER=xai` |
-| `GCP_SERVICE_ACCOUNT_KEY` | GCP service account JSON | Required if `LLM_PROVIDER=gemini` |
-| `GCP_PROJECT_ID` | GCP project ID | Required if `LLM_PROVIDER=gemini` |
-| `GCP_LOCATION` | GCP region | `us-central1` |
+| `GEMINI_API_KEY` | Google Gemini API key | Required if `LLM_PROVIDER=gemini` |
 | `GITHUB_TOKEN` | GitHub personal access token | *Optional* |
 | `MAX_REPOS` | Maximum repositories to analyze | `3` |
 | `CLONE_TIMEOUT` | Git clone timeout in seconds | `300` |
@@ -162,7 +162,7 @@ tmi-tf/
 │   ├── tmi_client_wrapper.py  # TMI API client
 │   ├── github_client.py        # GitHub API integration
 │   ├── repo_analyzer.py        # Repository cloning and extraction
-│   ├── claude_analyzer.py      # Claude AI integration
+│   ├── llm_analyzer.py         # Unified LLM integration (via LiteLLM)
 │   ├── markdown_generator.py   # Report generation
 │   ├── dfd_llm_generator.py    # Data flow diagram generation
 │   ├── diagram_builder.py      # DFD cell builder
@@ -244,8 +244,8 @@ uv run tmi-tf auth
 - Authenticated: 5000 requests/hour
 - Solution: Set `GITHUB_TOKEN` in `.env`
 
-**Claude API**:
-- Check your Anthropic account limits
+**LLM API**:
+- Check your provider's account limits (Anthropic, OpenAI, x.ai, Google)
 - Tool will retry with exponential backoff
 
 ### Clone Timeouts
@@ -262,7 +262,7 @@ Tool automatically limits to MAX_REPOS. For very large .tf files, Claude may tru
 ## Limitations & Considerations
 
 - **Proof of Concept**: This is a PoC tool, not production-ready
-- **Token Limits**: Claude has ~200K token context window; very large files may be truncated
+- **Token Limits**: LLMs have varying context windows (Claude ~200K, GPT-4 ~128K); very large files may be truncated
 - **GitHub Only**: Currently only supports GitHub repositories
 - **Public Repos**: Best suited for public repositories (private repos require GitHub authentication)
 - **Sequential Processing**: Repositories are analyzed sequentially (not parallelized)
