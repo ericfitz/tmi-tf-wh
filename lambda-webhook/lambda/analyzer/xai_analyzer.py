@@ -3,7 +3,6 @@ x.ai Grok API analyzer for Terraform infrastructure.
 
 Uses the OpenAI-compatible API provided by x.ai for Grok models.
 """
-import json
 from typing import Dict, Any, List
 from pathlib import Path
 from openai import OpenAI

@@ -6,7 +6,7 @@ import sys
 import click
 
 from tmi_tf.claude_analyzer import ClaudeAnalyzer
-from tmi_tf.config import get_config
+from tmi_tf.config import Config, get_config
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
@@ -208,7 +208,8 @@ def analyze(
             try:
                 # Initialize DFD generator
                 dfd_generator = DFDLLMGenerator(
-                    api_key=config.anthropic_api_key, model="claude-sonnet-4-5"
+                    api_key=config.anthropic_api_key,
+                    model=config.llm_model or Config.DEFAULT_MODELS["anthropic"],
                 )
 
                 # Generate structured data from the analysis

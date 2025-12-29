@@ -66,7 +66,7 @@ class ClaudeAnalyzer:
             api_key=config.anthropic_api_key,
             timeout=300.0,  # 5 minute timeout for large analysis requests
         )
-        self.model = "claude-sonnet-4-5"  # Claude Sonnet 4.5
+        self.model = config.llm_model or Config.DEFAULT_MODELS["anthropic"]
 
         # Load prompts
         self.prompts_dir = Path(__file__).parent.parent / "prompts"

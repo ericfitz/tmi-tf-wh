@@ -66,7 +66,7 @@ class ThreatProcessor:
             api_key=config.anthropic_api_key,
             timeout=180.0,  # 3 minute timeout for threat extraction
         )
-        self.model = "claude-sonnet-4-5"
+        self.model = config.llm_model or Config.DEFAULT_MODELS["anthropic"]
 
     def extract_threats_from_analysis(
         self, analysis_content: str, repo_name: str

@@ -4,14 +4,14 @@ Automated Terraform infrastructure analysis tool for threat modeling using Claud
 
 ## Overview
 
-The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructure code associated with threat models in the TMI (Threat Modeling Improved) platform. It uses Claude Sonnet 4.5 to analyze infrastructure components, relationships, data flows, and security considerations, then generates comprehensive markdown reports stored as notes in TMI.
+The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructure code associated with threat models in the TMI (Threat Modeling Improved) platform. It uses LLM providers (Claude, Grok, or Gemini) to analyze infrastructure components, relationships, data flows, and security considerations, then generates comprehensive markdown reports stored as notes in TMI.
 
 ## Features
 
 - **OAuth Authentication**: Seamless integration with TMI server using Google Sign-In (when run from the command line) or using Client Credentials (when run as a Lambda function triggered via webhook).
 - **Smart Repository Discovery**: Automatically identifies GitHub repositories with Terraform code from threat models
 - **Sparse Cloning**: Efficiently clones only Terraform and documentation files
-- **AI-Powered Analysis**: Leverages Claude Sonnet 4.5 to analyze infrastructure security
+- **AI-Powered Analysis**: Leverages multiple LLM providers (Claude, Grok, Gemini) to analyze infrastructure security
 - **Visual Diagrams**: Generates data flow diagrams showing architecture and component relationships
 - **Automatic Threat Extraction**: Extracts security vulnerabilities from analysis and creates structured threat objects using STRIDE framework
 - **Comprehensive Reports**: Creates detailed markdown reports with security observations
@@ -23,7 +23,10 @@ The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructu
 - [UV](https://github.com/astral-sh/uv) package manager
 - Git
 - Access to a TMI server (https://api.tmi.dev)
-- Anthropic API key (for Claude)
+- API key for at least one LLM provider:
+  - Anthropic API key (for Claude) - default
+  - x.ai API key (for Grok)
+  - Google Cloud service account (for Gemini)
 - Optional: GitHub personal access token (for higher API rate limits)
 
 ## Installation
@@ -59,11 +62,20 @@ All configuration is managed through the `.env` file:
 |----------|-------------|---------|
 | `TMI_SERVER_URL` | TMI server URL | `https://api.tmi.dev` |
 | `TMI_OAUTH_IDP` | OAuth identity provider | `google` |
-| `ANTHROPIC_API_KEY` | Claude API key | *Required* |
+| `LLM_PROVIDER` | LLM provider to use | `anthropic` |
+| `LLM_MODEL` | Model override (optional) | Provider default |
+| `ANTHROPIC_API_KEY` | Claude API key | Required if `LLM_PROVIDER=anthropic` |
+| `XAI_API_KEY` | x.ai API key | Required if `LLM_PROVIDER=xai` |
+| `GCP_SERVICE_ACCOUNT_KEY` | GCP service account JSON | Required if `LLM_PROVIDER=gemini` |
+| `GCP_PROJECT_ID` | GCP project ID | Required if `LLM_PROVIDER=gemini` |
+| `GCP_LOCATION` | GCP region | `us-central1` |
 | `GITHUB_TOKEN` | GitHub personal access token | *Optional* |
 | `MAX_REPOS` | Maximum repositories to analyze | `3` |
 | `CLONE_TIMEOUT` | Git clone timeout in seconds | `300` |
-| `ANALYSIS_NOTE_NAME` | Name for the generated note | `Terraform Analysis Report` |
+| `ANALYSIS_NOTE_NAME` | Base name for the generated note | `Terraform Analysis Report` |
+| `DIAGRAM_NAME` | Base name for the generated diagram | `Infrastructure Data Flow Diagram` |
+
+**Note:** The model name is automatically appended to note and diagram names (e.g., "Terraform Analysis Report (claude-sonnet-4-5)").
 
 ## Usage
 

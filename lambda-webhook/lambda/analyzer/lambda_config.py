@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 class LambdaConfig:
     """Configuration for Lambda environment (mirrors tmi_tf.Config structure)."""
 
+    # Default models for each provider
+    DEFAULT_MODELS = {
+        "anthropic": "claude-sonnet-4-5",
+        "xai": "grok-beta",
+        "gemini": "gemini-2.0-flash-exp",
+    }
+
     def __init__(self, secrets: Dict[str, str]):
         """
         Initialize configuration from secrets dictionary.
@@ -53,12 +60,15 @@ class LambdaConfig:
         # Application Settings (use Lambda environment variables with defaults)
         self.max_repos: int = int(os.getenv('MAX_REPOS', '1'))  # Lambda: analyze one repo at a time
         self.clone_timeout: int = int(os.getenv('CLONE_TIMEOUT', '300'))
-        self.analysis_note_name: str = os.getenv(
-            'ANALYSIS_NOTE_NAME', 'Terraform Analysis Report'
+
+        # Note and diagram names include model identifier
+        effective_model = self.llm_model or self.DEFAULT_MODELS.get(
+            self.llm_provider, "unknown"
         )
-        self.diagram_name: str = os.getenv(
-            'DIAGRAM_NAME', 'Infrastructure Data Flow Diagram'
-        )
+        base_note_name = os.getenv('ANALYSIS_NOTE_NAME', 'Terraform Analysis Report')
+        base_diagram_name = os.getenv('DIAGRAM_NAME', 'Infrastructure Data Flow Diagram')
+        self.analysis_note_name: str = f"{base_note_name} ({effective_model})"
+        self.diagram_name: str = f"{base_diagram_name} ({effective_model})"
 
         # Lambda doesn't use token cache (uses OAuth client credentials instead)
         self.cache_dir = Path('/tmp/.tmi-tf')  # Lambda /tmp directory

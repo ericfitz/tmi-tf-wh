@@ -10,7 +10,6 @@ import tempfile
 from typing import Dict, Any, List
 from pathlib import Path
 from google.oauth2 import service_account
-from google.cloud import aiplatform
 import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig
 
