@@ -161,7 +161,7 @@ class DFDBuilder:
                 "text": {"text": component["name"]},
             },
             "data": {
-                "_metadata": [
+                "metadata": [
                     {"key": "component_id", "value": component["id"]},
                     {"key": "component_type", "value": component["type"]},
                     {"key": "component_subtype", "value": component.get("subtype", "")},
@@ -294,10 +294,10 @@ class DFDBuilder:
                 "right": {"position": "right"},
             },
             "items": [
-                {"id": "port-top", "group": "top"},
-                {"id": "port-bottom", "group": "bottom"},
-                {"id": "port-left", "group": "left"},
-                {"id": "port-right", "group": "right"},
+                {"id": "top", "group": "top"},
+                {"id": "bottom", "group": "bottom"},
+                {"id": "left", "group": "left"},
+                {"id": "right", "group": "right"},
             ],
         }
 

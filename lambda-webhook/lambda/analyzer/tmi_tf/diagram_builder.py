@@ -161,7 +161,7 @@ class DFDBuilder:
                 "text": {"text": component["name"]},
             },
             "data": {
-                "_metadata": [
+                "metadata": [
                     {"key": "component_id", "value": component["id"]},
                     {"key": "component_type", "value": component["type"]},
                     {"key": "component_subtype", "value": component.get("subtype", "")},
@@ -239,9 +239,9 @@ class DFDBuilder:
 
         cell_id = str(uuid.uuid4())
 
-        # Determine source and target ports
-        source_port = self._get_port(source_cell, "out")
-        target_port = self._get_port(target_cell, "in")
+        # Determine source and target ports based on node positions
+        source_port = self._get_optimal_port(source_cell, target_cell, is_source=True)
+        target_port = self._get_optimal_port(target_cell, source_cell, is_source=False)
 
         # Build label text with protocol and port if available
         label_parts = [edge_data["label"]]
@@ -284,23 +284,33 @@ class DFDBuilder:
         Create port configuration for a node.
 
         Returns:
-            Port configuration object
+            Port configuration object with 4 ports (top, bottom, left, right)
         """
         return {
-            "groups": {"in": {"position": "left"}, "out": {"position": "right"}},
+            "groups": {
+                "top": {"position": "top"},
+                "bottom": {"position": "bottom"},
+                "left": {"position": "left"},
+                "right": {"position": "right"},
+            },
             "items": [
-                {"id": "port-in", "group": "in"},
-                {"id": "port-out", "group": "out"},
+                {"id": "top", "group": "top"},
+                {"id": "bottom", "group": "bottom"},
+                {"id": "left", "group": "left"},
+                {"id": "right", "group": "right"},
             ],
         }
 
-    def _get_port(self, cell: Dict[str, Any], direction: str) -> Optional[str]:
+    def _get_optimal_port(
+        self, cell: Dict[str, Any], other_cell: Dict[str, Any], is_source: bool
+    ) -> Optional[str]:
         """
-        Get port ID for a cell in a given direction.
+        Get optimal port ID for a cell based on the position of another cell.
 
         Args:
-            cell: Cell dictionary
-            direction: "in" or "out"
+            cell: Cell to get port for
+            other_cell: Other cell to connect to
+            is_source: True if cell is the source, False if it's the target
 
         Returns:
             Port ID or None if no ports defined
@@ -308,9 +318,29 @@ class DFDBuilder:
         if "ports" not in cell:
             return None
 
+        # Calculate center positions of both cells
+        cell_center_x = cell["x"] + cell["width"] / 2
+        cell_center_y = cell["y"] + cell["height"] / 2
+        other_center_x = other_cell["x"] + other_cell["width"] / 2
+        other_center_y = other_cell["y"] + other_cell["height"] / 2
+
+        # Calculate angle from cell to other_cell
+        dx = other_center_x - cell_center_x
+        dy = other_center_y - cell_center_y
+
+        # Determine which port to use based on angle
+        # Use absolute values to determine if horizontal or vertical distance is greater
+        if abs(dx) > abs(dy):
+            # Horizontal distance is greater
+            port_group = "right" if dx > 0 else "left"
+        else:
+            # Vertical distance is greater
+            port_group = "bottom" if dy > 0 else "top"
+
+        # Find the port with the selected group
         items = cell.get("ports", {}).get("items", [])
         for item in items:
-            if item.get("group") == direction:
+            if item.get("group") == port_group:
                 return item.get("id")
 
         return None
