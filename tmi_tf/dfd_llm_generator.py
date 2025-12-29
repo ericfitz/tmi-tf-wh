@@ -55,7 +55,7 @@ class DFDLLMGenerator:
         else:
             # Backwards compatibility: direct api_key and model
             self.provider = "anthropic"
-            self.model = model or "anthropic/claude-sonnet-4-5-20241022"
+            self.model = model or "anthropic/claude-opus-4-5-20251101"
             if api_key:
                 os.environ["ANTHROPIC_API_KEY"] = api_key
 

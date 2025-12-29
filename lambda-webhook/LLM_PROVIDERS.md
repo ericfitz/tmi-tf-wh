@@ -39,7 +39,7 @@ The TMI Terraform Analyzer supports three LLM providers for infrastructure analy
 
 ### x.ai Grok
 
-**Models**: `grok-beta`, `grok-vision-beta`
+**Models**: `grok-4-1-fast-reasoning`, `grok-4-1-fast-non-reasoning`
 
 **Pros**:
 - Strong technical analysis capabilities
@@ -63,7 +63,7 @@ The TMI Terraform Analyzer supports three LLM providers for infrastructure analy
 
 ### Google Gemini (Recommended for Cost)
 
-**Models**: `gemini-2.0-flash-exp` (free preview), `gemini-1.5-flash-002`, `gemini-1.5-pro-002`
+**Models**: `gemini-3-pro`, `gemini-3-flash-preview`
 
 **Pros**:
 - **90% cheaper than Claude** for Gemini 2.0 Flash
@@ -139,12 +139,12 @@ aws secretsmanager update-secret \
 # Use xai.tfvars
 terraform apply -var-file=environments/xai.tfvars \
   -var="llm_provider=xai" \
-  -var="llm_model=grok-beta"
+  -var="llm_model=grok-4-1-fast-reasoning"
 ```
 
 **Environment Variables** (optional model override):
 - `LLM_PROVIDER=xai`
-- `LLM_MODEL=grok-beta` (or `grok-vision-beta`)
+- `LLM_MODEL=grok-4-1-fast-reasoning` (or `grok-4-1-fast-non-reasoning`)
 
 ---
 
@@ -206,12 +206,12 @@ rm ~/tmi-tf-sa-key.json
 # Use gemini.tfvars
 terraform apply -var-file=environments/gemini.tfvars \
   -var="llm_provider=gemini" \
-  -var="llm_model=gemini-2.0-flash-exp"
+  -var="llm_model=gemini-3-pro"
 ```
 
 **Environment Variables** (optional):
 - `LLM_PROVIDER=gemini`
-- `LLM_MODEL=gemini-2.0-flash-exp` (or `gemini-1.5-flash-002`, `gemini-1.5-pro-002`)
+- `LLM_MODEL=gemini-3-pro` (or `gemini-3-flash-preview`)
 
 ---
 
@@ -255,7 +255,7 @@ aws lambda update-function-configuration \
   --function-name tmi-tf-prod-analyzer \
   --environment "Variables={
     LLM_PROVIDER=gemini,
-    LLM_MODEL=gemini-2.0-flash-exp,
+    LLM_MODEL=gemini-3-pro,
     TMI_SERVER_URL=https://api.tmi.dev,
     SECRETS_ARN=arn:aws:secretsmanager:...,
     DYNAMODB_TABLE=tmi-tf-prod-webhook-deliveries
@@ -270,12 +270,12 @@ Change provider via Terraform:
 # Switch to Gemini
 terraform apply -var-file=environments/gemini.tfvars \
   -var="llm_provider=gemini" \
-  -var="llm_model=gemini-2.0-flash-exp"
+  -var="llm_model=gemini-3-pro"
 
 # Switch to x.ai
 terraform apply -var-file=environments/xai.tfvars \
   -var="llm_provider=xai" \
-  -var="llm_model=grok-beta"
+  -var="llm_model=grok-4-1-fast-reasoning"
 
 # Switch back to Claude
 terraform apply -var-file=environments/prod.tfvars \
@@ -334,16 +334,15 @@ terraform apply -var-file=environments/prod.tfvars \
 ## Model Selection
 
 ### Anthropic
-- `claude-sonnet-4.5` (default): Best balance of cost/quality
+- `claude-opus-4-5-20251101` (default): Most intelligent model
 
 ### x.ai
-- `grok-beta` (default): Standard model
-- `grok-vision-beta`: Multimodal capabilities
+- `grok-4-1-fast-reasoning` (default): Frontier model with reasoning
+- `grok-4-1-fast-non-reasoning`: Fast variant without reasoning
 
 ### Google Gemini
-- `gemini-2.0-flash-exp` (recommended): FREE during preview, very fast
-- `gemini-1.5-flash-002`: Production-ready, cheap, fast
-- `gemini-1.5-pro-002`: Best quality, higher cost
+- `gemini-3-pro` (recommended): Latest reasoning-first model
+- `gemini-3-flash-preview`: Fast variant with Pro-level intelligence
 
 ---
 

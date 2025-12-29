@@ -12,8 +12,8 @@ class Config:
 
     # Default models for each provider (LiteLLM format)
     DEFAULT_MODELS = {
-        "anthropic": "anthropic/claude-opus-4.5",
-        "openai": "openai/gpt-5.2-codex",
+        "anthropic": "anthropic/claude-opus-4-5-20251101",
+        "openai": "openai/gpt-5.2",
         "xai": "xai/grok-4-1-fast-reasoning",
         "gemini": "gemini/gemini-3-pro",
     }
