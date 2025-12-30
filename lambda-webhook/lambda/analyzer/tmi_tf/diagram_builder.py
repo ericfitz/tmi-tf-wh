@@ -118,8 +118,8 @@ class DFDBuilder:
             z_index = self.Z_INDEX.get(component["type"], 11)
             cell = self._create_node_cell(component, z_index)
 
-            # Add ports for compute and gateway nodes
-            if component["type"] in ["compute", "gateway"]:
+            # Add ports for all connectable nodes (compute, gateway, storage, actor)
+            if component["type"] in ["compute", "gateway", "storage", "actor"]:
                 cell["ports"] = self._create_ports()
 
             self.cells.append(cell)
