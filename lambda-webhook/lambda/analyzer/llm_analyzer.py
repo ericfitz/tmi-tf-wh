@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 import litellm
 
@@ -26,7 +26,7 @@ class LLMAnalyzer:
         "anthropic": "claude-opus-4-5-20251101",
         "openai": "gpt-5.2",
         "xai": "xai/grok-4-1-fast-reasoning",
-        "gemini": "gemini/gemini-3-pro",
+        "gemini": "gemini/gemini-3-pro-preview",
     }
 
     # LiteLLM model prefixes for each provider

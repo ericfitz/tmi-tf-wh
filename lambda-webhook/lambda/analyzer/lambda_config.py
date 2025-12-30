@@ -23,7 +23,7 @@ class LambdaConfig:
         "anthropic": "anthropic/claude-opus-4-5-20251101",
         "openai": "openai/gpt-5.2",
         "xai": "xai/grok-4-1-fast-reasoning",
-        "gemini": "gemini/gemini-3-pro",
+        "gemini": "gemini/gemini-3-pro-preview",
     }
 
     def __init__(self, secrets: Dict[str, str]):

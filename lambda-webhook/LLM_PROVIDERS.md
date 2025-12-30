@@ -63,7 +63,7 @@ The TMI Terraform Analyzer supports three LLM providers for infrastructure analy
 
 ### Google Gemini (Recommended for Cost)
 
-**Models**: `gemini-3-pro`, `gemini-3-flash-preview`
+**Models**: `gemini/gemini-3-pro-preview`, `gemini/gemini-3-flash-preview`
 
 **Pros**:
 - **90% cheaper than Claude** for Gemini 2.0 Flash
@@ -206,12 +206,12 @@ rm ~/tmi-tf-sa-key.json
 # Use gemini.tfvars
 terraform apply -var-file=environments/gemini.tfvars \
   -var="llm_provider=gemini" \
-  -var="llm_model=gemini-3-pro"
+  -var="llm_model=gemini/gemini-3-pro-preview"
 ```
 
 **Environment Variables** (optional):
 - `LLM_PROVIDER=gemini`
-- `LLM_MODEL=gemini-3-pro` (or `gemini-3-flash-preview`)
+- `LLM_MODEL=gemini/gemini-3-pro-preview` (or `gemini/gemini-3-flash-preview`)
 
 ---
 
@@ -255,7 +255,7 @@ aws lambda update-function-configuration \
   --function-name tmi-tf-prod-analyzer \
   --environment "Variables={
     LLM_PROVIDER=gemini,
-    LLM_MODEL=gemini-3-pro,
+    LLM_MODEL=gemini/gemini-3-pro-preview,
     TMI_SERVER_URL=https://api.tmi.dev,
     SECRETS_ARN=arn:aws:secretsmanager:...,
     DYNAMODB_TABLE=tmi-tf-prod-webhook-deliveries
@@ -270,7 +270,7 @@ Change provider via Terraform:
 # Switch to Gemini
 terraform apply -var-file=environments/gemini.tfvars \
   -var="llm_provider=gemini" \
-  -var="llm_model=gemini-3-pro"
+  -var="llm_model=gemini/gemini-3-pro-preview"
 
 # Switch to x.ai
 terraform apply -var-file=environments/xai.tfvars \
@@ -341,8 +341,8 @@ terraform apply -var-file=environments/prod.tfvars \
 - `grok-4-1-fast-non-reasoning`: Fast variant without reasoning
 
 ### Google Gemini
-- `gemini-3-pro` (recommended): Latest reasoning-first model
-- `gemini-3-flash-preview`: Fast variant with Pro-level intelligence
+- `gemini/gemini-3-pro-preview` (recommended): Latest reasoning-first model
+- `gemini/gemini-3-flash-preview`: Fast variant with Pro-level intelligence
 
 ---
 
