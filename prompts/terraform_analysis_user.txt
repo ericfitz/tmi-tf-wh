@@ -73,18 +73,31 @@ Create a mermaid diagram (using graph TD or graph LR) that visualizes:
 - External interfaces (users, external services, internet)
 - Key security controls (firewalls, encryption, etc.)
 
+**IMPORTANT: Mermaid Syntax Rules (you MUST follow these exactly):**
+- Every `subgraph` statement MUST have a corresponding `end` statement
+- Do NOT use `<br/>` or `<br>` tags - they are not supported. Use short labels instead
+- Do NOT use ampersands (`&`) - use the word "and" instead
+- Do NOT use special characters in node labels except underscores and hyphens
+- Keep node labels short and simple (under 40 characters)
+- Use only alphanumeric characters, underscores, and hyphens for node IDs
+
 Use this format:
 ```mermaid
 graph TD
     %% Define nodes
     Internet[Internet]
     LB[Load Balancer]
-    ...
+
+    %% Subgraphs must have matching end statements
+    subgraph VPC[Virtual Private Cloud]
+        AppServers[Application Servers]
+        DB[Database]
+    end
 
     %% Define relationships
     Internet -->|HTTPS| LB
     LB -->|HTTP| AppServers
-    ...
+    AppServers -->|SQL| DB
 
     %% Style important nodes
     classDef publicFacing fill:#ff9999

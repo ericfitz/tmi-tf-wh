@@ -231,7 +231,15 @@ Potential security concerns or best practices violations
 High-level summary of what this infrastructure does
 
 ## Mermaid Diagram
-Provide a mermaid diagram showing the architecture and relationships between components."""
+Provide a mermaid diagram showing the architecture and relationships between components.
+
+**IMPORTANT: Mermaid Syntax Rules (you MUST follow these exactly):**
+- Every `subgraph` statement MUST have a corresponding `end` statement
+- Do NOT use `<br/>` or `<br>` tags - they are not supported. Use short labels instead
+- Do NOT use ampersands (`&`) - use the word "and" instead
+- Do NOT use special characters in node labels except underscores and hyphens
+- Keep node labels short and simple (under 40 characters)
+- Use only alphanumeric characters, underscores, and hyphens for node IDs"""
 
     def analyze_repository(
         self, terraform_repo: TerraformRepository

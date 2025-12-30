@@ -24,9 +24,9 @@ else:
     print(f"Error: TMI Python client not found at {tmi_client_path}")
     sys.exit(1)
 
-from tmi_tf.config import get_config
-from tmi_tf.tmi_client_wrapper import TMIClient
-from tmi_client.models import ThreatModelInput, RepositoryInput
+from tmi_tf.config import get_config  # noqa: E402
+from tmi_tf.tmi_client_wrapper import TMIClient  # noqa: E402
+from tmi_client.models import ThreatModelInput, RepositoryInput  # noqa: E402
 
 
 def create_example_threat_model(force_auth=False):
