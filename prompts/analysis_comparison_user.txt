@@ -1,0 +1,33 @@
+Compare the following {category} discoveries from {num_models} different AI models: {model_names}
+
+## Discoveries to Normalize
+
+{discoveries_json}
+
+## Instructions
+
+1. Group semantically equivalent discoveries across models
+2. Create a clear canonical name for each unique discovery
+3. Note which discovery IDs belong to each group
+4. Identify any meaningful differences in how models described the same discovery
+5. Discoveries found by only one model should still be included as single-item groups
+
+Return the normalized comparison as JSON following the system prompt format.
+
+Example response:
+```json
+{
+  "normalized_items": [
+    {
+      "canonical_name": "S3 Bucket for Application Assets",
+      "discovery_ids": ["abc-123", "def-456"],
+      "differences_note": "Claude provided more detail on encryption settings"
+    },
+    {
+      "canonical_name": "Lambda Function - API Handler",
+      "discovery_ids": ["ghi-789"],
+      "differences_note": null
+    }
+  ]
+}
+```

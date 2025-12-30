@@ -5,6 +5,8 @@ import sys
 
 import click
 
+from tmi_tf.analysis_comparer import AnalysisComparer
+from tmi_tf.comparison_markdown_generator import ComparisonMarkdownGenerator
 from tmi_tf.config import get_config
 from tmi_tf.llm_analyzer import LLMAnalyzer
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
@@ -394,6 +396,168 @@ def config_info():
         print()
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("threat_model_id")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Compare but don't create note in TMI (save to file instead)",
+)
+@click.option(
+    "--output",
+    type=click.Path(),
+    default=None,
+    help="Save markdown output to file (in addition to or instead of TMI note)",
+)
+@click.option(
+    "--force-auth", is_flag=True, help="Force new authentication (ignore cached token)"
+)
+@click.option("--verbose", is_flag=True, help="Enable verbose logging")
+def compare(
+    threat_model_id: str,
+    dry_run: bool,
+    output: str,
+    force_auth: bool,
+    verbose: bool,
+):
+    """
+    Compare analysis notes from different LLM models.
+
+    THREAT_MODEL_ID: UUID of the threat model in TMI
+
+    This command discovers all analysis notes matching 'Terraform Analysis Report (*)'
+    for the specified threat model and generates a comparison report showing:
+    - Infrastructure components discovered by each model
+    - Relationships and dependencies
+    - Data flows
+    - Security observations
+
+    The comparison uses LLM-assisted semantic matching to normalize discoveries
+    across different model outputs.
+    """
+    # Set log level
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    try:
+        logger.info("=" * 80)
+        logger.info("TMI Terraform Analysis Tool - Compare")
+        logger.info("=" * 80)
+
+        # Load configuration
+        config = get_config()
+        logger.info(f"Threat Model ID: {threat_model_id}")
+        logger.info(f"TMI Server: {config.tmi_server_url}")
+
+        # Step 1: Initialize clients
+        logger.info("\n[1/6] Initializing clients...")
+        tmi_client = TMIClient.create_authenticated(config, force_refresh=force_auth)
+        comparer = AnalysisComparer(config)
+        markdown_gen = ComparisonMarkdownGenerator()
+
+        # Step 2: Fetch threat model
+        logger.info("\n[2/6] Fetching threat model...")
+        threat_model = tmi_client.get_threat_model(threat_model_id)
+        logger.info(f"Threat Model: {threat_model.name}")
+
+        # Step 3: Discover analysis notes
+        logger.info("\n[3/6] Discovering analysis notes...")
+        analysis_notes = comparer.discover_analysis_notes(tmi_client, threat_model_id)
+
+        if len(analysis_notes) < 2:
+            logger.error(
+                f"Found {len(analysis_notes)} analysis notes. "
+                "Need at least 2 notes to compare."
+            )
+            logger.info(
+                "Run 'tmi-tf analyze' with different LLM providers to create more analysis notes."
+            )
+            sys.exit(1)
+
+        logger.info(f"Found {len(analysis_notes)} analysis notes to compare")
+        for note in analysis_notes:
+            logger.info(f"  - {note.name}")
+
+        # Step 4: Parse and compare analyses
+        logger.info("\n[4/6] Parsing and comparing analyses...")
+        parsed_analyses = []
+
+        for note in analysis_notes:
+            model_name = comparer.parser.extract_model_from_note_name(note.name)
+            if model_name:
+                parsed = comparer.parser.parse_note(
+                    note_content=note.content,
+                    model_name=model_name,
+                    note_id=note.id,
+                    note_name=note.name,
+                )
+                parsed_analyses.append(parsed)
+                logger.info(
+                    f"  Parsed {model_name}: "
+                    f"{len(parsed.infrastructure_items)} infrastructure, "
+                    f"{len(parsed.relationships)} relationships, "
+                    f"{len(parsed.data_flows)} data flows, "
+                    f"{len(parsed.security_observations)} security"
+                )
+
+        if len(parsed_analyses) < 2:
+            logger.error("Could not parse enough analysis notes for comparison")
+            sys.exit(1)
+
+        # Run comparison
+        logger.info("\n[5/6] Running comparison with LLM normalization...")
+        comparison_result = comparer.compare_analyses(parsed_analyses)
+
+        logger.info("Comparison complete:")
+        logger.info(f"  - Total unique discoveries: {comparison_result.total_unique_discoveries}")
+        logger.info(f"  - Agreement rate: {comparison_result.agreement_rate:.1f}%")
+
+        # Step 5: Generate markdown report
+        logger.info("\n[6/6] Generating comparison report...")
+        markdown_content = markdown_gen.generate_report(
+            comparison=comparison_result,
+            threat_model_name=threat_model.name,
+            threat_model_id=threat_model_id,
+        )
+
+        # Save to file if requested
+        if output:
+            markdown_gen.save_to_file(markdown_content, output)
+            logger.info(f"Report saved to: {output}")
+
+        # Create note in TMI
+        if not dry_run:
+            from datetime import datetime
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            note_name = f"Terraform Analysis Comparison ({timestamp})"
+
+            note = tmi_client.create_or_update_note(
+                threat_model_id=threat_model_id,
+                name=note_name,
+                content=markdown_content,
+                description=f"Comparison of {len(parsed_analyses)} analysis notes from different LLM models",
+            )
+            logger.info(f"Comparison note created: {note.id}")
+            logger.info(f"Note name: {note.name}")
+        else:
+            logger.info("Dry run - skipping note creation")
+            if not output:
+                # Print to stdout if no output file specified
+                print("\n" + "=" * 80)
+                print("COMPARISON REPORT")
+                print("=" * 80 + "\n")
+                print(markdown_content)
+
+        logger.info("\n" + "=" * 80)
+        logger.info("Comparison complete!")
+        logger.info("=" * 80)
+
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
 
 
