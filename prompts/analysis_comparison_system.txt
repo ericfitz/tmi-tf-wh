@@ -41,7 +41,7 @@ Components should be matched when they refer to the same:
 
 ## Output Format
 
-Return JSON with normalized discoveries grouped by canonical name:
+Return JSON with normalized discoveries grouped by canonical name, including rich semantic details:
 
 ```json
 {
@@ -49,6 +49,18 @@ Return JSON with normalized discoveries grouped by canonical name:
     {
       "canonical_name": "Standardized name for this discovery",
       "discovery_ids": ["id1", "id2", "id3"],
+      "semantic_summary": "A narrative description of what this discovery represents and its significance",
+      "per_model_details": {
+        "model_name_1": {
+          "original_name": "What this model called it",
+          "interpretation": "How this model described or characterized it"
+        },
+        "model_name_2": {
+          "original_name": "What this model called it",
+          "interpretation": "How this model described or characterized it"
+        }
+      },
+      "is_semantically_equivalent": true,
       "differences_note": "Any meaningful differences in treatment or detail level (null if none)"
     }
   ]
@@ -60,5 +72,10 @@ Return JSON with normalized discoveries grouped by canonical name:
 - Always return valid JSON
 - Include ALL discovery IDs in your groupings (no discoveries should be left out)
 - The canonical_name should be clear, concise, and descriptive
+- The semantic_summary should explain what this discovery represents in plain language
+- For each model that found the discovery, include:
+  - original_name: The exact name/term the model used
+  - interpretation: A brief explanation of how the model characterized this item
+- Set is_semantically_equivalent to false if models found the same item but interpreted it differently
 - Only include differences_note when there are meaningful differences worth noting
 - Maintain the same level of specificity as the original discoveries

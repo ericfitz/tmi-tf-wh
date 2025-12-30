@@ -37,6 +37,18 @@ class Discovery:
     raw_text: str
     normalized_name: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    # Semantic representation: what this discovery represents/means
+    semantic_meaning: Optional[str] = None
+
+
+@dataclass
+class ModelDiscoveryDetail:
+    """Details about how a specific model described a discovery."""
+
+    model_name: str
+    original_name: str
+    description: str
+    semantic_meaning: Optional[str] = None
 
 
 @dataclass
@@ -48,6 +60,12 @@ class NormalizedDiscovery:
     models_that_found: List[str]
     model_details: Dict[str, Discovery]
     differences_summary: Optional[str] = None
+    # Narrative summary of what this discovery represents
+    semantic_summary: Optional[str] = None
+    # Per-model narratives explaining each model's interpretation
+    per_model_narratives: Dict[str, ModelDiscoveryDetail] = field(default_factory=dict)
+    # Whether this appears to be semantically equivalent across models that found it
+    is_semantically_equivalent: bool = True
 
 
 @dataclass
@@ -185,6 +203,10 @@ class AnalysisParser:
             name = re.sub(r"`+", "", name).strip()
 
             if name:
+                # Build semantic meaning from name and description
+                semantic_meaning = self._build_semantic_meaning(
+                    name, description, category
+                )
                 discovery = Discovery(
                     id=str(uuid.uuid4()),
                     category=category,
@@ -192,6 +214,7 @@ class AnalysisParser:
                     description=description,
                     source_model=model_name,
                     raw_text=match.group(0).strip(),
+                    semantic_meaning=semantic_meaning,
                 )
                 discoveries.append(discovery)
 
@@ -212,6 +235,10 @@ class AnalysisParser:
                 name = re.sub(r"`+", "", name).strip()
 
                 if name:
+                    # Include subsection context in semantic meaning
+                    semantic_meaning = self._build_semantic_meaning(
+                        name, description, category, subsection_name
+                    )
                     discovery = Discovery(
                         id=str(uuid.uuid4()),
                         category=category,
@@ -220,10 +247,39 @@ class AnalysisParser:
                         source_model=model_name,
                         raw_text=item_match.group(0).strip(),
                         metadata={"subsection": subsection_name},
+                        semantic_meaning=semantic_meaning,
                     )
                     discoveries.append(discovery)
 
         return discoveries
+
+    def _build_semantic_meaning(
+        self,
+        name: str,
+        description: str,
+        category: DiscoveryCategory,
+        subsection: Optional[str] = None,
+    ) -> str:
+        """Build a semantic meaning string from discovery components."""
+        parts = []
+
+        # Add subsection context if present
+        if subsection:
+            parts.append(f"[{subsection}]")
+
+        # Add the name
+        parts.append(name)
+
+        # Add description if substantive
+        if description and len(description) > 10:
+            # Clean up the description
+            clean_desc = description.replace("\n", " ").strip()
+            # Truncate if too long, but preserve meaning
+            if len(clean_desc) > 200:
+                clean_desc = clean_desc[:197] + "..."
+            parts.append(f"- {clean_desc}")
+
+        return " ".join(parts)
 
 
 class AnalysisComparer:
@@ -379,7 +435,7 @@ class AnalysisComparer:
             f"Normalizing {len(discoveries)} discoveries in category: {category.value}"
         )
 
-        # Prepare discovery data for LLM
+        # Prepare discovery data for LLM with semantic meaning
         discovery_data = []
         for d in discoveries:
             discovery_data.append(
@@ -388,10 +444,11 @@ class AnalysisComparer:
                     "name": d.name,
                     "description": d.description,
                     "source_model": d.source_model,
+                    "semantic_meaning": d.semantic_meaning or d.description,
                 }
             )
 
-        # Call LLM for normalization
+        # Call LLM for normalization with rich semantic output
         user_prompt = f"""Normalize and group these {category.value} discoveries from different AI models.
 
 Models being compared: {', '.join(all_models)}
@@ -400,12 +457,26 @@ Discoveries:
 {json.dumps(discovery_data, indent=2)}
 
 Group semantically equivalent discoveries together and create a canonical name for each group.
+For each group, provide:
+1. A canonical name
+2. A semantic summary explaining what this discovery represents
+3. Per-model details showing how each model named and interpreted the discovery
+4. Whether the models are semantically equivalent in their understanding
+
 Return JSON with this structure:
 {{
   "normalized_items": [
     {{
       "canonical_name": "Standardized name",
       "discovery_ids": ["id1", "id2"],
+      "semantic_summary": "A narrative description of what this represents",
+      "per_model_details": {{
+        "model_name": {{
+          "original_name": "What the model called it",
+          "interpretation": "How the model described it"
+        }}
+      }},
+      "is_semantically_equivalent": true,
       "differences_note": "Any notable differences in treatment"
     }}
   ]
@@ -430,7 +501,7 @@ Return JSON with this structure:
                 logger.warning("Failed to parse normalization response, using fallback")
                 return self._fallback_normalize(discoveries, all_models)
 
-            # Build NormalizedDiscovery objects
+            # Build NormalizedDiscovery objects with rich semantic data
             discovery_map = {d.id: d for d in discoveries}
             normalized_discoveries = []
 
@@ -438,16 +509,38 @@ Return JSON with this structure:
                 canonical_name = item.get("canonical_name", "Unknown")
                 discovery_ids = item.get("discovery_ids", [])
                 differences_note = item.get("differences_note")
+                semantic_summary = item.get("semantic_summary")
+                per_model_details_raw = item.get("per_model_details", {})
+                is_semantically_equivalent = item.get("is_semantically_equivalent", True)
 
                 # Find which models found this discovery
                 models_found = set()
                 model_details = {}
+                per_model_narratives = {}
 
                 for did in discovery_ids:
                     if did in discovery_map:
                         d = discovery_map[did]
                         models_found.add(d.source_model)
                         model_details[d.source_model] = d
+
+                        # Build per-model narrative from LLM response or fallback
+                        if d.source_model in per_model_details_raw:
+                            pmd = per_model_details_raw[d.source_model]
+                            per_model_narratives[d.source_model] = ModelDiscoveryDetail(
+                                model_name=d.source_model,
+                                original_name=pmd.get("original_name", d.name),
+                                description=pmd.get("interpretation", d.description),
+                                semantic_meaning=d.semantic_meaning,
+                            )
+                        else:
+                            # Fallback: use discovery data directly
+                            per_model_narratives[d.source_model] = ModelDiscoveryDetail(
+                                model_name=d.source_model,
+                                original_name=d.name,
+                                description=d.description,
+                                semantic_meaning=d.semantic_meaning,
+                            )
 
                 if models_found:
                     normalized_discoveries.append(
@@ -457,6 +550,9 @@ Return JSON with this structure:
                             models_that_found=sorted(models_found),
                             model_details=model_details,
                             differences_summary=differences_note,
+                            semantic_summary=semantic_summary,
+                            per_model_narratives=per_model_narratives,
+                            is_semantically_equivalent=is_semantically_equivalent,
                         )
                     )
 
@@ -488,6 +584,19 @@ Return JSON with this structure:
             # Use the first discovery's name as canonical
             canonical_name = group[0].name
 
+            # Build per-model narratives from discovery data
+            per_model_narratives = {}
+            for d in group:
+                per_model_narratives[d.source_model] = ModelDiscoveryDetail(
+                    model_name=d.source_model,
+                    original_name=d.name,
+                    description=d.description,
+                    semantic_meaning=d.semantic_meaning,
+                )
+
+            # Build semantic summary from first discovery
+            semantic_summary = group[0].semantic_meaning or group[0].description
+
             normalized.append(
                 NormalizedDiscovery(
                     canonical_name=canonical_name,
@@ -495,6 +604,9 @@ Return JSON with this structure:
                     models_that_found=sorted(models_found),
                     model_details=model_details,
                     differences_summary=None,
+                    semantic_summary=semantic_summary,
+                    per_model_narratives=per_model_narratives,
+                    is_semantically_equivalent=True,
                 )
             )
 

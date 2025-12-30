@@ -2,9 +2,12 @@
 
 import logging
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
-from tmi_tf.analysis_comparer import ComparisonResult, NormalizedDiscovery
+from tmi_tf.analysis_comparer import (
+    ComparisonResult,
+    NormalizedDiscovery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +158,7 @@ This report compares infrastructure analysis results from multiple AI models to 
         discoveries: List[NormalizedDiscovery],
         models: List[str],
     ) -> str:
-        """Generate a comparison section with table."""
+        """Generate a comparison section with table and narrative."""
         if not discoveries:
             return f"## {section_name}\n\nNo discoveries in this category."
 
@@ -165,6 +168,12 @@ This report compares infrastructure analysis results from multiple AI models to 
         # Generate table
         table = self._generate_comparison_table(discoveries, models)
         lines.append(table)
+
+        # Generate narrative analysis below the table
+        narrative = self._generate_section_narrative(discoveries, models, section_name)
+        if narrative:
+            lines.append("")
+            lines.append(narrative)
 
         return "\n".join(lines)
 
@@ -216,6 +225,153 @@ This report compares infrastructure analysis results from multiple AI models to 
             rows.append(row)
 
         return "\n".join(rows)
+
+    def _generate_section_narrative(
+        self,
+        discoveries: List[NormalizedDiscovery],
+        models: List[str],
+        section_name: str,
+    ) -> str:
+        """Generate narrative analysis for a section explaining what each model found."""
+        if not discoveries:
+            return ""
+
+        lines = ["### Analysis"]
+        lines.append("")
+
+        # Group discoveries by coverage pattern
+        all_models_found = []
+        partial_found = []
+        single_model_found: Dict[str, List[NormalizedDiscovery]] = {m: [] for m in models}
+
+        for d in discoveries:
+            if len(d.models_that_found) == len(models):
+                all_models_found.append(d)
+            elif len(d.models_that_found) == 1:
+                single_model_found[d.models_that_found[0]].append(d)
+            else:
+                partial_found.append(d)
+
+        # Narrative about universal findings
+        if all_models_found:
+            lines.append(f"**Universal Findings ({len(all_models_found)} items)**")
+            lines.append("")
+            lines.append(
+                f"All models identified the following {section_name.lower()}:"
+            )
+            lines.append("")
+            for d in all_models_found[:5]:  # Limit to avoid excessive length
+                narrative = self._build_discovery_narrative(d, models)
+                lines.append(f"- **{d.canonical_name}**: {narrative}")
+            if len(all_models_found) > 5:
+                lines.append(f"- *...and {len(all_models_found) - 5} more items*")
+            lines.append("")
+
+        # Narrative about partial findings
+        if partial_found:
+            lines.append(f"**Partial Agreement ({len(partial_found)} items)**")
+            lines.append("")
+            lines.append(
+                "The following items were found by some but not all models:"
+            )
+            lines.append("")
+            for d in partial_found[:5]:
+                found_by = ", ".join(
+                    self._get_short_model_name(m) for m in d.models_that_found
+                )
+                missed_by = ", ".join(
+                    self._get_short_model_name(m)
+                    for m in models
+                    if m not in d.models_that_found
+                )
+                narrative = self._build_discovery_narrative(d, models)
+                lines.append(
+                    f"- **{d.canonical_name}**: Found by {found_by}, "
+                    f"missed by {missed_by}. {narrative}"
+                )
+            if len(partial_found) > 5:
+                lines.append(f"- *...and {len(partial_found) - 5} more items*")
+            lines.append("")
+
+        # Narrative about unique findings per model
+        unique_models_with_findings = [
+            m for m in models if single_model_found[m]
+        ]
+        if unique_models_with_findings:
+            lines.append("**Unique Findings**")
+            lines.append("")
+            for model in unique_models_with_findings:
+                unique_items = single_model_found[model]
+                short_name = self._get_short_model_name(model)
+                lines.append(
+                    f"*{short_name}* uniquely identified {len(unique_items)} item(s):"
+                )
+                lines.append("")
+                for d in unique_items[:3]:
+                    narrative = self._build_single_model_narrative(d, model)
+                    lines.append(f"- **{d.canonical_name}**: {narrative}")
+                if len(unique_items) > 3:
+                    lines.append(f"- *...and {len(unique_items) - 3} more items*")
+                lines.append("")
+
+        return "\n".join(lines)
+
+    def _build_discovery_narrative(
+        self, discovery: NormalizedDiscovery, models: List[str]
+    ) -> str:
+        """Build a narrative description for a discovery showing how models described it."""
+        parts = []
+
+        # Start with semantic summary if available
+        if discovery.semantic_summary:
+            parts.append(discovery.semantic_summary)
+
+        # Add per-model interpretations if there are differences worth noting
+        if (
+            discovery.per_model_narratives
+            and len(discovery.per_model_narratives) > 1
+        ):
+            model_descriptions = []
+            for model, detail in discovery.per_model_narratives.items():
+                short_name = self._get_short_model_name(model)
+                if detail.original_name != discovery.canonical_name:
+                    model_descriptions.append(
+                        f'{short_name} called this "{detail.original_name}"'
+                    )
+                elif detail.description:
+                    # Truncate long descriptions
+                    desc = detail.description
+                    if len(desc) > 100:
+                        desc = desc[:97] + "..."
+                    model_descriptions.append(f"{short_name}: {desc}")
+
+            if model_descriptions:
+                parts.append(" ".join(model_descriptions))
+
+        # Note if semantically different
+        if not discovery.is_semantically_equivalent:
+            parts.append("*Note: Models interpreted this item differently.*")
+
+        return " ".join(parts) if parts else "No additional details available."
+
+    def _build_single_model_narrative(
+        self, discovery: NormalizedDiscovery, model: str
+    ) -> str:
+        """Build a narrative for a discovery found by only one model."""
+        if model in discovery.per_model_narratives:
+            detail = discovery.per_model_narratives[model]
+            if detail.description:
+                desc = detail.description
+                if len(desc) > 150:
+                    desc = desc[:147] + "..."
+                return desc
+            elif detail.semantic_meaning:
+                return detail.semantic_meaning
+
+        if discovery.semantic_summary:
+            return discovery.semantic_summary
+
+        return "No additional details available."
 
     def _generate_insights_section(self, insights: str) -> str:
         """Generate the LLM insights section."""
