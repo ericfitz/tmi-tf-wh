@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -315,11 +316,15 @@ class AnalysisComparer:
             return ""
 
     def _configure_litellm(self):
-        """Configure LiteLLM with API keys."""
+        """Configure LiteLLM with API keys via environment variables."""
         if self.config.anthropic_api_key:
-            litellm.api_key = self.config.anthropic_api_key
+            os.environ["ANTHROPIC_API_KEY"] = self.config.anthropic_api_key
         if self.config.openai_api_key:
-            litellm.openai_key = self.config.openai_api_key
+            os.environ["OPENAI_API_KEY"] = self.config.openai_api_key
+        if hasattr(self.config, "xai_api_key") and self.config.xai_api_key:
+            os.environ["XAI_API_KEY"] = self.config.xai_api_key
+        if hasattr(self.config, "gemini_api_key") and self.config.gemini_api_key:
+            os.environ["GEMINI_API_KEY"] = self.config.gemini_api_key
 
     def _get_llm_model(self) -> str:
         """Get the LLM model to use for comparison."""
