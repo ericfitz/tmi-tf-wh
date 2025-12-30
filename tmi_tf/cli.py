@@ -529,14 +529,16 @@ def compare(
         logger.info("\n[4/6] Parsing and comparing analyses...")
         parsed_analyses = []
 
-        for note in analysis_notes:
-            model_name = comparer.parser.extract_model_from_note_name(note.name)
+        for note_item in analysis_notes:
+            model_name = comparer.parser.extract_model_from_note_name(note_item.name)
             if model_name:
+                # Fetch full note with content (NoteListItem doesn't include content)
+                full_note = tmi_client.get_note(threat_model_id, note_item.id)
                 parsed = comparer.parser.parse_note(
-                    note_content=note.content,
+                    note_content=full_note.content,
                     model_name=model_name,
-                    note_id=note.id,
-                    note_name=note.name,
+                    note_id=full_note.id,
+                    note_name=full_note.name,
                 )
                 parsed_analyses.append(parsed)
                 logger.info(

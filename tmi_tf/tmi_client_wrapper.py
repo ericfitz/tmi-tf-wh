@@ -211,11 +211,14 @@ class TMIClient:
         """
         Get all notes for a threat model.
 
+        Note: This returns NoteListItem objects which do NOT include the content field.
+        Use get_note() to fetch individual notes with their full content.
+
         Args:
             threat_model_id: Threat model UUID
 
         Returns:
-            List of Note objects
+            List of NoteListItem objects (content not included)
         """
         logger.info(f"Fetching notes for threat model: {threat_model_id}")
         try:
@@ -224,6 +227,28 @@ class TMIClient:
             return notes
         except Exception as e:
             logger.error(f"Failed to get notes: {e}")
+            raise
+
+    def get_note(self, threat_model_id: str, note_id: str) -> Note:
+        """
+        Get a specific note by ID with full content.
+
+        Args:
+            threat_model_id: Threat model UUID
+            note_id: Note UUID
+
+        Returns:
+            Note object with content
+        """
+        logger.info(f"Fetching note {note_id} from threat model {threat_model_id}")
+        try:
+            note = self.sub_resources_api.get_threat_model_note(
+                threat_model_id, note_id
+            )
+            logger.info(f"Retrieved note: {note.name}")
+            return note
+        except Exception as e:
+            logger.error(f"Failed to get note: {e}")
             raise
 
     def update_note(
