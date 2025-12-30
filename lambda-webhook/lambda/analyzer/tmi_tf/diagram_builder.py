@@ -253,11 +253,20 @@ class DFDBuilder:
 
         label_text = " ".join(label_parts)
 
+        # Build source and target dicts with optional port
+        source_dict: dict[str, str] = {"cell": source_cell["id"]}
+        target_dict: dict[str, str] = {"cell": target_cell["id"]}
+
+        if source_port:
+            source_dict["port"] = source_port
+        if target_port:
+            target_dict["port"] = target_port
+
         edge = {
             "id": cell_id,
             "shape": "edge",
-            "source": {"cell": source_cell["id"]},
-            "target": {"cell": target_cell["id"]},
+            "source": source_dict,
+            "target": target_dict,
             "zIndex": self.Z_INDEX["edge"],
             "attrs": {
                 "line": {
@@ -270,12 +279,6 @@ class DFDBuilder:
             "router": {"name": "normal"},
             "connector": {"name": "smooth"},
         }
-
-        # Add ports if available
-        if source_port:
-            edge["source"]["port"] = source_port
-        if target_port:
-            edge["target"]["port"] = target_port
 
         return edge
 

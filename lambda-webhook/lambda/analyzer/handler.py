@@ -116,7 +116,7 @@ def analyze_repository(
     logger.info(f"Analyzing repository: {repository.name} ({repository.url})")
 
     # Initialize repository analyzer
-    analyzer = RepositoryAnalyzer(config)
+    analyzer = RepositoryAnalyzer(config)  # type: ignore[arg-type]
 
     # Clone and analyze repository
     with analyzer.clone_repository_sparse(repository.url, repository.name) as tf_repo:
@@ -209,7 +209,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             token = auth_client.get_token()
 
             # Initialize TMI client with token
-            tmi_client = TMIClient(config, auth_token=token)
+            tmi_client = TMIClient(config, auth_token=token)  # type: ignore[arg-type]
 
             # Analyze repository and create note
             analyze_repository(
@@ -239,7 +239,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     tmi_server_url = os.environ.get('TMI_SERVER_URL', 'https://api.tmi.dev')
                     auth_client = LambdaOAuthClient(tmi_server_url)
                     token = auth_client.get_token()
-                    tmi_client = TMIClient(config, auth_token=token)
+                    tmi_client = TMIClient(config, auth_token=token)  # type: ignore[arg-type]
 
                     # Fetch repository details for error note
                     message = json.loads(record['body'])

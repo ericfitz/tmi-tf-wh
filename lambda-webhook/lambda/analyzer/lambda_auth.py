@@ -78,7 +78,7 @@ class LambdaOAuthClient:
             LambdaOAuthClient._token_expires_at = datetime.now() + timedelta(seconds=expires_in - 60)
 
             logger.info(f"OAuth token obtained (expires in {expires_in}s)")
-            return self._token_cache
+            return self._token_cache or ""
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to obtain OAuth token: {e}")

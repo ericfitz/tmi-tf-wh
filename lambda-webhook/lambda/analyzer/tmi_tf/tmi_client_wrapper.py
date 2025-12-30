@@ -354,7 +354,8 @@ class TMIClient:
 
         if existing_diagram:
             logger.info(f"Diagram '{name}' already exists, updating...")
-            diagram_id = existing_diagram.id
+            raw_id = existing_diagram.id if hasattr(existing_diagram, 'id') else existing_diagram.get("id")  # type: ignore[union-attr]
+            diagram_id = str(raw_id) if raw_id else ""
             return self.update_diagram_cells(threat_model_id, diagram_id, cells)
         else:
             logger.info(f"Creating new diagram '{name}'...")
