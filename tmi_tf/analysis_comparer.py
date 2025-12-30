@@ -333,9 +333,7 @@ class AnalysisComparer:
 
     def _get_llm_model(self) -> str:
         """Get the LLM model to use for comparison."""
-        if self.config.llm_model:
-            return self.config.llm_model
-        return self.config.DEFAULT_MODELS.get(self.config.llm_provider, "gpt-4")
+        return self.config.get_llm_model()
 
     def discover_analysis_notes(
         self, tmi_client: Any, threat_model_id: str

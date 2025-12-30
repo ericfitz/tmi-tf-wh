@@ -18,6 +18,14 @@ class Config:
         "gemini": "gemini/gemini-3-pro-preview",
     }
 
+    # Provider prefixes for LiteLLM
+    PROVIDER_PREFIXES = {
+        "anthropic": "anthropic/",
+        "openai": "openai/",
+        "xai": "xai/",
+        "gemini": "gemini/",
+    }
+
     def __init__(self):
         """Initialize configuration from .env file."""
         # Load .env file from project root
@@ -71,6 +79,22 @@ class Config:
         self.cache_dir = Path.home() / ".tmi-tf"
         self.cache_dir.mkdir(exist_ok=True)
         self.token_cache_file = self.cache_dir / "token.json"
+
+    def get_llm_model(self) -> str:
+        """Get the LLM model with proper provider prefix for LiteLLM.
+
+        If LLM_MODEL is set without a prefix, prepends the provider prefix.
+        If LLM_MODEL already has a prefix (contains '/'), uses it as-is.
+        If LLM_MODEL is not set, returns the default model for the provider.
+        """
+        if self.llm_model:
+            # If model already has a provider prefix, use as-is
+            if "/" in self.llm_model:
+                return self.llm_model
+            # Otherwise prepend the provider prefix
+            prefix = self.PROVIDER_PREFIXES.get(self.llm_provider, "")
+            return f"{prefix}{self.llm_model}"
+        return self.DEFAULT_MODELS.get(self.llm_provider, "gpt-4")
 
     def _validate_llm_credentials(self):
         """Validate that required credentials exist for the selected LLM provider."""
