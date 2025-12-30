@@ -42,6 +42,11 @@ class DFDLLMGenerator:
             api_key: API key (deprecated, for backwards compatibility)
             model: Model to use (deprecated, for backwards compatibility)
         """
+        # Token and cost tracking for this generation
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.total_cost = 0.0
+
         if config:
             # New-style initialization with config
             self.provider = getattr(config, "llm_provider", "anthropic")
@@ -136,6 +141,20 @@ class DFDLLMGenerator:
                 temperature=0,  # Deterministic output for structured data
                 timeout=180.0,
             )
+
+            # Extract token usage from response
+            if hasattr(response, "usage") and response.usage:
+                self.input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+                self.output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+                # Calculate cost using litellm's cost calculator
+                try:
+                    self.total_cost = litellm.completion_cost(completion_response=response)
+                except Exception:
+                    self.total_cost = 0.0
+                logger.info(
+                    f"DFD generation: {self.input_tokens} input tokens, "
+                    f"{self.output_tokens} output tokens, ${self.total_cost:.4f}"
+                )
 
             # Extract the response content
             # LiteLLM returns ModelResponse with choices attribute at runtime

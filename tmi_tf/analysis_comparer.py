@@ -291,6 +291,11 @@ class AnalysisComparer:
         self.config = config
         self.parser = AnalysisParser()
 
+        # Token and cost tracking for comparison operations
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.total_cost = 0.0
+
         # Load prompts
         prompts_dir = Path(__file__).parent.parent / "prompts"
         self.comparison_system_prompt = self._load_prompt(
@@ -497,6 +502,16 @@ Return JSON with this structure:
                 temperature=0.2,
             )
 
+            # Track token usage
+            if hasattr(response, "usage") and response.usage:
+                self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
+                self.output_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                try:
+                    call_cost = litellm.completion_cost(completion_response=response)
+                    self.total_cost += call_cost
+                except Exception:
+                    pass
+
             response_text = response.choices[0].message.content
 
             # Extract JSON from response
@@ -679,6 +694,16 @@ Keep the summary concise (under 400 words) but insightful."""
                 ],
                 temperature=0.3,
             )
+
+            # Track token usage
+            if hasattr(response, "usage") and response.usage:
+                self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
+                self.output_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                try:
+                    call_cost = litellm.completion_cost(completion_response=response)
+                    self.total_cost += call_cost
+                except Exception:
+                    pass
 
             return response.choices[0].message.content
 

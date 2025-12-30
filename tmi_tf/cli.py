@@ -7,8 +7,12 @@ from typing import Optional
 import click
 
 from tmi_tf.analysis_comparer import AnalysisComparer
-from tmi_tf.artifact_metadata import aggregate_analysis_metadata
-from tmi_tf.comparison_markdown_generator import ComparisonMarkdownGenerator
+from tmi_tf.artifact_metadata import aggregate_analysis_metadata, create_artifact_metadata
+from tmi_tf.comparison_markdown_generator import (
+    ComparisonCostInfo,
+    ComparisonMarkdownGenerator,
+    ModelCostInfo,
+)
 from tmi_tf.config import get_config
 from tmi_tf.llm_analyzer import LLMAnalyzer
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
@@ -259,11 +263,13 @@ def analyze(
                     logger.info(f"Diagram created/updated successfully: {diagram_id}")
                     logger.info(f"Diagram contains {len(cells)} cells")
 
-                    # Add metadata to the diagram
-                    diagram_metadata = aggregate_analysis_metadata(
-                        analyses=analyses,
+                    # Add metadata to the diagram using DFD generator's own tracking
+                    diagram_metadata = create_artifact_metadata(
                         provider=dfd_generator.provider,
                         model=dfd_generator.model,
+                        input_tokens=dfd_generator.input_tokens,
+                        output_tokens=dfd_generator.output_tokens,
+                        cost_estimate_usd=dfd_generator.total_cost,
                     )
                     try:
                         tmi_client.set_diagram_metadata(
@@ -318,11 +324,13 @@ def analyze(
                         except Exception as e:
                             logger.warning(f"Could not get diagram ID: {e}")
 
-                    # Create threats in TMI with metadata
-                    threat_metadata = aggregate_analysis_metadata(
-                        analyses=analyses,
+                    # Create threats in TMI with metadata using processor's own tracking
+                    threat_metadata = create_artifact_metadata(
                         provider=threat_processor.provider,
                         model=threat_processor.model,
+                        input_tokens=threat_processor.input_tokens,
+                        output_tokens=threat_processor.output_tokens,
+                        cost_estimate_usd=threat_processor.total_cost,
                     )
                     created_threats = threat_processor.create_threats_in_tmi(
                         threats=all_threats,
@@ -528,6 +536,7 @@ def compare(
         # Step 4: Parse and compare analyses
         logger.info("\n[4/6] Parsing and comparing analyses...")
         parsed_analyses = []
+        model_costs: list[ModelCostInfo] = []
 
         for note_item in analysis_notes:
             model_name = comparer.parser.extract_model_from_note_name(note_item.name)
@@ -549,6 +558,26 @@ def compare(
                     f"{len(parsed.security_observations)} security"
                 )
 
+                # Extract cost metadata from note if available
+                if hasattr(full_note, "metadata") and full_note.metadata:
+                    metadata_dict = {
+                        m.key: m.value
+                        for m in full_note.metadata
+                        if hasattr(m, "key") and hasattr(m, "value")
+                    }
+                    cost_info = ModelCostInfo(
+                        model_name=model_name,
+                        provider=metadata_dict.get("llm-provider", ""),
+                        input_tokens=int(metadata_dict.get("input-tokens", 0)),
+                        output_tokens=int(metadata_dict.get("output-tokens", 0)),
+                        cost_usd=float(metadata_dict.get("cost-estimate-usd", 0.0)),
+                    )
+                    model_costs.append(cost_info)
+                    logger.info(
+                        f"  Cost info: {cost_info.input_tokens:,} in, "
+                        f"{cost_info.output_tokens:,} out, ${cost_info.cost_usd:.4f}"
+                    )
+
         if len(parsed_analyses) < 2:
             logger.error("Could not parse enough analysis notes for comparison")
             sys.exit(1)
@@ -561,12 +590,27 @@ def compare(
         logger.info(f"  - Total unique discoveries: {comparison_result.total_unique_discoveries}")
         logger.info(f"  - Agreement rate: {comparison_result.agreement_rate:.1f}%")
 
+        # Build comparison cost info from comparer's tracked usage
+        comparison_cost = ComparisonCostInfo(
+            provider=config.llm_provider,
+            model=comparer._get_llm_model(),
+            input_tokens=comparer.input_tokens,
+            output_tokens=comparer.output_tokens,
+            cost_usd=comparer.total_cost,
+        )
+        logger.info(
+            f"Comparison LLM usage: {comparer.input_tokens:,} in, "
+            f"{comparer.output_tokens:,} out, ${comparer.total_cost:.4f}"
+        )
+
         # Step 5: Generate markdown report
         logger.info("\n[6/6] Generating comparison report...")
         markdown_content = markdown_gen.generate_report(
             comparison=comparison_result,
             threat_model_name=threat_model.name,
             threat_model_id=threat_model_id,
+            model_costs=model_costs if model_costs else None,
+            comparison_cost=comparison_cost,
         )
 
         # Save to file if requested
@@ -589,6 +633,24 @@ def compare(
             )
             logger.info(f"Comparison note created: {note.id}")
             logger.info(f"Note name: {note.name}")
+
+            # Set metadata on the comparison note
+            comparison_metadata = create_artifact_metadata(
+                provider=config.llm_provider,
+                model=comparer._get_llm_model(),
+                input_tokens=comparer.input_tokens,
+                output_tokens=comparer.output_tokens,
+                cost_estimate_usd=comparer.total_cost,
+            )
+            try:
+                tmi_client.set_note_metadata(
+                    threat_model_id=threat_model_id,
+                    note_id=note.id,
+                    metadata=comparison_metadata.to_metadata_list(),
+                )
+                logger.info("Comparison note metadata set successfully")
+            except Exception as e:
+                logger.warning(f"Failed to set comparison note metadata: {e}")
         else:
             logger.info("Dry run - skipping note creation")
             if not output:

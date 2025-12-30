@@ -82,6 +82,11 @@ class ThreatProcessor:
         self.model = self._normalize_model_name(model_name)
         self._configure_api_keys()
 
+        # Token and cost tracking for threat extraction
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.total_cost = 0.0
+
     def _normalize_model_name(self, model: str) -> str:
         """
         Normalize model name to include proper LiteLLM prefix.
@@ -199,6 +204,22 @@ Extract and structure all security threats found in this analysis."""
                 temperature=0.3,
                 timeout=180.0,
             )
+
+            # Extract token usage from response and accumulate
+            if hasattr(response, "usage") and response.usage:
+                self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
+                self.output_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                # Calculate cost using litellm's cost calculator
+                try:
+                    call_cost = litellm.completion_cost(completion_response=response)
+                    self.total_cost += call_cost
+                except Exception:
+                    pass
+                logger.info(
+                    f"Threat extraction for {repo_name}: "
+                    f"{getattr(response.usage, 'prompt_tokens', 0)} input tokens, "
+                    f"{getattr(response.usage, 'completion_tokens', 0)} output tokens"
+                )
 
             # Extract JSON from response
             # LiteLLM returns ModelResponse with choices attribute at runtime
