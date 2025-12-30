@@ -2,10 +2,12 @@
 
 import logging
 import sys
+from typing import Optional
 
 import click
 
 from tmi_tf.analysis_comparer import AnalysisComparer
+from tmi_tf.artifact_metadata import aggregate_analysis_metadata
 from tmi_tf.comparison_markdown_generator import ComparisonMarkdownGenerator
 from tmi_tf.config import get_config
 from tmi_tf.llm_analyzer import LLMAnalyzer
@@ -27,11 +29,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-@click.group()
-@click.version_option(version="0.1.0")
-def cli():
+def _cli_impl() -> None:
     """TMI Terraform Analysis Tool - Analyze infrastructure code for threat modeling."""
     pass
+
+
+# Apply Click decorators and cast to Group for proper type hints
+cli: click.Group = click.version_option(version="0.1.0")(
+    click.group()(_cli_impl)
+)
 
 
 @cli.command()
@@ -69,9 +75,9 @@ def cli():
 )
 def analyze(
     threat_model_id: str,
-    max_repos: int,
+    max_repos: Optional[int],
     dry_run: bool,
-    output: str,
+    output: Optional[str],
     force_auth: bool,
     verbose: bool,
     skip_diagram: bool,
@@ -195,6 +201,22 @@ def analyze(
             )
             logger.info(f"Note created/updated successfully: {note.id}")
             logger.info(f"Note name: {note.name}")
+
+            # Add metadata to the note
+            artifact_metadata = aggregate_analysis_metadata(
+                analyses=analyses,
+                provider=llm_analyzer.provider,
+                model=llm_analyzer.model,
+            )
+            try:
+                tmi_client.set_note_metadata(
+                    threat_model_id=threat_model_id,
+                    note_id=note.id,
+                    metadata=artifact_metadata.to_metadata_list(),
+                )
+                logger.info("Note metadata set successfully")
+            except Exception as e:
+                logger.warning(f"Failed to set note metadata: {e}")
         else:
             logger.info("\n[7/7] Dry run - skipping note creation")
             if not output:
@@ -236,6 +258,22 @@ def analyze(
                     )
                     logger.info(f"Diagram created/updated successfully: {diagram_id}")
                     logger.info(f"Diagram contains {len(cells)} cells")
+
+                    # Add metadata to the diagram
+                    diagram_metadata = aggregate_analysis_metadata(
+                        analyses=analyses,
+                        provider=dfd_generator.provider,
+                        model=dfd_generator.model,
+                    )
+                    try:
+                        tmi_client.set_diagram_metadata(
+                            threat_model_id=threat_model_id,
+                            diagram_id=diagram_id,
+                            metadata=diagram_metadata.to_metadata_list(),
+                        )
+                        logger.info("Diagram metadata set successfully")
+                    except Exception as e:
+                        logger.warning(f"Failed to set diagram metadata: {e}")
                 else:
                     logger.warning("Failed to generate structured data for diagram")
 
@@ -280,12 +318,18 @@ def analyze(
                         except Exception as e:
                             logger.warning(f"Could not get diagram ID: {e}")
 
-                    # Create threats in TMI
+                    # Create threats in TMI with metadata
+                    threat_metadata = aggregate_analysis_metadata(
+                        analyses=analyses,
+                        provider=threat_processor.provider,
+                        model=threat_processor.model,
+                    )
                     created_threats = threat_processor.create_threats_in_tmi(
                         threats=all_threats,
                         threat_model_id=threat_model_id,
                         tmi_client=tmi_client,
                         diagram_id=diagram_id,
+                        metadata=threat_metadata.to_metadata_list(),
                     )
                     logger.info(
                         f"Successfully created {len(created_threats)} threats in TMI"
@@ -419,7 +463,7 @@ def config_info():
 def compare(
     threat_model_id: str,
     dry_run: bool,
-    output: str,
+    output: Optional[str],
     force_auth: bool,
     verbose: bool,
 ):

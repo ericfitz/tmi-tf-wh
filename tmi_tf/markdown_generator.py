@@ -178,6 +178,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         total_time = sum(a.elapsed_time for a in successful)
         total_input_tokens = sum(a.input_tokens for a in successful)
         total_output_tokens = sum(a.output_tokens for a in successful)
+        total_cost = sum(a.total_cost for a in successful)
 
         metrics_section = ""
         if successful:
@@ -188,6 +189,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 - **Total Input Tokens**: {total_input_tokens:,}
 - **Total Output Tokens**: {total_output_tokens:,}
 - **Total Tokens**: {total_input_tokens + total_output_tokens:,}
+- **Estimated Cost**: ${total_cost:.4f} USD
 
 """
 

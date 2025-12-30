@@ -242,6 +242,7 @@ Extract and structure all security threats found in this analysis."""
         threat_model_id: str,
         tmi_client,
         diagram_id: Optional[str] = None,
+        metadata: Optional[List[Dict[str, str]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Create threat objects in TMI threat model.
@@ -251,6 +252,7 @@ Extract and structure all security threats found in this analysis."""
             threat_model_id: TMI threat model UUID
             tmi_client: TMIClientWrapper instance
             diagram_id: Optional diagram UUID to associate threats with
+            metadata: Optional list of metadata dicts with 'key' and 'value' keys
 
         Returns:
             List of created threat dicts
@@ -271,6 +273,7 @@ Extract and structure all security threats found in this analysis."""
                     severity=threat.severity,
                     status=threat.status,
                     diagram_id=diagram_id,
+                    metadata=metadata,
                 )
                 created_threats.append(created_threat)
                 logger.info(f"Created threat: {threat.name}")

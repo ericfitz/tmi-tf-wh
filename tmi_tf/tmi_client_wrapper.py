@@ -21,6 +21,7 @@ from tmi_client.configuration import Configuration  # noqa: E402
 from tmi_client.models import (  # noqa: E402
     CreateDiagramRequest,
     DiagramListItem,
+    Metadata,
     Note,
     NoteInput,
     Repository,
@@ -437,6 +438,7 @@ class TMIClient:
         status: Optional[str] = None,
         diagram_id: Optional[str] = None,
         cell_id: Optional[str] = None,
+        metadata: Optional[List[dict]] = None,
     ) -> dict:
         """
         Create a new threat in a threat model.
@@ -451,6 +453,7 @@ class TMIClient:
             status: Current status (e.g., Open, In Progress, Resolved)
             diagram_id: Associated diagram UUID
             cell_id: Associated cell UUID in the diagram
+            metadata: List of metadata dicts with 'key' and 'value' keys
 
         Returns:
             Created Threat object as dict
@@ -465,6 +468,13 @@ class TMIClient:
             else:
                 threat_type_list = threat_type
 
+            # Convert metadata dicts to Metadata objects if provided
+            metadata_objects = None
+            if metadata:
+                metadata_objects = [
+                    Metadata(key=m["key"], value=m["value"]) for m in metadata
+                ]
+
             threat_input = ThreatInput(
                 name=name,
                 threat_type=threat_type_list,
@@ -474,6 +484,7 @@ class TMIClient:
                 status=status,
                 diagram_id=diagram_id,
                 cell_id=cell_id,
+                metadata=metadata_objects,
             )
             threat = self.sub_resources_api.create_threat_model_threat(
                 threat_input, threat_model_id
@@ -482,4 +493,66 @@ class TMIClient:
             return threat.to_dict()
         except Exception as e:
             logger.error(f"Failed to create threat: {e}")
+            raise
+
+    def set_note_metadata(
+        self,
+        threat_model_id: str,
+        note_id: str,
+        metadata: List[dict],
+    ) -> List[dict]:
+        """
+        Set metadata on a note.
+
+        Args:
+            threat_model_id: Threat model UUID
+            note_id: Note UUID
+            metadata: List of metadata dicts with 'key' and 'value' keys
+
+        Returns:
+            List of created metadata dicts
+        """
+        logger.info(f"Setting metadata on note {note_id}")
+        try:
+            metadata_objects = [
+                Metadata(key=m["key"], value=m["value"]) for m in metadata
+            ]
+            result = self.sub_resources_api.bulk_create_note_metadata(
+                metadata_objects, threat_model_id, note_id
+            )
+            logger.info(f"Metadata set successfully: {len(metadata)} items")
+            return [m.to_dict() for m in result]
+        except Exception as e:
+            logger.error(f"Failed to set note metadata: {e}")
+            raise
+
+    def set_diagram_metadata(
+        self,
+        threat_model_id: str,
+        diagram_id: str,
+        metadata: List[dict],
+    ) -> List[dict]:
+        """
+        Set metadata on a diagram.
+
+        Args:
+            threat_model_id: Threat model UUID
+            diagram_id: Diagram UUID
+            metadata: List of metadata dicts with 'key' and 'value' keys
+
+        Returns:
+            List of created metadata dicts
+        """
+        logger.info(f"Setting metadata on diagram {diagram_id}")
+        try:
+            metadata_objects = [
+                Metadata(key=m["key"], value=m["value"]) for m in metadata
+            ]
+            result = self.sub_resources_api.bulk_create_diagram_metadata(
+                metadata_objects, threat_model_id, diagram_id
+            )
+            logger.info(f"Metadata set successfully: {len(metadata)} items")
+            return [m.to_dict() for m in result]
+        except Exception as e:
+            logger.error(f"Failed to set diagram metadata: {e}")
             raise
