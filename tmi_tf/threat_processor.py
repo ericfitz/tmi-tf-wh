@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Optional, Union
 
 import litellm
 
@@ -25,7 +25,7 @@ class SecurityThreat:
         description: str,
         threat_type: Union[str, List[str]],
         severity: str = "Medium",
-        mitigation: str = None,
+        mitigation: Optional[str] = None,
         status: str = "Open",
     ):
         """
@@ -201,7 +201,12 @@ Extract and structure all security threats found in this analysis."""
             )
 
             # Extract JSON from response
-            response_text = response.choices[0].message.content.strip()
+            # LiteLLM returns ModelResponse with choices attribute at runtime
+            content = response.choices[0].message.content  # type: ignore[union-attr]
+            if not content:
+                logger.warning(f"Empty response from LLM for {repo_name}")
+                return []
+            response_text = content.strip()
 
             # Try to find JSON array in the response
             json_match = re.search(r"\[[\s\S]*\]", response_text)
@@ -236,7 +241,7 @@ Extract and structure all security threats found in this analysis."""
         threats: List[SecurityThreat],
         threat_model_id: str,
         tmi_client,
-        diagram_id: str = None,
+        diagram_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Create threat objects in TMI threat model.

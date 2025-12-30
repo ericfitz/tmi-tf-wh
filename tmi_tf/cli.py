@@ -273,7 +273,8 @@ def analyze(
                                 threat_model_id, config.diagram_name
                             )
                             if existing_diagram:
-                                diagram_id = existing_diagram.id
+                                raw_id = existing_diagram.id if hasattr(existing_diagram, 'id') else existing_diagram.get("id")  # type: ignore[union-attr]
+                                diagram_id = str(raw_id) if raw_id else None
                         except Exception as e:
                             logger.warning(f"Could not get diagram ID: {e}")
 

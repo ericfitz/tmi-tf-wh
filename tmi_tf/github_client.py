@@ -159,11 +159,12 @@ class GitHubClient:
         """
         try:
             rate_limit = self.github.get_rate_limit()
-            core = rate_limit.core
+            # Access core rate limit - PyGithub returns RateLimit object with core attribute
+            core = getattr(rate_limit, 'core', rate_limit)
             return {
-                "limit": core.limit,
-                "remaining": core.remaining,
-                "reset": core.reset.isoformat(),
+                "limit": core.limit,  # type: ignore[union-attr]
+                "remaining": core.remaining,  # type: ignore[union-attr]
+                "reset": core.reset.isoformat(),  # type: ignore[union-attr]
             }
         except GithubException as e:
             logger.error(f"Failed to get rate limit info: {e}")

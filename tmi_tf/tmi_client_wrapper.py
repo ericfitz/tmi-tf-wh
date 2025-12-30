@@ -418,7 +418,8 @@ class TMIClient:
 
         if existing_diagram:
             logger.info(f"Diagram '{name}' already exists, updating...")
-            diagram_id = existing_diagram.id
+            raw_id = existing_diagram.id if hasattr(existing_diagram, 'id') else existing_diagram.get("id")  # type: ignore[union-attr]
+            diagram_id = str(raw_id) if raw_id else ""
             return self.update_diagram_cells(threat_model_id, diagram_id, cells)
         else:
             logger.info(f"Creating new diagram '{name}'...")
@@ -430,12 +431,12 @@ class TMIClient:
         threat_model_id: str,
         name: str,
         threat_type: Union[str, List[str]],
-        description: str = None,
-        mitigation: str = None,
-        severity: str = None,
-        status: str = None,
-        diagram_id: str = None,
-        cell_id: str = None,
+        description: Optional[str] = None,
+        mitigation: Optional[str] = None,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+        diagram_id: Optional[str] = None,
+        cell_id: Optional[str] = None,
     ) -> dict:
         """
         Create a new threat in a threat model.

@@ -301,9 +301,11 @@ Provide a mermaid diagram showing the architecture and relationships between com
 
             elapsed_time = time.time() - start_time
 
-            analysis_content = response.choices[0].message.content
-            input_tokens = response.usage.prompt_tokens
-            output_tokens = response.usage.completion_tokens
+            # LiteLLM returns ModelResponse with choices attribute at runtime
+            analysis_content = response.choices[0].message.content or ""  # type: ignore[union-attr]
+            usage = getattr(response, 'usage', None)
+            input_tokens = usage.prompt_tokens if usage else 0
+            output_tokens = usage.completion_tokens if usage else 0
 
             # Calculate cost using LiteLLM's cost tracking
             total_cost = litellm.completion_cost(completion_response=response)

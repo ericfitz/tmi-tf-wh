@@ -138,11 +138,15 @@ class DFDLLMGenerator:
             )
 
             # Extract the response content
-            if not response.choices or len(response.choices) == 0:
+            # LiteLLM returns ModelResponse with choices attribute at runtime
+            if not getattr(response, 'choices', None) or len(response.choices) == 0:  # type: ignore[union-attr]
                 logger.error("Empty response from LLM API")
                 return None
 
-            response_text = response.choices[0].message.content
+            response_text = response.choices[0].message.content  # type: ignore[union-attr]
+            if not response_text:
+                logger.error("Empty content in LLM response")
+                return None
 
             # Parse JSON from response
             structured_data = self._extract_json(response_text)
