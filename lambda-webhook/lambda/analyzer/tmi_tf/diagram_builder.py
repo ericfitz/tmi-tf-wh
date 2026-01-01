@@ -161,7 +161,7 @@ class DFDBuilder:
                 "text": {"text": component["name"]},
             },
             "data": {
-                "metadata": [
+                "_metadata": [
                     {"key": "component_id", "value": component["id"]},
                     {"key": "component_type", "value": component["type"]},
                     {"key": "component_subtype", "value": component.get("subtype", "")},
