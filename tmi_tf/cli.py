@@ -7,7 +7,10 @@ from typing import Optional
 import click
 
 from tmi_tf.analysis_comparer import AnalysisComparer
-from tmi_tf.artifact_metadata import aggregate_analysis_metadata, create_artifact_metadata
+from tmi_tf.artifact_metadata import (
+    aggregate_analysis_metadata,
+    create_artifact_metadata,
+)
 from tmi_tf.comparison_markdown_generator import (
     ComparisonCostInfo,
     ComparisonMarkdownGenerator,
@@ -39,9 +42,7 @@ def _cli_impl() -> None:
 
 
 # Apply Click decorators and cast to Group for proper type hints
-cli: click.Group = click.version_option(version="0.1.0")(
-    click.group()(_cli_impl)
-)
+cli: click.Group = click.version_option(version="0.1.0")(click.group()(_cli_impl))
 
 
 @cli.command()
@@ -319,7 +320,11 @@ def analyze(
                                 threat_model_id, config.diagram_name
                             )
                             if existing_diagram:
-                                raw_id = existing_diagram.id if hasattr(existing_diagram, 'id') else existing_diagram.get("id")  # type: ignore[union-attr]
+                                raw_id = (
+                                    existing_diagram.id
+                                    if hasattr(existing_diagram, "id")
+                                    else existing_diagram.get("id")
+                                )  # type: ignore[union-attr]
                                 diagram_id = str(raw_id) if raw_id else None
                         except Exception as e:
                             logger.warning(f"Could not get diagram ID: {e}")
@@ -587,7 +592,9 @@ def compare(
         comparison_result = comparer.compare_analyses(parsed_analyses)
 
         logger.info("Comparison complete:")
-        logger.info(f"  - Total unique discoveries: {comparison_result.total_unique_discoveries}")
+        logger.info(
+            f"  - Total unique discoveries: {comparison_result.total_unique_discoveries}"
+        )
         logger.info(f"  - Agreement rate: {comparison_result.agreement_rate:.1f}%")
 
         # Build comparison cost info from comparer's tracked usage

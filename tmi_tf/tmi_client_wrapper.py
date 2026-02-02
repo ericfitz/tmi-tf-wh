@@ -163,9 +163,10 @@ class TMIClient:
         """
         logger.info(f"Fetching repositories for threat model: {threat_model_id}")
         try:
-            repositories = self.sub_resources_api.get_threat_model_repositories(
+            response = self.sub_resources_api.get_threat_model_repositories(
                 threat_model_id
             )
+            repositories = response.repositories
             logger.info(f"Retrieved {len(repositories)} repositories")
             return repositories
         except Exception as e:
@@ -222,7 +223,8 @@ class TMIClient:
         """
         logger.info(f"Fetching notes for threat model: {threat_model_id}")
         try:
-            notes = self.sub_resources_api.get_threat_model_notes(threat_model_id)
+            response = self.sub_resources_api.get_threat_model_notes(threat_model_id)
+            notes = response.notes
             logger.info(f"Retrieved {len(notes)} notes")
             return notes
         except Exception as e:
@@ -402,7 +404,8 @@ class TMIClient:
         """
         logger.info(f"Fetching diagrams for threat model: {threat_model_id}")
         try:
-            diagrams = self.sub_resources_api.get_threat_model_diagrams(threat_model_id)
+            response = self.sub_resources_api.get_threat_model_diagrams(threat_model_id)
+            diagrams = response.diagrams
             logger.info(f"Retrieved {len(diagrams)} diagrams")
             return diagrams
         except Exception as e:
@@ -444,7 +447,11 @@ class TMIClient:
 
         if existing_diagram:
             logger.info(f"Diagram '{name}' already exists, updating...")
-            raw_id = existing_diagram.id if hasattr(existing_diagram, 'id') else existing_diagram.get("id")  # type: ignore[union-attr]
+            raw_id = (
+                existing_diagram.id
+                if hasattr(existing_diagram, "id")
+                else existing_diagram.get("id")
+            )  # type: ignore[union-attr]
             diagram_id = str(raw_id) if raw_id else ""
             return self.update_diagram_cells(threat_model_id, diagram_id, cells)
         else:

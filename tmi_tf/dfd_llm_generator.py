@@ -145,10 +145,14 @@ class DFDLLMGenerator:
             # Extract token usage from response
             if hasattr(response, "usage") and response.usage:
                 self.input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+                self.output_tokens = (
+                    getattr(response.usage, "completion_tokens", 0) or 0
+                )
                 # Calculate cost using litellm's cost calculator
                 try:
-                    self.total_cost = litellm.completion_cost(completion_response=response)
+                    self.total_cost = litellm.completion_cost(
+                        completion_response=response
+                    )
                 except Exception:
                     self.total_cost = 0.0
                 logger.info(
@@ -158,7 +162,7 @@ class DFDLLMGenerator:
 
             # Extract the response content
             # LiteLLM returns ModelResponse with choices attribute at runtime
-            if not getattr(response, 'choices', None) or len(response.choices) == 0:  # type: ignore[union-attr]
+            if not getattr(response, "choices", None) or len(response.choices) == 0:  # type: ignore[union-attr]
                 logger.error("Empty response from LLM API")
                 return None
 

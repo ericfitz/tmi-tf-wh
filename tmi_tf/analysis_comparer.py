@@ -220,9 +220,7 @@ class AnalysisParser:
                 discoveries.append(discovery)
 
         # Also try to parse sub-sections (### headers within the section)
-        subsection_pattern = re.compile(
-            r"###\s*([^\n]+)\n(.*?)(?=\n###|\Z)", re.DOTALL
-        )
+        subsection_pattern = re.compile(r"###\s*([^\n]+)\n(.*?)(?=\n###|\Z)", re.DOTALL)
         for match in subsection_pattern.finditer(section_content):
             subsection_name = match.group(1).strip()
             subsection_content = match.group(2).strip()
@@ -404,9 +402,7 @@ class AnalysisComparer:
         )
         if all_comparisons:
             agreed = sum(
-                1
-                for d in all_comparisons
-                if len(d.models_that_found) == len(models)
+                1 for d in all_comparisons if len(d.models_that_found) == len(models)
             )
             agreement_rate = agreed / len(all_comparisons) * 100
         else:
@@ -459,7 +455,7 @@ class AnalysisComparer:
         # Call LLM for normalization with rich semantic output
         user_prompt = f"""Normalize and group these {category.value} discoveries from different AI models.
 
-Models being compared: {', '.join(all_models)}
+Models being compared: {", ".join(all_models)}
 
 Discoveries:
 {json.dumps(discovery_data, indent=2)}
@@ -503,7 +499,9 @@ Return JSON with this structure:
             # Track token usage
             if hasattr(response, "usage") and response.usage:
                 self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                self.output_tokens += (
+                    getattr(response.usage, "completion_tokens", 0) or 0
+                )
                 try:
                     call_cost = litellm.completion_cost(completion_response=response)
                     self.total_cost += call_cost
@@ -529,7 +527,9 @@ Return JSON with this structure:
                 differences_note = item.get("differences_note")
                 semantic_summary = item.get("semantic_summary")
                 per_model_details_raw = item.get("per_model_details", {})
-                is_semantically_equivalent = item.get("is_semantically_equivalent", True)
+                is_semantically_equivalent = item.get(
+                    "is_semantically_equivalent", True
+                )
 
                 # Find which models found this discovery
                 models_found = set()
@@ -696,7 +696,9 @@ Keep the summary concise (under 400 words) but insightful."""
             # Track token usage
             if hasattr(response, "usage") and response.usage:
                 self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                self.output_tokens += (
+                    getattr(response.usage, "completion_tokens", 0) or 0
+                )
                 try:
                     call_cost = litellm.completion_cost(completion_response=response)
                     self.total_cost += call_cost

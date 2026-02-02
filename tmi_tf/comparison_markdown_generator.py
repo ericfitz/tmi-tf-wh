@@ -160,9 +160,7 @@ This report compares infrastructure analysis results from multiple AI models to 
         partial_agreement = sum(
             1 for d in all_discoveries if 1 < len(d.models_that_found) < total_models
         )
-        single_model = sum(
-            1 for d in all_discoveries if len(d.models_that_found) == 1
-        )
+        single_model = sum(1 for d in all_discoveries if len(d.models_that_found) == 1)
 
         return f"""## Summary Statistics
 
@@ -259,7 +257,15 @@ This report compares infrastructure analysis results from multiple AI models to 
 
         # Header row
         header = "| Discovery | " + " | ".join(short_names) + " | Notes |"
-        separator = "|" + "-" * 40 + "|" + "|".join(":---:" for _ in models) + "|" + "-" * 30 + "|"
+        separator = (
+            "|"
+            + "-" * 40
+            + "|"
+            + "|".join(":---:" for _ in models)
+            + "|"
+            + "-" * 30
+            + "|"
+        )
 
         rows = [header, separator]
 
@@ -286,11 +292,17 @@ This report compares infrastructure analysis results from multiple AI models to 
             # Notes column
             notes = ""
             if discovery.differences_summary:
-                notes = discovery.differences_summary[:28] + "..." if len(discovery.differences_summary) > 30 else discovery.differences_summary
+                notes = (
+                    discovery.differences_summary[:28] + "..."
+                    if len(discovery.differences_summary) > 30
+                    else discovery.differences_summary
+                )
             elif len(discovery.models_that_found) == len(models):
                 notes = "All models"
             elif len(discovery.models_that_found) == 1:
-                notes = f"Only {self._get_short_model_name(discovery.models_that_found[0])}"
+                notes = (
+                    f"Only {self._get_short_model_name(discovery.models_that_found[0])}"
+                )
 
             row = f"| {name} | " + " | ".join(indicators) + f" | {notes} |"
             rows.append(row)
@@ -313,7 +325,9 @@ This report compares infrastructure analysis results from multiple AI models to 
         # Group discoveries by coverage pattern
         all_models_found = []
         partial_found = []
-        single_model_found: Dict[str, List[NormalizedDiscovery]] = {m: [] for m in models}
+        single_model_found: Dict[str, List[NormalizedDiscovery]] = {
+            m: [] for m in models
+        }
 
         for d in discoveries:
             if len(d.models_that_found) == len(models):
@@ -327,9 +341,7 @@ This report compares infrastructure analysis results from multiple AI models to 
         if all_models_found:
             lines.append(f"**Universal Findings ({len(all_models_found)} items)**")
             lines.append("")
-            lines.append(
-                f"All models identified the following {section_name.lower()}:"
-            )
+            lines.append(f"All models identified the following {section_name.lower()}:")
             lines.append("")
             for d in all_models_found[:5]:  # Limit to avoid excessive length
                 narrative = self._build_discovery_narrative(d, models)
@@ -342,9 +354,7 @@ This report compares infrastructure analysis results from multiple AI models to 
         if partial_found:
             lines.append(f"**Partial Agreement ({len(partial_found)} items)**")
             lines.append("")
-            lines.append(
-                "The following items were found by some but not all models:"
-            )
+            lines.append("The following items were found by some but not all models:")
             lines.append("")
             for d in partial_found[:5]:
                 found_by = ", ".join(
@@ -365,9 +375,7 @@ This report compares infrastructure analysis results from multiple AI models to 
             lines.append("")
 
         # Narrative about unique findings per model
-        unique_models_with_findings = [
-            m for m in models if single_model_found[m]
-        ]
+        unique_models_with_findings = [m for m in models if single_model_found[m]]
         if unique_models_with_findings:
             lines.append("**Unique Findings**")
             lines.append("")
@@ -398,10 +406,7 @@ This report compares infrastructure analysis results from multiple AI models to 
             parts.append(discovery.semantic_summary)
 
         # Add per-model interpretations if there are differences worth noting
-        if (
-            discovery.per_model_narratives
-            and len(discovery.per_model_narratives) > 1
-        ):
+        if discovery.per_model_narratives and len(discovery.per_model_narratives) > 1:
             model_descriptions = []
             for model, detail in discovery.per_model_narratives.items():
                 short_name = self._get_short_model_name(model)

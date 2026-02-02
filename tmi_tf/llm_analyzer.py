@@ -303,7 +303,7 @@ Provide a mermaid diagram showing the architecture and relationships between com
 
             # LiteLLM returns ModelResponse with choices attribute at runtime
             analysis_content = response.choices[0].message.content or ""  # type: ignore[union-attr]
-            usage = getattr(response, 'usage', None)
+            usage = getattr(response, "usage", None)
             input_tokens = usage.prompt_tokens if usage else 0
             output_tokens = usage.completion_tokens if usage else 0
 

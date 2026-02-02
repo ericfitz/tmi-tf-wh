@@ -208,7 +208,9 @@ Extract and structure all security threats found in this analysis."""
             # Extract token usage from response and accumulate
             if hasattr(response, "usage") and response.usage:
                 self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens += getattr(response.usage, "completion_tokens", 0) or 0
+                self.output_tokens += (
+                    getattr(response.usage, "completion_tokens", 0) or 0
+                )
                 # Calculate cost using litellm's cost calculator
                 try:
                     call_cost = litellm.completion_cost(completion_response=response)
