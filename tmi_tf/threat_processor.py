@@ -180,6 +180,8 @@ Return your response as a JSON array of threat objects with this structure:
   }
 ]
 
+IMPORTANT: Do not use HTML tags in any field values. Use plain text only.
+
 If no security threats are found, return an empty array: []"""
 
         user_prompt = f"""Analyze the following infrastructure security analysis for repository "{repo_name}" and extract all security threats.

@@ -295,11 +295,12 @@ class DFDLLMGenerator:
                 return False
 
         valid_types = [
-            "tenancy",
+            "tenant",
             "container",
             "network",
             "gateway",
             "compute",
+            "service",
             "storage",
             "actor",
         ]

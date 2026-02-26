@@ -1,6 +1,7 @@
 """TMI API client wrapper."""
 
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Union
@@ -37,9 +38,10 @@ logger = logging.getLogger(__name__)
 
 def sanitize_content_for_api(content: str) -> str:
     """
-    Sanitize content to match TMI API pattern: ^[\u0020-\uffff\n\r\t]*$
+    Sanitize content to match TMI API requirements.
 
     This removes:
+    - HTML tags (to avoid server-side XSS rejection)
     - Control characters (U+0000-U+001F) except \n, \r, \t
     - Characters above U+FFFF (emoji and supplementary Unicode)
 
@@ -51,6 +53,9 @@ def sanitize_content_for_api(content: str) -> str:
     """
     if not content:
         return content
+
+    # Strip HTML tags to prevent XSS detection by the API
+    sanitized = re.sub(r"<[^>]*>", "", content)
 
     # Replace characters outside the allowed range
     # Keep: U+0020-U+FFFF, \n (U+000A), \r (U+000D), \t (U+0009)
@@ -65,7 +70,7 @@ def sanitize_content_for_api(content: str) -> str:
         # Replace everything else with space
         return " "
 
-    sanitized = "".join(char_filter(c) for c in content)
+    sanitized = "".join(char_filter(c) for c in sanitized)
     return sanitized
 
 
@@ -508,10 +513,14 @@ class TMIClient:
                 ]
 
             threat_input = ThreatInput(
-                name=name,
+                name=sanitize_content_for_api(name) if name else name,
                 threat_type=threat_type_list,
-                description=description,
-                mitigation=mitigation,
+                description=sanitize_content_for_api(description)
+                if description
+                else description,
+                mitigation=sanitize_content_for_api(mitigation)
+                if mitigation
+                else mitigation,
                 severity=severity,
                 status=status,
                 diagram_id=diagram_id,

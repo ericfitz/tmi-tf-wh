@@ -17,7 +17,7 @@ class DFDBuilder:
 
     # Shape mapping from component types to X6 shapes
     SHAPE_MAP = {
-        "tenancy": "security-boundary",
+        "tenant": "security-boundary",
         "container": "security-boundary",
         "network": "security-boundary",
         "gateway": "process",
@@ -89,15 +89,15 @@ class DFDBuilder:
         return self.cells
 
     def _create_boundary_cells(self):
-        """Create security boundary cells for tenancy, container, and network components."""
-        # Get boundary components (tenancy, container, network)
+        """Create security boundary cells for tenant, container, and network components."""
+        # Get boundary components (tenant, container, network)
         boundaries = [
             c
             for c in self.components
-            if c["type"] in ["tenancy", "container", "network"]
+            if c["type"] in ["tenant", "container", "network"]
         ]
 
-        # Sort by hierarchy depth (tenancy first, then container, then network)
+        # Sort by hierarchy depth (tenant first, then container, then network)
         boundaries.sort(key=lambda c: self._get_depth(c["id"]))
 
         for component in boundaries:
@@ -142,7 +142,7 @@ class DFDBuilder:
         shape = self.SHAPE_MAP.get(component["type"], "process")
 
         # Determine if this is a boundary (needs larger default size)
-        is_boundary = component["type"] in ["tenancy", "container", "network"]
+        is_boundary = component["type"] in ["tenant", "container", "network"]
         width = self.DEFAULT_BOUNDARY_WIDTH if is_boundary else self.DEFAULT_NODE_WIDTH
         height = (
             self.DEFAULT_BOUNDARY_HEIGHT if is_boundary else self.DEFAULT_NODE_HEIGHT
@@ -353,14 +353,14 @@ class DFDBuilder:
         Get body styling attributes for a component type.
 
         Args:
-            component_type: Component type (tenancy, compute, etc.)
+            component_type: Component type (tenant, compute, etc.)
 
         Returns:
             Attrs object for body styling
         """
         # Color scheme for different component types
         colors = {
-            "tenancy": {"fill": "#FFF3E0", "stroke": "#FF9800"},
+            "tenant": {"fill": "#FFF3E0", "stroke": "#FF9800"},
             "container": {"fill": "#E3F2FD", "stroke": "#2196F3"},
             "network": {"fill": "#F3E5F5", "stroke": "#9C27B0"},
             "gateway": {"fill": "#E8F5E9", "stroke": "#4CAF50"},
@@ -424,7 +424,7 @@ class DFDBuilder:
                 self._layout_component(component, x_offset, y_offset)
 
                 # Move to next position for next root component
-                if component["type"] in ["tenancy", "container"]:
+                if component["type"] in ["tenant", "container"]:
                     # Stack boundaries vertically with spacing
                     y_offset += cell["height"] + self.BOUNDARY_PADDING
                 else:
@@ -455,7 +455,7 @@ class DFDBuilder:
             return
 
         # Layout children within this component
-        is_boundary = component["type"] in ["tenancy", "container", "network"]
+        is_boundary = component["type"] in ["tenant", "container", "network"]
 
         if is_boundary:
             # Calculate grid layout for children
