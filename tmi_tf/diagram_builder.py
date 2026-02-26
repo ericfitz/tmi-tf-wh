@@ -18,7 +18,14 @@ class DFDBuilder:
 
     # Component type categories for layout
     BOUNDARY_TYPES = {"tenant", "container", "network"}
-    LEAF_TYPES = {"gateway", "compute", "service", "storage", "actor"}
+    LEAF_TYPES = {
+        "gateway",
+        "compute",
+        "service",
+        "storage",
+        "actor",
+        "network_access_control",
+    }
 
     # Shape mapping from component types to X6 shapes
     SHAPE_MAP = {
@@ -28,6 +35,7 @@ class DFDBuilder:
         "gateway": "process",
         "compute": "process",
         "service": "process",
+        "network_access_control": "process",
         "storage": "store",
         "actor": "actor",
     }
@@ -39,6 +47,7 @@ class DFDBuilder:
         "gateway": 10,
         "compute": 11,
         "service": 11,
+        "network_access_control": 11,
         "storage": 11,
         "actor": 11,
         "edge": 20,

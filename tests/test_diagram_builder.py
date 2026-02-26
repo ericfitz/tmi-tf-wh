@@ -102,6 +102,7 @@ class TestComponentTypes:
             ("gateway", "process", 10),
             ("compute", "process", 11),
             ("service", "process", 11),
+            ("network_access_control", "process", 11),
             ("storage", "store", 11),
             ("actor", "actor", 11),
         ],
@@ -119,7 +120,8 @@ class TestComponentTypes:
             assert cell["zIndex"] == expected_z
 
     @pytest.mark.parametrize(
-        "comp_type", ["gateway", "compute", "service", "storage", "actor"]
+        "comp_type",
+        ["gateway", "compute", "service", "network_access_control", "storage", "actor"],
     )
     def test_leaf_nodes_have_ports(self, comp_type: str):
         components = [make_component("c1", "Test", comp_type)]
