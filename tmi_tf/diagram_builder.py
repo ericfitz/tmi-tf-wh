@@ -6,6 +6,7 @@ cells for creating diagrams in TMI.
 """
 
 import uuid
+from math import ceil, sqrt
 from typing import Any, Dict, List, Optional, Tuple
 import logging
 
@@ -15,6 +16,10 @@ logger = logging.getLogger(__name__)
 class DFDBuilder:
     """Builds Data Flow Diagram cells from structured component and flow data."""
 
+    # Component type categories for layout
+    BOUNDARY_TYPES = {"tenant", "container", "network"}
+    LEAF_TYPES = {"gateway", "compute", "service", "storage", "actor"}
+
     # Shape mapping from component types to X6 shapes
     SHAPE_MAP = {
         "tenant": "security-boundary",
@@ -22,6 +27,7 @@ class DFDBuilder:
         "network": "security-boundary",
         "gateway": "process",
         "compute": "process",
+        "service": "process",
         "storage": "store",
         "actor": "actor",
     }
@@ -32,6 +38,7 @@ class DFDBuilder:
         "boundary_increment": 1,
         "gateway": 10,
         "compute": 11,
+        "service": 11,
         "storage": 11,
         "actor": 11,
         "edge": 20,
@@ -90,12 +97,7 @@ class DFDBuilder:
 
     def _create_boundary_cells(self):
         """Create security boundary cells for tenant, container, and network components."""
-        # Get boundary components (tenant, container, network)
-        boundaries = [
-            c
-            for c in self.components
-            if c["type"] in ["tenant", "container", "network"]
-        ]
+        boundaries = [c for c in self.components if c["type"] in self.BOUNDARY_TYPES]
 
         # Sort by hierarchy depth (tenant first, then container, then network)
         boundaries.sort(key=lambda c: self._get_depth(c["id"]))
@@ -107,20 +109,15 @@ class DFDBuilder:
             self.component_cells[component["id"]] = cell
 
     def _create_node_cells(self):
-        """Create node cells for gateway, compute, storage, and actor components."""
-        nodes = [
-            c
-            for c in self.components
-            if c["type"] in ["gateway", "compute", "storage", "actor"]
-        ]
+        """Create node cells for gateway, compute, service, storage, and actor components."""
+        nodes = [c for c in self.components if c["type"] in self.LEAF_TYPES]
 
         for component in nodes:
             z_index = self.Z_INDEX.get(component["type"], 11)
             cell = self._create_node_cell(component, z_index)
 
-            # Add ports for all connectable nodes (compute, gateway, storage, actor)
-            if component["type"] in ["compute", "gateway", "storage", "actor"]:
-                cell["ports"] = self._create_ports()
+            # Add ports for all connectable leaf nodes
+            cell["ports"] = self._create_ports()
 
             self.cells.append(cell)
             self.component_cells[component["id"]] = cell
@@ -142,7 +139,7 @@ class DFDBuilder:
         shape = self.SHAPE_MAP.get(component["type"], "process")
 
         # Determine if this is a boundary (needs larger default size)
-        is_boundary = component["type"] in ["tenant", "container", "network"]
+        is_boundary = component["type"] in self.BOUNDARY_TYPES
         width = self.DEFAULT_BOUNDARY_WIDTH if is_boundary else self.DEFAULT_NODE_WIDTH
         height = (
             self.DEFAULT_BOUNDARY_HEIGHT if is_boundary else self.DEFAULT_NODE_HEIGHT
@@ -157,7 +154,6 @@ class DFDBuilder:
             "height": height,
             "zIndex": z_index,
             "attrs": {
-                "body": self._get_body_attrs(component["type"]),
                 "text": {"text": component["name"]},
             },
             "data": {
@@ -332,12 +328,9 @@ class DFDBuilder:
         dy = other_center_y - cell_center_y
 
         # Determine which port to use based on angle
-        # Use absolute values to determine if horizontal or vertical distance is greater
         if abs(dx) > abs(dy):
-            # Horizontal distance is greater
             port_group = "right" if dx > 0 else "left"
         else:
-            # Vertical distance is greater
             port_group = "bottom" if dy > 0 else "top"
 
         # Find the port with the selected group
@@ -347,29 +340,6 @@ class DFDBuilder:
                 return item.get("id")
 
         return None
-
-    def _get_body_attrs(self, component_type: str) -> Dict[str, Any]:
-        """
-        Get body styling attributes for a component type.
-
-        Args:
-            component_type: Component type (tenant, compute, etc.)
-
-        Returns:
-            Attrs object for body styling
-        """
-        # Color scheme for different component types
-        colors = {
-            "tenant": {"fill": "#FFF3E0", "stroke": "#FF9800"},
-            "container": {"fill": "#E3F2FD", "stroke": "#2196F3"},
-            "network": {"fill": "#F3E5F5", "stroke": "#9C27B0"},
-            "gateway": {"fill": "#E8F5E9", "stroke": "#4CAF50"},
-            "compute": {"fill": "#E1F5FE", "stroke": "#03A9F4"},
-            "storage": {"fill": "#FFF9C4", "stroke": "#FBC02D"},
-            "actor": {"fill": "#FFEBEE", "stroke": "#F44336"},
-        }
-
-        return colors.get(component_type, {"fill": "#FFFFFF", "stroke": "#333333"})
 
     def _calculate_boundary_z_index(self, component: Dict[str, Any]) -> int:
         """
@@ -402,166 +372,385 @@ class DFDBuilder:
 
         return 1 + self._get_depth(component["parent_id"])
 
+    # ---- Layout algorithm ----
+
+    def _build_flow_adjacency(self) -> Dict[str, set]:
+        """Build a peer-flow adjacency map from self.flows.
+
+        Returns:
+            Dict mapping component_id to set of component_ids it has flows with.
+        """
+        adjacency: Dict[str, set] = {}
+        for flow in self.flows:
+            src = flow["source_id"]
+            tgt = flow["target_id"]
+            adjacency.setdefault(src, set()).add(tgt)
+            adjacency.setdefault(tgt, set()).add(src)
+        return adjacency
+
+    def _get_children(self, component_id: str) -> List[Dict[str, Any]]:
+        """Get direct children of a component."""
+        return [c for c in self.components if c.get("parent_id") == component_id]
+
     def _auto_layout(self):
         """
-        Automatically layout all nodes using hierarchical algorithm.
+        Bottom-up sizing then top-down positioning.
 
-        This implements a simple hierarchical layout where:
-        1. Boundaries are sized to fit their children
-        2. Children are positioned within parents using grid layout
-        3. Root-level components are positioned first
+        Phase 1: Recursively compute sizes for all components (leaves up to roots).
+        Phase 2: Assign absolute x,y positions top-down.
         """
-        # Get components organized by hierarchy
+        adjacency = self._build_flow_adjacency()
+        placements_map: Dict[str, List[Tuple[int, int, int, int, Dict[str, Any]]]] = {}
+
         roots = [c for c in self.components if not c.get("parent_id")]
 
-        # Layout root components first
+        # Phase 1: Bottom-up sizing
+        for root in roots:
+            self._compute_component_size(root["id"], adjacency, placements_map)
+
+        # Phase 2: Top-down positioning
         x_offset = 50
         y_offset = 50
 
-        for component in roots:
-            cell = self.component_cells.get(component["id"])
-            if cell:
-                self._layout_component(component, x_offset, y_offset)
+        for root in roots:
+            cell = self.component_cells.get(root["id"])
+            if not cell:
+                continue
 
-                # Move to next position for next root component
-                if component["type"] in ["tenant", "container"]:
-                    # Stack boundaries vertically with spacing
-                    y_offset += cell["height"] + self.BOUNDARY_PADDING
-                else:
-                    # Stack other root nodes horizontally
-                    x_offset += cell["width"] + self.NODE_SPACING
+            self._assign_positions(root["id"], x_offset, y_offset, placements_map)
 
-    def _layout_component(self, component: Dict[str, Any], x: int, y: int):
+            # Stack root components
+            if root["type"] in self.BOUNDARY_TYPES:
+                y_offset += cell["height"] + self.BOUNDARY_PADDING
+            else:
+                x_offset += cell["width"] + self.NODE_SPACING
+
+    def _compute_component_size(
+        self,
+        component_id: str,
+        adjacency: Dict[str, set],
+        placements_map: Dict[str, List[Tuple[int, int, int, int, Dict[str, Any]]]],
+    ) -> Tuple[int, int]:
         """
-        Recursively layout a component and its children.
+        Recursively compute the size of a component based on its children.
+
+        Leaf nodes keep their default size. Boundary nodes are sized to fit
+        their children arranged in a grid.
 
         Args:
-            component: Component dictionary
-            x: X position
-            y: Y position
+            component_id: Component to size
+            adjacency: Flow adjacency map
+            placements_map: Populated with grid placements for each parent
+
+        Returns:
+            (width, height) of the component
         """
-        cell = self.component_cells.get(component["id"])
+        cell = self.component_cells.get(component_id)
+        if not cell:
+            return (self.DEFAULT_NODE_WIDTH, self.DEFAULT_NODE_HEIGHT)
+
+        children = self._get_children(component_id)
+
+        if not children:
+            return (cell["width"], cell["height"])
+
+        # Recursively size all children first (bottom-up)
+        for child in children:
+            self._compute_component_size(child["id"], adjacency, placements_map)
+
+        # Classify children
+        leaf_children = [c for c in children if c["type"] in self.LEAF_TYPES]
+        boundary_children = [c for c in children if c["type"] in self.BOUNDARY_TYPES]
+
+        # Grid cell unit size (one leaf node + spacing)
+        grid_cell_w = self.DEFAULT_NODE_WIDTH + self.NODE_SPACING
+        grid_cell_h = self.DEFAULT_NODE_HEIGHT + self.NODE_SPACING
+
+        # Build items list: (span_cols, span_rows, component, is_boundary)
+        items: List[Tuple[int, int, Dict[str, Any], bool]] = []
+
+        for bc in boundary_children:
+            bc_cell = self.component_cells[bc["id"]]
+            span_cols = max(1, ceil(bc_cell["width"] / grid_cell_w))
+            span_rows = max(1, ceil(bc_cell["height"] / grid_cell_h))
+            items.append((span_cols, span_rows, bc, True))
+
+        for lc in leaf_children:
+            items.append((1, 1, lc, False))
+
+        # Place items into grid
+        placements, grid_cols, grid_rows = self._place_items_in_grid(
+            items, adjacency, component_id
+        )
+        placements_map[component_id] = placements
+
+        # Compute parent size from grid dimensions
+        content_w = grid_cols * grid_cell_w - self.NODE_SPACING
+        content_h = grid_rows * grid_cell_h - self.NODE_SPACING
+
+        cell["width"] = max(content_w + 2 * self.BOUNDARY_PADDING, self.MIN_WIDTH)
+        cell["height"] = max(content_h + 2 * self.BOUNDARY_PADDING, self.MIN_HEIGHT)
+
+        return (cell["width"], cell["height"])
+
+    def _place_items_in_grid(
+        self,
+        items: List[Tuple[int, int, Dict[str, Any], bool]],
+        adjacency: Dict[str, set],
+        parent_id: str,
+    ) -> Tuple[
+        List[Tuple[int, int, int, int, Dict[str, Any]]],
+        int,
+        int,
+    ]:
+        """
+        Place items into a 2D grid with flow-aware ordering.
+
+        Boundary children are placed first (largest area first) using first-fit.
+        Leaf children are placed with flow-aware ordering: connected peers are
+        placed near each other with one empty grid cell gap between them.
+
+        Args:
+            items: List of (span_cols, span_rows, component, is_boundary) tuples
+            adjacency: Flow adjacency map
+            parent_id: ID of the parent component
+
+        Returns:
+            (placements, grid_cols, grid_rows) where placements is
+            list of (col, row, span_cols, span_rows, component)
+        """
+        if not items:
+            return ([], 0, 0)
+
+        # Separate boundary and leaf items
+        boundary_items = [(sc, sr, c) for sc, sr, c, is_b in items if is_b]
+        leaf_items = [(sc, sr, c) for sc, sr, c, is_b in items if not is_b]
+
+        # Calculate total grid units needed
+        total_units = sum(sc * sr for sc, sr, _, _ in items)
+        # Account for flow gaps: each pair of flow-connected leaves needs 1 extra cell
+        sibling_ids = {c["id"] for _, _, c, _ in items}
+        flow_pairs_count = 0
+        seen_pairs: set[Tuple[str, str]] = set()
+        for _, _, c, is_b in items:
+            if is_b:
+                continue
+            for neighbor_id in adjacency.get(c["id"], set()):
+                if neighbor_id in sibling_ids:
+                    pair = tuple(sorted((c["id"], neighbor_id)))
+                    if pair not in seen_pairs:
+                        seen_pairs.add(pair)
+                        flow_pairs_count += 1
+        total_units += flow_pairs_count
+
+        # Determine grid dimensions (as square as possible)
+        grid_cols = max(1, ceil(sqrt(total_units)))
+        grid_rows = max(1, ceil(total_units / grid_cols))
+
+        # Flow gaps require at least 3 columns so the +2 offset placement works
+        if flow_pairs_count > 0:
+            grid_cols = max(grid_cols, 3)
+            grid_rows = max(1, ceil(total_units / grid_cols))
+
+        # Ensure grid is large enough for the widest/tallest boundary item
+        for sc, sr, _ in boundary_items:
+            grid_cols = max(grid_cols, sc)
+            grid_rows = max(grid_rows, sr)
+
+        # 2D occupancy grid (True = occupied)
+        occupancy = [[False] * grid_cols for _ in range(grid_rows)]
+
+        placements: List[Tuple[int, int, int, int, Dict[str, Any]]] = []
+        placed_positions: Dict[str, Tuple[int, int]] = {}  # component_id -> (col, row)
+
+        def try_place(
+            sc: int, sr: int, start_col: int = 0, start_row: int = 0
+        ) -> Optional[Tuple[int, int]]:
+            """Find first available position for a span_cols x span_rows block."""
+            for r in range(start_row, grid_rows):
+                for c_start in range(start_col if r == start_row else 0, grid_cols):
+                    if c_start + sc > grid_cols or r + sr > grid_rows:
+                        continue
+                    if all(
+                        not occupancy[r + dr][c_start + dc]
+                        for dr in range(sr)
+                        for dc in range(sc)
+                    ):
+                        return (c_start, r)
+            return None
+
+        def mark_occupied(col: int, row: int, sc: int, sr: int):
+            for dr in range(sr):
+                for dc in range(sc):
+                    occupancy[row + dr][col + dc] = True
+
+        def expand_grid(needed_cols: int, needed_rows: int):
+            nonlocal grid_cols, grid_rows, occupancy
+            new_cols = max(grid_cols, needed_cols)
+            new_rows = max(grid_rows, needed_rows)
+            if new_cols > grid_cols or new_rows > grid_rows:
+                new_occupancy = [[False] * new_cols for _ in range(new_rows)]
+                for r in range(grid_rows):
+                    for c in range(grid_cols):
+                        new_occupancy[r][c] = occupancy[r][c]
+                occupancy = new_occupancy
+                grid_cols = new_cols
+                grid_rows = new_rows
+
+        # Place boundary items first (largest area first)
+        boundary_items.sort(key=lambda x: x[0] * x[1], reverse=True)
+        for sc, sr, component in boundary_items:
+            pos = try_place(sc, sr)
+            if pos is None:
+                # Expand grid to accommodate
+                expand_grid(grid_cols, grid_rows + sr)
+                pos = try_place(sc, sr)
+            if pos is None:
+                # Fallback: place at end
+                pos = (0, grid_rows)
+                expand_grid(max(grid_cols, sc), grid_rows + sr)
+            col, row = pos
+            mark_occupied(col, row, sc, sr)
+            placements.append((col, row, sc, sr, component))
+            placed_positions[component["id"]] = (col, row)
+
+        # Order leaf items for flow-aware placement
+        ordered_leaves = self._order_leaves_by_flow(leaf_items, adjacency, sibling_ids)
+
+        # Place leaf items with flow gap awareness
+        for _, _, component in ordered_leaves:
+            # Find preferred position: near flow-connected already-placed peers
+            connected_placed = [
+                placed_positions[nid]
+                for nid in adjacency.get(component["id"], set())
+                if nid in placed_positions and nid in sibling_ids
+            ]
+
+            best_pos: Optional[Tuple[int, int]] = None
+
+            if connected_placed:
+                # Try to place near a connected peer with 1 cell gap
+                for peer_col, peer_row in connected_placed:
+                    # Try positions around the peer with 1 cell gap
+                    candidates = [
+                        (peer_col + 2, peer_row),  # 1 cell gap to the right
+                        (peer_col, peer_row + 2),  # 1 cell gap below
+                        (peer_col - 2, peer_row),  # 1 cell gap to the left
+                        (peer_col, peer_row - 2),  # 1 cell gap above
+                        (peer_col + 1, peer_row + 1),  # diagonal
+                        (peer_col + 1, peer_row),  # adjacent right (fallback)
+                        (peer_col, peer_row + 1),  # adjacent below (fallback)
+                    ]
+                    for cc, cr in candidates:
+                        if (
+                            0 <= cc < grid_cols
+                            and 0 <= cr < grid_rows
+                            and not occupancy[cr][cc]
+                        ):
+                            best_pos = (cc, cr)
+                            break
+                    if best_pos:
+                        break
+
+            if best_pos is None:
+                best_pos = try_place(1, 1)
+
+            if best_pos is None:
+                # Expand grid
+                expand_grid(grid_cols, grid_rows + 1)
+                best_pos = try_place(1, 1)
+
+            if best_pos is None:
+                best_pos = (0, grid_rows - 1)
+
+            col, row = best_pos
+            mark_occupied(col, row, 1, 1)
+            placements.append((col, row, 1, 1, component))
+            placed_positions[component["id"]] = (col, row)
+
+        return (placements, grid_cols, grid_rows)
+
+    def _order_leaves_by_flow(
+        self,
+        leaf_items: List[Tuple[int, int, Dict[str, Any]]],
+        adjacency: Dict[str, set],
+        sibling_ids: set,
+    ) -> List[Tuple[int, int, Dict[str, Any]]]:
+        """
+        Order leaf items so that flow-connected nodes are placed consecutively.
+
+        Uses a greedy walk: start with any leaf, then prefer a flow-connected
+        sibling as the next item.
+
+        Args:
+            leaf_items: List of (span_cols, span_rows, component)
+            adjacency: Flow adjacency map
+            sibling_ids: Set of all sibling component IDs
+
+        Returns:
+            Reordered leaf_items list
+        """
+        if len(leaf_items) <= 1:
+            return list(leaf_items)
+
+        remaining = {c["id"]: (sc, sr, c) for sc, sr, c in leaf_items}
+        ordered: List[Tuple[int, int, Dict[str, Any]]] = []
+
+        # Start with the leaf that has the most flow connections to siblings
+        def sibling_flow_count(cid: str) -> int:
+            return len(adjacency.get(cid, set()) & sibling_ids)
+
+        current_id = max(remaining.keys(), key=sibling_flow_count)
+
+        while remaining:
+            item = remaining.pop(current_id)
+            ordered.append(item)
+
+            # Find next: prefer a flow-connected sibling that hasn't been placed
+            neighbors = adjacency.get(current_id, set()) & sibling_ids
+            unplaced_neighbors = [n for n in neighbors if n in remaining]
+
+            if unplaced_neighbors:
+                # Pick the neighbor with most connections (hub preference)
+                current_id = max(unplaced_neighbors, key=sibling_flow_count)
+            elif remaining:
+                # No connected neighbor left, pick any remaining
+                current_id = next(iter(remaining))
+            else:
+                break
+
+        return ordered
+
+    def _assign_positions(
+        self,
+        component_id: str,
+        x: int,
+        y: int,
+        placements_map: Dict[str, List[Tuple[int, int, int, int, Dict[str, Any]]]],
+    ):
+        """
+        Recursively assign x,y positions to a component and its children.
+
+        Args:
+            component_id: The component to position
+            x: Absolute X coordinate
+            y: Absolute Y coordinate
+            placements_map: Grid placements for each parent's children
+        """
+        cell = self.component_cells.get(component_id)
         if not cell:
             return
 
-        # Set position for this component
         cell["x"] = x
         cell["y"] = y
 
-        # Get children
-        children = [c for c in self.components if c.get("parent_id") == component["id"]]
+        if component_id not in placements_map:
+            return  # leaf, no children
 
-        if not children:
-            return
+        grid_cell_w = self.DEFAULT_NODE_WIDTH + self.NODE_SPACING
+        grid_cell_h = self.DEFAULT_NODE_HEIGHT + self.NODE_SPACING
 
-        # Layout children within this component
-        is_boundary = component["type"] in ["tenant", "container", "network"]
-
-        if is_boundary:
-            # Calculate grid layout for children
-            child_positions = self._calculate_grid_layout(
-                children, x, y, cell["width"], cell["height"]
-            )
-
-            # Position each child
-            for child, (child_x, child_y) in zip(children, child_positions):
-                self._layout_component(child, child_x, child_y)
-
-            # Adjust boundary size to fit all children
-            self._resize_boundary_to_fit_children(cell, children)
-
-    def _calculate_grid_layout(
-        self,
-        children: List[Dict[str, Any]],
-        parent_x: int,
-        parent_y: int,
-        parent_width: int,
-        parent_height: int,
-    ) -> List[Tuple[int, int]]:
-        """
-        Calculate grid layout positions for children within a parent.
-
-        Args:
-            children: List of child components
-            parent_x: Parent X position
-            parent_y: Parent Y position
-            parent_width: Parent width
-            parent_height: Parent height
-
-        Returns:
-            List of (x, y) positions for each child
-        """
-        if not children:
-            return []
-
-        # Calculate grid dimensions
-        num_children = len(children)
-        cols = max(1, int((num_children**0.5) + 0.5))  # Square root rounded up
-        rows = (num_children + cols - 1) // cols  # Ceiling division
-
-        # Calculate available space
-        available_width = parent_width - (2 * self.BOUNDARY_PADDING)
-        available_height = parent_height - (2 * self.BOUNDARY_PADDING)
-
-        # Calculate cell size
-        cell_width = (available_width - (cols - 1) * self.NODE_SPACING) // cols
-        cell_height = (available_height - (rows - 1) * self.NODE_SPACING) // rows
-
-        positions = []
-        for i, child in enumerate(children):
-            row = i // cols
-            col = i % cols
-
-            x = (
-                parent_x
-                + self.BOUNDARY_PADDING
-                + col * (cell_width + self.NODE_SPACING)
-            )
-            y = (
-                parent_y
-                + self.BOUNDARY_PADDING
-                + row * (cell_height + self.NODE_SPACING)
-            )
-
-            positions.append((x, y))
-
-        return positions
-
-    def _resize_boundary_to_fit_children(
-        self, boundary_cell: Dict[str, Any], children: List[Dict[str, Any]]
-    ):
-        """
-        Resize a boundary to fit all its children with padding.
-
-        Args:
-            boundary_cell: Boundary cell to resize
-            children: List of child components
-        """
-        if not children:
-            return
-
-        # Find bounding box of all children
-        min_x = float("inf")
-        min_y = float("inf")
-        max_x = float("-inf")
-        max_y = float("-inf")
-
-        for child in children:
-            child_cell = self.component_cells.get(child["id"])
-            if not child_cell:
-                continue
-
-            min_x = min(min_x, child_cell["x"])
-            min_y = min(min_y, child_cell["y"])
-            max_x = max(max_x, child_cell["x"] + child_cell["width"])
-            max_y = max(max_y, child_cell["y"] + child_cell["height"])
-
-        # Calculate required boundary size with padding
-        required_width = max_x - boundary_cell["x"] + self.BOUNDARY_PADDING
-        required_height = max_y - boundary_cell["y"] + self.BOUNDARY_PADDING
-
-        # Ensure minimum size
-        boundary_cell["width"] = max(required_width, self.DEFAULT_BOUNDARY_WIDTH // 2)
-        boundary_cell["height"] = max(
-            required_height, self.DEFAULT_BOUNDARY_HEIGHT // 2
-        )
+        for col, row, span_c, span_r, child in placements_map[component_id]:
+            child_x = x + self.BOUNDARY_PADDING + col * grid_cell_w
+            child_y = y + self.BOUNDARY_PADDING + row * grid_cell_h
+            self._assign_positions(child["id"], child_x, child_y, placements_map)
