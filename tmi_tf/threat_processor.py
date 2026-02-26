@@ -145,44 +145,40 @@ class ThreatProcessor:
 
 For each security issue or concern mentioned in the analysis:
 1. Create a clear, concise threat name (max 100 characters)
-2. Provide a detailed description of the threat and risk
+2. Provide a concise description of the threat, risk, and impact (max 200 characters)
 3. Classify the threat using the STRIDE framework by evaluating ALL categories and including EVERY applicable one:
 
-   STRIDE Category Evaluation Questions:
-   - Spoofing (Authenticity): Could an attacker impersonate a valid user, system, or process?
-   - Tampering (Integrity): Could an attacker modify data, code, or configurations without authorization?
-   - Repudiation (Non-repudiability): Could a user or system deny having performed a specific action, and would you have proof otherwise (e.g., via logs)?
-   - Information Disclosure (Confidentiality): Could an attacker gain unauthorized access to sensitive data?
-   - Denial of Service (Availability): Could an attacker disrupt the system's availability or performance for legitimate users?
-   - Elevation of Privilege (Authorization): Could an attacker gain higher privileges or permissions than they are entitled to?
+   STRIDE Categories:
+   - Spoofing: Could an attacker impersonate a valid user, system, or process?
+   - Tampering: Could an attacker modify data, code, or configurations without authorization?
+   - Repudiation: Could a user or system deny having performed a specific action without proof otherwise?
+   - Information Disclosure: Could an attacker gain unauthorized access to sensitive data?
+   - Denial of Service: Could an attacker disrupt availability or performance for legitimate users?
+   - Elevation of Privilege: Could an attacker gain higher privileges than entitled?
 
-   IMPORTANT: A single threat may violate multiple security properties. Include ALL applicable STRIDE categories.
-   Examples:
-   - Missing authentication AND exposed data → "Spoofing, Information Disclosure"
-   - Modifiable config file with admin access → "Tampering, Elevation of Privilege"
-   - Unencrypted data that can be modified → "Information Disclosure, Tampering"
+   IMPORTANT: A single threat may violate multiple security properties. Include ALL applicable STRIDE categories as a comma-separated string.
 
-4. Assign severity based on risk:
-   - Critical: Immediate exploitation risk with severe impact
-   - High: Significant security risk requiring urgent attention
-   - Medium: Moderate risk that should be addressed
-   - Low: Minor risk or defense-in-depth improvement
-5. Suggest specific, actionable mitigation strategies
+4. Assign severity: Critical, High, Medium, or Low
+5. Suggest specific, actionable mitigation strategies (max 300 characters)
 
-Return your response as a JSON array of threat objects with this structure:
-[
-  {
-    "name": "Brief threat title",
-    "description": "Detailed threat description including risk and impact",
-    "threat_type": "Comma-separated list of ALL applicable STRIDE categories",
-    "severity": "Critical|High|Medium|Low",
-    "mitigation": "Recommended mitigation strategies"
-  }
-]
+# Output Format
 
-IMPORTANT: Do not use HTML tags in any field values. Use plain text only.
+You MUST return ONLY a JSON array. Do not include any explanation, preamble, markdown formatting, or code fences. Your entire response must be valid JSON starting with [ and ending with ].
 
-If no security threats are found, return an empty array: []"""
+Each element in the array must be an object with exactly these fields:
+{
+  "name": "Brief threat title",
+  "description": "Concise threat description with risk and impact",
+  "threat_type": "Comma-separated STRIDE categories",
+  "severity": "Critical|High|Medium|Low",
+  "mitigation": "Recommended mitigation strategies"
+}
+
+IMPORTANT:
+- Do NOT use HTML tags in any field values. Use plain text only.
+- Keep field values concise to avoid exceeding output limits.
+- If no security threats are found, return an empty array: []
+- Do NOT wrap the JSON in markdown code fences or add any text before or after the array."""
 
         user_prompt = f"""Analyze the following infrastructure security analysis for repository "{repo_name}" and extract all security threats.
 
@@ -193,7 +189,7 @@ Analysis Content:
 {analysis_content}
 ---
 
-Extract and structure all security threats found in this analysis."""
+Extract and structure all security threats found in this analysis. Remember: respond with ONLY the JSON array, no other text."""
 
         try:
             response = litellm.completion(
@@ -202,7 +198,7 @@ Extract and structure all security threats found in this analysis."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                max_tokens=4096,
+                max_tokens=16000,
                 temperature=0.3,
                 timeout=180.0,
             )

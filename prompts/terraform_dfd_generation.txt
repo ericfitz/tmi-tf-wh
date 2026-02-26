@@ -281,4 +281,4 @@ Analyze the infrastructure provided and generate the JSON output following the a
 - Place gateways at the VPC level when they serve the entire network
 - Separate subnets should be siblings within the VPC, each containing their own resources
 
-Return ONLY the JSON object with no additional commentary.
+CRITICAL: Return ONLY the JSON object. Do not include any explanation, preamble, markdown formatting, or code fences. Your entire response must be valid JSON starting with { and ending with }. Do not add any text before or after the JSON.

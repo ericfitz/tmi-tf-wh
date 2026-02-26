@@ -132,7 +132,15 @@ Map how data moves through the infrastructure:
 - Data transformation or processing stages
 
 ### 6. Security Observations
-Identify security-relevant configurations and potential concerns:
+Identify security-relevant configurations and potential concerns. For each observation, structure it as follows:
+
+**[Observation Title]** (Severity: Critical/High/Medium/Low)
+- **Category**: One or more of: Public Exposure, Authentication/Authorization, Encryption, Network Security, Secrets Management, Logging/Monitoring, Compliance, Best Practices
+- **Finding**: What was observed in the Terraform configuration
+- **Risk**: What threat or risk this poses
+- **Recommendation**: Specific, actionable mitigation
+
+Cover these areas:
 - **Public Exposure**: Internet-facing resources, public IPs, open security groups
 - **Authentication/Authorization**: IAM policies, roles, permissions, service accounts
 - **Encryption**: Data at rest and in transit, key management
