@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def load_token():
     """Load the cached TMI token."""
     token_file = Path.home() / ".tmi-tf" / "token.json"
@@ -36,10 +37,7 @@ def create_threat_model_via_api(token, server_url="https://api.tmi.dev"):
 
     print("📝 Creating threat model...")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     payload = {
         "name": "Example: AI Automated Terraform Template Analysis",
@@ -48,13 +46,11 @@ def create_threat_model_via_api(token, server_url="https://api.tmi.dev"):
             "containing Terraform templates, and then running the TMI-TF (https://github.com/ericfitz/tmi-tf) "
             "tool against it. All analysis and analysis products - diagrams, notes, and threats - "
             "were created by AI."
-        )
+        ),
     }
 
     response = requests.post(
-        f"{server_url}/threat_models",
-        headers=headers,
-        json=payload
+        f"{server_url}/threat_models", headers=headers, json=payload
     )
 
     if response.status_code != 201:
@@ -71,32 +67,28 @@ def create_threat_model_via_api(token, server_url="https://api.tmi.dev"):
     return threat_model_id
 
 
-def add_repository_to_threat_model(token, threat_model_id, server_url="https://api.tmi.dev"):
+def add_repository_to_threat_model(
+    token, threat_model_id, server_url="https://api.tmi.dev"
+):
     """Add repository to threat model using direct API call."""
     import requests
 
     print("\n📦 Adding repository to threat model...")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     payload = {
         "name": "Oracle Cloud Web HA Terraform",
         "description": "Terraform templates for highly available web application on Oracle Cloud Infrastructure",
         "type": "git",
         "uri": "https://github.com/oracle-devrel/terraform-oci-arch-web-ha.git",
-        "parameters": {
-            "refType": "branch",
-            "refValue": "main"
-        }
+        "parameters": {"refType": "branch", "refValue": "main"},
     }
 
     response = requests.post(
         f"{server_url}/threat_models/{threat_model_id}/repositories",
         headers=headers,
-        json=payload
+        json=payload,
     )
 
     if response.status_code != 201:
@@ -118,7 +110,17 @@ def run_tmi_tf_analysis(threat_model_id):
     print("=" * 80)
 
     # Run tmi_tf analyze using subprocess
-    cmd = ["uv", "run", "python", "-m", "tmi_tf.cli", "analyze", threat_model_id, "--verbose", "--force-auth"]
+    cmd = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "tmi_tf.cli",
+        "analyze",
+        threat_model_id,
+        "--verbose",
+        "--force-auth",
+    ]
 
     print(f"Executing: {' '.join(cmd)}\n")
 
@@ -127,7 +129,7 @@ def run_tmi_tf_analysis(threat_model_id):
             cmd,
             check=True,
             text=True,
-            capture_output=False  # Show output in real-time
+            capture_output=False,  # Show output in real-time
         )
         print("\n" + "=" * 80)
         print("✅ Analysis completed successfully!")
@@ -168,6 +170,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

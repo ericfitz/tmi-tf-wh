@@ -45,7 +45,7 @@ def create_example_threat_model(force_auth=False):
             "containing Terraform templates, and then running the TMI-TF (https://github.com/ericfitz/tmi-tf) "
             "tool against it. All analysis and analysis products - diagrams, notes, and threats - "
             "were created by AI."
-        )
+        ),
     )
 
     threat_model = tmi_client.threat_models_api.create_threat_model(
@@ -62,16 +62,15 @@ def create_example_threat_model(force_auth=False):
         description="Terraform templates for highly available web application on Oracle Cloud Infrastructure",
         type="git",
         uri="https://github.com/oracle-devrel/terraform-oci-arch-web-ha.git",
-        parameters={"branch": "main"}
+        parameters={"branch": "main"},
     )
 
     repository = tmi_client.sub_resources_api.create_threat_model_repository(
-        body=repo_input,
-        threat_model_id=threat_model_id
+        body=repo_input, threat_model_id=threat_model_id
     )
 
     print(f"✅ Added repository: {repository.uri}")
-    if hasattr(repository, 'id'):
+    if hasattr(repository, "id"):
         print(f"   Repository ID: {repository.id}")
 
     return threat_model_id
@@ -93,7 +92,7 @@ def run_tmi_tf_analysis(threat_model_id):
             cwd=tmi_tf_path,
             check=True,
             text=True,
-            capture_output=False  # Show output in real-time
+            capture_output=False,  # Show output in real-time
         )
         print("\n" + "=" * 80)
         print("✅ Analysis completed successfully!")
@@ -129,6 +128,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
