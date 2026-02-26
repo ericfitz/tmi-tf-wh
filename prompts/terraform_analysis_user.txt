@@ -17,61 +17,23 @@ Please analyze the following Terraform infrastructure code to support threat mod
 
 Please provide a comprehensive analysis of this Terraform infrastructure with the following sections:
 
-### 1. Infrastructure Inventory
-List all infrastructure resources by category:
-- Compute resources (VMs, containers, serverless functions)
-- Storage resources (databases, object storage, file systems)
-- Network resources (VPCs, subnets, load balancers, gateways)
-- Security resources (firewalls, security groups, WAF, IAM)
-- Other services (monitoring, DNS, CDN, etc.)
-
-For each resource, include:
-- Resource type and name
-- Key configuration details
-- Purpose (if apparent from code or documentation)
-
-### 2. Component Relationships
-Describe how components interact and depend on each other:
-- Which resources reference or depend on other resources
-- Network connectivity between components
-- Data flow paths
-- External dependencies
-
-### 3. Data Flows
-Map how data moves through the infrastructure:
-- Ingress points (how data enters the system)
-- Internal data flows (movement between components)
-- Egress points (how data leaves the system)
-- Data storage locations
-- Data transformation or processing stages
-
-### 4. Security Observations
-Identify security-relevant configurations and potential concerns:
-- **Public Exposure**: Internet-facing resources, public IPs, open security groups
-- **Authentication/Authorization**: IAM policies, roles, permissions, service accounts
-- **Encryption**: Data at rest and in transit, key management
-- **Network Security**: Firewalls, security groups, network segmentation
-- **Secrets Management**: How credentials and secrets are handled
-- **Logging/Monitoring**: Audit logs, security monitoring, alerting
-- **Compliance**: Configuration that may impact regulatory requirements
-- **Best Practices**: Alignment with or deviation from security best practices
-
-Highlight both positive security controls and areas of concern.
-
-### 5. Architecture Summary
+### 1. Architecture Summary
 Provide a high-level summary (2-3 paragraphs) describing:
 - The overall purpose and architecture of this infrastructure
 - Key architectural patterns or approaches used
 - Main security boundaries and trust zones
 - Critical components from a threat modeling perspective
 
-### 6. Mermaid Architecture Diagram
+Do NOT provide security analysis results or recommendations at this point; the summary section describes the architecture, not the findings.
+
+### 2. Mermaid Architecture Diagram
 Create a mermaid diagram (using graph TD or graph LR) that visualizes:
-- Major infrastructure components
+- Major infrastructure components (if services have been identified, use services instead of their component compute units)
 - Network boundaries and security zones
 - Data flows (with arrows and labels)
 - External interfaces (users, external services, internet)
 - Key security controls (firewalls, encryption, etc.)
+- Represent network security controls as an intermediate node in a flow to/from an entity protected by the control, e.g. service/compute-unit --> NAC --> destination node 
 
 **IMPORTANT: Mermaid Syntax Rules (you MUST follow these exactly):**
 - Every `subgraph` statement MUST have a corresponding `end` statement
@@ -106,6 +68,82 @@ graph TD
 ```
 
 Keep the diagram clear and focused on the most important components and flows. Use subgraphs to represent security zones or boundaries when appropriate.
+
+### 3. Infrastructure Inventory
+List all infrastructure resources by category:
+- Services (logical groupings of compute resources)
+- Compute resources (VMs, containers, serverless functions)
+   - for compute resources that map to a service, present them as part of the service instead of as peer elements
+- Storage resources (databases, object storage, file systems)
+- Network resources (VPCs, subnets, load balancers, gateways)
+- Security controls (firewalls, security groups, WAF, IAM)
+- Other services (monitoring, DNS, CDN, etc.)
+
+For each resource, include:
+- Resource type and name
+- Key configuration details
+- Purpose (if apparent from code or documentation)
+
+#### Services - Logical compute groupings
+
+1. **Identify Logical Services**: A "service" is defined as a cohesive, logical grouping of compute resources that function collectively as a single entity, such as a scalable web tier, database cluster, or containerized application. Services simplify representation by aggregating individual compute units (e.g., EC2 instances, ECS tasks) and their supporting objects (e.g., load balancers, auto-scaling groups). Infer services based on the following criteria, prioritizing strong relational evidence:
+
+   - **Resource Associations and Dependencies**: Group resources linked by references, such as ARNs, IDs, or explicit dependencies (e.g., an Auto Scaling Group referencing a Launch Template; instances registered to a Target Group; ECS services tied to tasks and clusters).
+   - **Shared Attributes**: Aggregate by matching tags (e.g., "app:frontend", "env:prod"), metadata, or labels that indicate common ownership or purpose.
+   - **Naming Patterns**: Cluster resources with consistent naming conventions (e.g., "api-asg" and "api-lb" suggest an "api-service").
+   - **Functional Collaboration**: Identify groupings where resource types collaborate for a workload (e.g., EC2 instances + Load Balancer = load-balanced service; EKS node groups + Pods = Kubernetes service).
+   - **Network and Security Boundaries**: Group by shared VPCs, subnets, security groups, or IAM roles, implying isolation within a service.
+   - **Scaling and Resilience Features**: Prioritize entities with auto-scaling, health checks, or desired capacities, as these denote dynamic collectives.
+   - **Data-Source Specific Rules**:
+     - For Terraform: Use module structures, resource blocks, "depends_on" attributes, variables, and outputs to trace hierarchies (e.g., a module containing aws_autoscaling_group and aws_lb defines a service).
+     - For JSON API Data: Correlate across objects using nested arrays, shared keys (e.g., InstanceIds in ASGs), or linked fields (e.g., LoadBalancerArns); treat top-level entities like AutoScalingGroups or Services as service candidates.
+   - **Exclusion and Ambiguity Handling**: Do not group unrelated or standalone resources (e.g., isolated monitoring alarms). If links are weak or absent, default to singleton services. Resolve ambiguities by favoring larger, more interconnected groups to minimize fragmentation.
+
+2. **Document Criteria for Each Service**: For every identified service, explicitly list the specific criteria (from the above) that justified its definition, including evidence from the data (e.g., "Shared tag 'app:web' on ASG and LB; ASG references LB ARN").
+
+3. **List Associated Components**:
+
+   - **Compute Units**: Enumerate the primary compute resources (e.g., EC2 instances, ECS tasks, EKS nodes) within the service, including counts or IDs where available.
+   - **Other Objects**: Detail supporting resources (e.g., load balancers, clusters, launch configurations, security groups, subnets), with their identifiers.
+
+4. **Output**: include the following information
+
+   - **name**: Inferred or descriptive name (e.g., 'web-frontend') of the service
+   - **criteria**: Bullet-point list of criteria used to map compute units to the service, with evidence
+   - **compute units**: List of compute resource types and details (e.g., 'EC2 instances: 3 in ASG web-asg') that are part of the service
+   - **associated objects": List of non-compute resource types and details that are associated with the service, e.g. load balancers
+
+Ensure the output is comprehensive yet concise, covering all relevant data without inventing information. If the input lacks sufficient links, note limitations in the output.
+
+
+### 4. Component Relationships
+Describe how components interact and depend on each other:
+- Which resources reference or depend on other resources
+- Network connectivity between components
+- Data flow paths
+- External dependencies
+
+### 5. Data Flows
+Map how data moves through the infrastructure:
+- Ingress points (how data enters the system)
+- Internal data flows (movement between components)
+- Egress points (how data leaves the system)
+- Data storage locations
+- Data transformation or processing stages
+
+### 6. Security Observations
+Identify security-relevant configurations and potential concerns:
+- **Public Exposure**: Internet-facing resources, public IPs, open security groups
+- **Authentication/Authorization**: IAM policies, roles, permissions, service accounts
+- **Encryption**: Data at rest and in transit, key management
+- **Network Security**: Firewalls, security groups, network segmentation
+- **Secrets Management**: How credentials and secrets are handled
+- **Logging/Monitoring**: Audit logs, security monitoring, alerting
+- **Compliance**: Configuration that may impact regulatory requirements
+- **Best Practices**: Alignment with or deviation from security best practices
+
+Highlight both positive security controls and areas of concern.
+
 
 ---
 

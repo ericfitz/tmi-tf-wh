@@ -6,23 +6,25 @@ Based on the infrastructure analysis provided, extract and organize the componen
 
 Categorize each infrastructure component into one of these types:
 
-1. **tenancy** - Cloud account/subscription level (AWS Account, Azure Subscription, OCI Tenancy)
-2. **container** - Resource grouping (AWS VPC, Azure Resource Group, OCI Compartment)
-3. **network** - Network boundaries (VCN, Subnet, Security Group, Network ACL, Route Table)
-4. **gateway** - Network gateways (Internet Gateway, NAT Gateway, VPN Gateway, Load Balancer)
-5. **compute** - Compute resources (EC2, VM, Container Instance, Function)
-6. **storage** - Data stores (RDS, S3, Blob Storage, Object Storage, Database)
-7. **actor** - External entities (Users, External Systems, Internet, Third-party APIs)
+1. **tenant** - Cloud account/subscription level (AWS Account, GCP Project, Azure Subscription, OCI Tenancy)
+2. **container** - Resource grouping (Azure Resource Group, OCI Compartment)
+3. **network** - Network boundaries (AWS VPC, VCN, Subnet, Route Table)
+4. **network_access_control** - Network access control mechanisms (AWS Security Group, Network ACL, firewall rules/policies, firewalls, web application firewalls/cloud armor, GCP VPC service controls)
+5. **gateway** - Network gateways (Internet Gateway, NAT Gateway, VPN Gateway, Load Balancers, peering connections, VPC endpoints, private endpoints/privatelink/service connect, direct connect)
+6. **compute** - Compute resources (EC2, VM, Container Instance, Function)
+7. **service** - Logical groupings of compute units
+8. **storage** - Data stores (RDS, S3, Blob Storage, Object Storage, Database)
+9. **actor** - External entities (Users, External Systems, Internet, Third-party APIs)
 
 # Hierarchy and Nesting
 
 Understanding proper containment relationships is critical:
 
-- **tenancy** contains everything else
+- **tenant** contains everything else
 - **container** (if present) contains network, gateway, compute, and storage
 - **network.vcn** contains network.subnet
 - **network.subnet** contains compute and storage resources
-- **network.security_group** applies to (but doesn't contain) compute/storage resources
+- **network.security_group** applies to (but doesn't contain) compute/storage resources; it can be modeled as a 
 - **gateway** resources sit at network boundaries
 - **actor** resources are external and not contained by anything
 
@@ -35,9 +37,9 @@ To ensure clear, readable diagrams, follow these nesting principles:
 2. **Sibling Components**: When multiple components of the same type exist (e.g., multiple subnets, multiple compute instances), they should be siblings (share the same parent_id) rather than nested within each other.
 
 3. **Network Boundaries**:
-   - Create **separate** subnet components for logically distinct networks (public vs private, different availability zones)
-   - Place compute/storage resources as children of their respective subnets
-   - Do NOT nest subnets within security groups - security groups should reference resources via metadata, not containment
+   - Create **separate** components for logically distinct networks (public vs private, different availability zones)
+   - Place compute/storage resources as children of their respective networks
+   - Do NOT nest subnets within security groups - security groups should be a peer object of the object they apply to, and flows should route through the network security group to the object(s) they protect
 
 4. **Logical Grouping**: Group components by their functional tier or layer:
    - Public tier: Load balancers, bastion hosts (in public subnets)
@@ -47,11 +49,15 @@ To ensure clear, readable diagrams, follow these nesting principles:
 
 5. **Gateway Placement**: Gateways (IGW, NAT Gateway, VPN Gateway) should typically be children of the VPC/VCN, not nested inside subnets, as they serve the entire network.
 
-6. **Avoid Single-Child Containers**: If a boundary component would only contain one child, consider whether that boundary is necessary or if the child could be elevated to the parent's level with appropriate metadata.
+6. **Nesting Objects**: objects nested inside other objects, should be positioned and sized to fit completely inside the parent object.  A child object should never overlap the boundary of its parent, or be positioned outside that boundary.
+
+7. **No Overlap**: objects should not overlap other objects unless nested inside the other object.
+
+8. **Peer Object Positioning**: Peer objects should be laid out in a grid horizontally and vertically inside the object that contains them, without overlapping.  This applies to all kinds of objects including container objects.  Top level objects should be organized in a grid in the graph.
 
 **Example of GOOD structure (flat, clear layout):**
 ```
-tenancy
+tenant
 ├── vpc
 │   ├── internet-gateway
 │   ├── nat-gateway
@@ -68,7 +74,7 @@ tenancy
 
 **Example of BAD structure (too much nesting, stacking):**
 ```
-tenancy
+tenant
 ├── vpc
 │   ├── subnet-public
 │   │   ├── security-group-lb
@@ -86,10 +92,10 @@ Generate a JSON object with two main sections: "components" and "flows".
 Each component should include:
 - **id** - Unique identifier (use resource name or generate one)
 - **name** - Display name for the diagram
-- **type** - One of: tenancy, container, network, gateway, compute, storage, actor
+- **type** - One of: tenant, container, network, gateway, compute, storage, actor
 - **subtype** - Specific resource type (vpc, subnet, security_group, ec2, rds, etc.)
 - **description** - Brief description of the resource
-- **parent_id** - ID of the parent component (null for top-level tenancy)
+- **parent_id** - ID of the parent component (null for top-level tenant)
 - **metadata** - Additional properties (region, availability_zone, tags, etc.)
 
 ## Flows
@@ -108,13 +114,15 @@ Each data flow should include:
 
 1. **Bidirectional Flows**: If communication goes both ways (e.g., HTTPS request/response), set "bidirectional": true. We will create two unidirectional edges from this.
 
-2. **Network Boundaries**: Create security-group, subnet, and VCN components as separate boundary objects even if they don't directly participate in flows.
+2. **Network Boundaries**: Create subnet, and VCN components as separate boundary objects even if they don't directly participate in flows.
 
-3. **Load Balancers**: Treat as gateway components that receive flows from actors and send flows to compute resources.
+3. **Network Access Controls**: Create process objects for network access controls, and use the network access control node as a separate hop in flows that are subject to that control.  For example, if a process protected by a network access control communicates with a process that is not protected by the same NAC object, then flows should be created from the first process to the NAC object, and from the NAC object to the second process, and the same pattern applies in flows in the other direction.
 
-4. **Internet Access**: Create an "actor" component called "Internet" for any public-facing resources.
+4. **Load Balancers**: Treat as gateway components that receive flows from actors and send flows to compute resources.
 
-5. **Database Access**: Storage components (RDS, databases) should receive flows from compute components that access them.
+5. **Gateways**: Create an "actor" component with an appropriate name to represent what is on the opposite side of a gateway, for example, for internet gateways, create an "actor" called "Internet".
+
+5. **Database Access**: Storage components (RDS, databases) should receive flows from compute components that write to them and and should have flows to compute components that read from them.
 
 6. **Implicit Flows**: Infer flows even if not explicitly stated. For example:
    - Web servers behind load balancers receive traffic from the load balancer
@@ -127,9 +135,9 @@ Each data flow should include:
 {
   "components": [
     {
-      "id": "tenancy-1",
+      "id": "tenant-1",
       "name": "AWS Account",
-      "type": "tenancy",
+      "type": "tenant",
       "subtype": "aws_account",
       "description": "Primary AWS account for production workloads",
       "parent_id": null,
@@ -143,7 +151,7 @@ Each data flow should include:
       "type": "network",
       "subtype": "vpc",
       "description": "Main production VPC",
-      "parent_id": "tenancy-1",
+      "parent_id": "tenant-1",
       "metadata": {
         "cidr": "10.0.0.0/16",
         "region": "us-west-2"
@@ -267,9 +275,9 @@ Each data flow should include:
 Analyze the infrastructure provided and generate the JSON output following the above format. Include ALL infrastructure components you can identify, properly nested according to cloud provider hierarchies. Infer reasonable data flows based on typical application architectures and the resources present.
 
 **CRITICAL**: Apply the Layout Optimization Guidelines to create a flat, clear hierarchy:
-- Keep nesting depth reasonable and justified by actual containment relationships (typically: tenancy → vpc → subnet → resource, or tenancy → container → network → subnet → resource)
 - Make similar resources siblings of each other, not nested
 - Avoid creating unnecessary intermediate container components
+- Model network access controls as processes that intermediate flows
 - Place gateways at the VPC level when they serve the entire network
 - Separate subnets should be siblings within the VPC, each containing their own resources
 
