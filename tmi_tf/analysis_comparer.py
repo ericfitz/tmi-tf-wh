@@ -16,6 +16,8 @@ from tmi_tf.config import Config
 
 logger = logging.getLogger(__name__)
 
+litellm.drop_params = True  # type: ignore[assignment]
+
 
 class DiscoveryCategory(Enum):
     """Categories of discoveries to compare."""

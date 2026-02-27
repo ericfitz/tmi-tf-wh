@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Suppress LiteLLM's verbose logging
 litellm.suppress_debug_info = True  # type: ignore[assignment]
+litellm.drop_params = True  # type: ignore[assignment]
 
 
 class DFDLLMGenerator:
