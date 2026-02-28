@@ -1,0 +1,13 @@
+Analyze the following structured infrastructure data and generate the JSON output with "components" and "flows" sections. Include ALL infrastructure components you can identify, properly nested according to cloud provider hierarchies. Infer reasonable data flows based on typical application architectures and the resources present.
+
+# Inventory Data (Phase 1)
+
+This contains the discovered infrastructure components and service groupings:
+
+{inventory_json}
+
+# Infrastructure Analysis Data (Phase 2)
+
+This contains the architecture summary, component relationships, data flows, and trust boundaries:
+
+{infrastructure_json}

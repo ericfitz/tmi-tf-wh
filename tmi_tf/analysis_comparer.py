@@ -299,13 +299,13 @@ class AnalysisComparer:
         # Load prompts
         prompts_dir = Path(__file__).parent.parent / "prompts"
         self.comparison_system_prompt = self._load_prompt(
-            prompts_dir / "analysis_comparison_system.txt"
+            prompts_dir / "comparison_normalization_system.txt"
         )
         self.comparison_user_prompt = self._load_prompt(
-            prompts_dir / "analysis_comparison_user.txt"
+            prompts_dir / "comparison_normalization_user.txt"
         )
         self.insights_system_prompt = self._load_prompt(
-            prompts_dir / "analysis_insights_system.txt"
+            prompts_dir / "comparison_insights_system.txt"
         )
 
         # Configure LiteLLM

@@ -1,6 +1,6 @@
-You are analyzing cloud infrastructure defined in Terraform/OpenTofu to generate a structured data flow diagram.
+You are a cloud infrastructure diagramming specialist. You analyze infrastructure defined in Terraform/OpenTofu and generate structured data flow diagrams.
 
-Based on the infrastructure analysis provided, extract and organize the components and data flows into a structured JSON format that will be used to generate a Data Flow Diagram (DFD).
+Your task is to extract and organize components and data flows into a structured JSON format for Data Flow Diagram (DFD) generation.
 
 # Component Categories
 
@@ -91,7 +91,7 @@ Generate a JSON object with two main sections: "components" and "flows".
 
 Each component should include:
 - **id** - Unique identifier (use resource name or generate one)
-- **name** - Display name for the diagram
+- **name** - Descriptive display label for the diagram (e.g., 'Application Load Balancer', 'Primary Database'). Do NOT include resource types, protocols, ports, or technical identifiers in names — put those in `subtype` and `metadata`.
 - **type** - One of: tenant, container, network, network_access_control, gateway, compute, service, storage, actor
 - **subtype** - Specific resource type (vpc, subnet, security_group, ec2, rds, etc.)
 - **description** - Brief description of the resource
@@ -102,7 +102,7 @@ Each component should include:
 
 Each data flow should include:
 - **id** - Unique identifier for the flow
-- **name** - Description of the data flow
+- **name** - Description of what data moves (e.g., 'User Authentication Requests', 'Database Queries'). Do NOT include protocol or port in the name — put those in the `protocol` and `port` fields.
 - **source_id** - Component ID where data originates
 - **target_id** - Component ID where data goes
 - **protocol** - Protocol used (HTTPS, HTTP, SSH, TLS, TCP, UDP, etc.)
@@ -129,152 +129,9 @@ Each data flow should include:
    - Application servers query databases
    - Instances in private subnets route through NAT gateways for outbound internet
 
-# Example Output Structure
+# Critical Instructions
 
-```json
-{
-  "components": [
-    {
-      "id": "tenant-1",
-      "name": "AWS Account",
-      "type": "tenant",
-      "subtype": "aws_account",
-      "description": "Primary AWS account for production workloads",
-      "parent_id": null,
-      "metadata": {
-        "account_id": "123456789012"
-      }
-    },
-    {
-      "id": "vpc-1",
-      "name": "Production VPC",
-      "type": "network",
-      "subtype": "vpc",
-      "description": "Main production VPC",
-      "parent_id": "tenant-1",
-      "metadata": {
-        "cidr": "10.0.0.0/16",
-        "region": "us-west-2"
-      }
-    },
-    {
-      "id": "igw-1",
-      "name": "Internet Gateway",
-      "type": "gateway",
-      "subtype": "internet_gateway",
-      "description": "VPC internet gateway",
-      "parent_id": "vpc-1",
-      "metadata": {}
-    },
-    {
-      "id": "subnet-public-1",
-      "name": "Public Subnet AZ1",
-      "type": "network",
-      "subtype": "subnet",
-      "description": "Public subnet in availability zone 1",
-      "parent_id": "vpc-1",
-      "metadata": {
-        "cidr": "10.0.1.0/24",
-        "availability_zone": "us-west-2a",
-        "tier": "public"
-      }
-    },
-    {
-      "id": "subnet-private-1",
-      "name": "Private Subnet AZ1",
-      "type": "network",
-      "subtype": "subnet",
-      "description": "Private subnet for application tier",
-      "parent_id": "vpc-1",
-      "metadata": {
-        "cidr": "10.0.2.0/24",
-        "availability_zone": "us-west-2a",
-        "tier": "private"
-      }
-    },
-    {
-      "id": "alb-1",
-      "name": "Application Load Balancer",
-      "type": "gateway",
-      "subtype": "application_load_balancer",
-      "description": "Public-facing load balancer",
-      "parent_id": "subnet-public-1",
-      "metadata": {
-        "scheme": "internet-facing"
-      }
-    },
-    {
-      "id": "web-server-1",
-      "name": "Web Server 1",
-      "type": "compute",
-      "subtype": "ec2",
-      "description": "Nginx web server instance 1",
-      "parent_id": "subnet-private-1",
-      "metadata": {
-        "instance_type": "t3.medium"
-      }
-    },
-    {
-      "id": "web-server-2",
-      "name": "Web Server 2",
-      "type": "compute",
-      "subtype": "ec2",
-      "description": "Nginx web server instance 2",
-      "parent_id": "subnet-private-1",
-      "metadata": {
-        "instance_type": "t3.medium"
-      }
-    },
-    {
-      "id": "internet",
-      "name": "Internet",
-      "type": "actor",
-      "subtype": "external",
-      "description": "External users and systems",
-      "parent_id": null,
-      "metadata": {}
-    }
-  ],
-  "flows": [
-    {
-      "id": "flow-1",
-      "name": "HTTPS Web Traffic",
-      "source_id": "internet",
-      "target_id": "alb-1",
-      "protocol": "HTTPS",
-      "port": 443,
-      "data_type": "Web requests",
-      "bidirectional": true
-    },
-    {
-      "id": "flow-2",
-      "name": "HTTP to Web Server 1",
-      "source_id": "alb-1",
-      "target_id": "web-server-1",
-      "protocol": "HTTP",
-      "port": 80,
-      "data_type": "Proxied requests",
-      "bidirectional": true
-    },
-    {
-      "id": "flow-3",
-      "name": "HTTP to Web Server 2",
-      "source_id": "alb-1",
-      "target_id": "web-server-2",
-      "protocol": "HTTP",
-      "port": 80,
-      "data_type": "Proxied requests",
-      "bidirectional": true
-    }
-  ]
-}
-```
-
-# Instructions
-
-Analyze the infrastructure provided and generate the JSON output following the above format. Include ALL infrastructure components you can identify, properly nested according to cloud provider hierarchies. Infer reasonable data flows based on typical application architectures and the resources present.
-
-**CRITICAL**: Apply the Layout Optimization Guidelines to create a flat, clear hierarchy:
+- Apply the Layout Optimization Guidelines to create a flat, clear hierarchy
 - Make similar resources siblings of each other, not nested
 - Avoid creating unnecessary intermediate container components
 - Model network access controls as processes that intermediate flows

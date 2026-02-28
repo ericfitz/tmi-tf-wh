@@ -40,4 +40,5 @@ Provide a structured summary in markdown format:
 - Keep the summary concise (under 400 words)
 - Be objective and balanced in assessments
 - Focus on findings that matter for security
+- Support observations with specific counts from the comparison data where applicable
 - Do not speculate beyond what the data shows

@@ -65,18 +65,37 @@ class DFDBuilder:
     DEFAULT_BOUNDARY_WIDTH = 800
     DEFAULT_BOUNDARY_HEIGHT = 600
 
-    def __init__(self, components: List[Dict[str, Any]], flows: List[Dict[str, Any]]):
+    def __init__(
+        self,
+        components: List[Dict[str, Any]],
+        flows: List[Dict[str, Any]],
+        services: Optional[List[Dict[str, Any]]] = None,
+    ):
         """
         Initialize the DFD builder.
 
         Args:
             components: List of component dictionaries with id, name, type, parent_id, etc.
             flows: List of flow dictionaries with source_id, target_id, protocol, etc.
+            services: Optional list of service dicts from inventory (with name,
+                      compute_units, associated_resources). Used to tag component
+                      cells with their service membership.
         """
         self.components = components
         self.flows = flows
         self.cells: List[Dict[str, Any]] = []
         self.component_cells: Dict[str, Dict[str, Any]] = {}  # id -> cell mapping
+        # Build component_id -> service_name lookup from inventory services
+        self._service_lookup: Dict[str, str] = {}
+        if services:
+            for svc in services:
+                svc_name = svc.get("name", "")
+                if not svc_name:
+                    continue
+                for comp_id in svc.get("compute_units", []):
+                    self._service_lookup[comp_id] = svc_name
+                for comp_id in svc.get("associated_resources", []):
+                    self._service_lookup[comp_id] = svc_name
 
     def build_cells(self) -> List[Dict[str, Any]]:
         """
@@ -166,11 +185,7 @@ class DFDBuilder:
                 "text": {"text": component["name"]},
             },
             "data": {
-                "_metadata": [
-                    {"key": "component_id", "value": component["id"]},
-                    {"key": "component_type", "value": component["type"]},
-                    {"key": "component_subtype", "value": component.get("subtype", "")},
-                ]
+                "_metadata": self._build_node_metadata(component),
             },
         }
 
@@ -181,6 +196,61 @@ class DFDBuilder:
                 cell["parent"] = parent_cell["id"]
 
         return cell
+
+    def _build_node_metadata(self, component: Dict[str, Any]) -> List[Dict[str, str]]:
+        """
+        Build metadata list for a node cell from component data.
+
+        Includes core fields (id, type, subtype, description) plus any
+        additional properties from the LLM-generated metadata dict.
+
+        Args:
+            component: Component data dictionary
+
+        Returns:
+            List of metadata key-value dicts
+        """
+        metadata = [
+            {"key": "component_id", "value": component["id"]},
+            {"key": "component_type", "value": component["type"]},
+            {"key": "component_subtype", "value": component.get("subtype", "")},
+        ]
+
+        if component.get("description"):
+            metadata.append({"key": "description", "value": component["description"]})
+
+        # Tag with service membership if component belongs to a service
+        service_name = self._service_lookup.get(component["id"])
+        if service_name:
+            metadata.append({"key": "service", "value": service_name})
+
+        # Include LLM-generated metadata properties (region, cidr, etc.)
+        llm_metadata = component.get("metadata")
+        if isinstance(llm_metadata, dict):
+            for key, value in llm_metadata.items():
+                if value is not None:
+                    metadata.append({"key": key, "value": str(value)})
+
+        return metadata
+
+    def _build_edge_metadata(self, flow: Dict[str, Any]) -> List[Dict[str, str]]:
+        """
+        Build metadata list for an edge cell from flow data.
+
+        Args:
+            flow: Flow data dictionary
+
+        Returns:
+            List of metadata key-value dicts
+        """
+        metadata = []
+        if flow.get("protocol"):
+            metadata.append({"key": "protocol", "value": flow["protocol"]})
+        if flow.get("port") is not None:
+            metadata.append({"key": "port", "value": str(flow["port"])})
+        if flow.get("data_type"):
+            metadata.append({"key": "data_type", "value": flow["data_type"]})
+        return metadata
 
     def _create_edge_cells(self):
         """Create edge cells for data flows."""
@@ -248,15 +318,8 @@ class DFDBuilder:
         source_port = self._get_optimal_port(source_cell, target_cell, is_source=True)
         target_port = self._get_optimal_port(target_cell, source_cell, is_source=False)
 
-        # Build label text with protocol and port if available
-        label_parts = [edge_data["label"]]
-        if flow.get("protocol"):
-            label_parts.append(f"({flow['protocol']}")
-            if flow.get("port"):
-                label_parts[-1] += f":{flow['port']}"
-            label_parts[-1] += ")"
-
-        label_text = " ".join(label_parts)
+        # Use descriptive name only as label; details go in metadata
+        label_text = edge_data["label"]
 
         # Build source and target dicts with optional port
         source_dict: dict[str, str] = {"cell": source_cell["id"]}
@@ -267,7 +330,7 @@ class DFDBuilder:
         if target_port:
             target_dict["port"] = target_port
 
-        edge = {
+        edge: Dict[str, Any] = {
             "id": cell_id,
             "shape": "edge",
             "source": source_dict,
@@ -284,6 +347,11 @@ class DFDBuilder:
             "router": {"name": "normal"},
             "connector": {"name": "smooth"},
         }
+
+        # Add protocol, port, data_type as edge metadata
+        edge_metadata = self._build_edge_metadata(flow)
+        if edge_metadata:
+            edge["data"] = {"_metadata": edge_metadata}
 
         return edge
 

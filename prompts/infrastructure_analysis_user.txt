@@ -1,0 +1,14 @@
+Repository: {repo_name}
+URL: {repo_url}
+
+## Extracted Inventory
+
+{inventory_json}
+
+## Terraform Configuration Files
+
+{terraform_contents}
+
+---
+
+Using the inventory above and the original Terraform code, analyze the infrastructure architecture, relationships, data flows, and trust boundaries. Return ONLY the JSON object.

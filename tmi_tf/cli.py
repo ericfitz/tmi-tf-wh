@@ -238,16 +238,52 @@ def analyze(
                 # Initialize DFD generator
                 dfd_generator = DFDLLMGenerator(config=config)
 
-                # Generate structured data from the analysis
+                # Combine inventory and infrastructure from all analyses
+                combined_inventory: dict = {"components": [], "services": []}
+                combined_infrastructure: dict = {
+                    "architecture_summary": "",
+                    "relationships": [],
+                    "data_flows": [],
+                    "trust_boundaries": [],
+                }
+                for analysis in analyses:
+                    if analysis.success:
+                        inv = analysis.inventory or {}
+                        infra = analysis.infrastructure or {}
+                        combined_inventory["components"].extend(
+                            inv.get("components", [])
+                        )
+                        combined_inventory["services"].extend(inv.get("services", []))
+                        combined_infrastructure["relationships"].extend(
+                            infra.get("relationships", [])
+                        )
+                        combined_infrastructure["data_flows"].extend(
+                            infra.get("data_flows", [])
+                        )
+                        combined_infrastructure["trust_boundaries"].extend(
+                            infra.get("trust_boundaries", [])
+                        )
+                        arch = infra.get("architecture_summary", "")
+                        if arch:
+                            if combined_infrastructure["architecture_summary"]:
+                                combined_infrastructure["architecture_summary"] += (
+                                    f"\n\n{arch}"
+                                )
+                            else:
+                                combined_infrastructure["architecture_summary"] = arch
+
+                # Generate structured data from the analysis JSON
                 structured_data = dfd_generator.generate_structured_components(
-                    markdown_content
+                    inventory=combined_inventory,
+                    infrastructure=combined_infrastructure,
                 )
 
                 if structured_data:
-                    # Build diagram cells
+                    # Build diagram cells, passing inventory services for metadata
                     builder = DFDBuilder(
                         components=structured_data["components"],
                         flows=structured_data["flows"],
+                        services=combined_inventory.get("services"),
                     )
                     cells = builder.build_cells()
 
@@ -301,11 +337,11 @@ def analyze(
                 threat_processor = ThreatProcessor(config)
                 all_threats = []
 
-                # Extract threats from each successful analysis
+                # Use Phase 3 security findings directly (already structured)
                 for analysis in analyses:
-                    if analysis.success:
-                        threats = threat_processor.extract_threats_from_analysis(
-                            analysis.analysis_content, analysis.repo_name
+                    if analysis.success and analysis.security_findings:
+                        threats = threat_processor.threats_from_findings(
+                            analysis.security_findings, analysis.repo_name
                         )
                         all_threats.extend(threats)
 
@@ -329,13 +365,20 @@ def analyze(
                         except Exception as e:
                             logger.warning(f"Could not get diagram ID: {e}")
 
-                    # Create threats in TMI with metadata using processor's own tracking
+                    # Create threats in TMI with metadata from Phase 3 security analysis
+                    sec_input = sum(
+                        a.security_input_tokens for a in analyses if a.success
+                    )
+                    sec_output = sum(
+                        a.security_output_tokens for a in analyses if a.success
+                    )
+                    sec_cost = sum(a.security_cost for a in analyses if a.success)
                     threat_metadata = create_artifact_metadata(
-                        provider=threat_processor.provider,
-                        model=threat_processor.model,
-                        input_tokens=threat_processor.input_tokens,
-                        output_tokens=threat_processor.output_tokens,
-                        cost_estimate_usd=threat_processor.total_cost,
+                        provider=llm_analyzer.provider,
+                        model=llm_analyzer.model,
+                        input_tokens=sec_input,
+                        output_tokens=sec_output,
+                        cost_estimate_usd=sec_cost,
                     )
                     created_threats = threat_processor.create_threats_in_tmi(
                         threats=all_threats,

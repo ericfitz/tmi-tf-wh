@@ -157,6 +157,38 @@ class TestComponentTypes:
             )
             assert "text" in cell.get("attrs", {})
 
+    def test_service_metadata(self):
+        """Components in a service should have service metadata."""
+        components = [
+            make_component("c1", "Web Server", "compute"),
+            make_component("c2", "Worker", "compute"),
+            make_component("c3", "Database", "storage"),
+        ]
+        services = [
+            {
+                "name": "web-frontend",
+                "compute_units": ["c1"],
+                "associated_resources": ["c3"],
+            }
+        ]
+        builder = DFDBuilder(components, [], services=services)
+        cells = builder.build_cells()
+
+        # c1 should have service metadata
+        c1_cell = get_cell(cells, "c1")
+        c1_meta = {m["key"]: m["value"] for m in c1_cell["data"]["_metadata"]}
+        assert c1_meta["service"] == "web-frontend"
+
+        # c3 (associated_resources) should also have service metadata
+        c3_cell = get_cell(cells, "c3")
+        c3_meta = {m["key"]: m["value"] for m in c3_cell["data"]["_metadata"]}
+        assert c3_meta["service"] == "web-frontend"
+
+        # c2 is not in any service, should not have service metadata
+        c2_cell = get_cell(cells, "c2")
+        c2_meta = {m["key"]: m["value"] for m in c2_cell["data"]["_metadata"]}
+        assert "service" not in c2_meta
+
 
 # --- Tests: Parent-child embedding ---
 
@@ -213,9 +245,13 @@ class TestEdges:
 
         edges = get_edge_cells(cells)
         assert len(edges) == 1
-        assert "Query" in edges[0]["labels"][0]["attrs"]["text"]["text"]
-        assert "TCP" in edges[0]["labels"][0]["attrs"]["text"]["text"]
-        assert "5432" in edges[0]["labels"][0]["attrs"]["text"]["text"]
+        # Label should contain only the descriptive name
+        assert edges[0]["labels"][0]["attrs"]["text"]["text"] == "Query"
+        # Protocol and port should be in edge metadata
+        metadata = edges[0]["data"]["_metadata"]
+        meta_dict = {m["key"]: m["value"] for m in metadata}
+        assert meta_dict["protocol"] == "TCP"
+        assert meta_dict["port"] == "5432"
 
     def test_bidirectional_flow_creates_two_edges(self):
         components = [

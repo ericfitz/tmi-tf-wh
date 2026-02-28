@@ -472,6 +472,9 @@ class TMIClient:
         description: Optional[str] = None,
         mitigation: Optional[str] = None,
         severity: Optional[str] = None,
+        score: Optional[float] = None,
+        cvss: Optional[List[dict]] = None,
+        cwe_id: Optional[List[str]] = None,
         status: Optional[str] = None,
         diagram_id: Optional[str] = None,
         cell_id: Optional[str] = None,
@@ -487,6 +490,9 @@ class TMIClient:
             description: Description of the threat and risk
             mitigation: Recommended or planned mitigation(s)
             severity: Severity level (e.g., Critical, High, Medium, Low)
+            score: CVSS base score (0.0-10.0)
+            cvss: List of CVSS vector/score dicts
+            cwe_id: List of CWE identifiers (e.g., ["CWE-284"])
             status: Current status (e.g., Open, In Progress, Resolved)
             diagram_id: Associated diagram UUID
             cell_id: Associated cell UUID in the diagram
@@ -522,6 +528,9 @@ class TMIClient:
                 if mitigation
                 else mitigation,
                 severity=severity,
+                score=score,
+                cvss=cvss,
+                cwe_id=cwe_id,
                 status=status,
                 diagram_id=diagram_id,
                 cell_id=cell_id,

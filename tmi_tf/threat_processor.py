@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
 import litellm
@@ -26,7 +27,11 @@ class SecurityThreat:
         description: str,
         threat_type: Union[str, List[str]],
         severity: str = "Medium",
+        score: Optional[float] = None,
+        cvss: Optional[List[Dict[str, Any]]] = None,
+        cwe_id: Optional[List[str]] = None,
         mitigation: Optional[str] = None,
+        affected_components: Optional[List[str]] = None,
         status: str = "Open",
     ):
         """
@@ -37,7 +42,11 @@ class SecurityThreat:
             description: Detailed description of the threat
             threat_type: Type/category of threat (STRIDE classification as string or list)
             severity: Severity level (Critical, High, Medium, Low)
+            score: CVSS base score (0.0-10.0)
+            cvss: List of CVSS vector/score dicts
+            cwe_id: List of CWE identifiers (e.g., ["CWE-284"])
             mitigation: Recommended mitigation strategies
+            affected_components: List of affected infrastructure component names
             status: Threat status (Open, In Progress, Resolved, Accepted)
         """
         self.name = name
@@ -49,7 +58,11 @@ class SecurityThreat:
         else:
             self.threat_type = threat_type
         self.severity = severity
+        self.score = score
+        self.cvss = cvss or []
+        self.cwe_id = cwe_id or []
         self.mitigation = mitigation
+        self.affected_components = affected_components or []
         self.status = status
 
     def __repr__(self) -> str:
@@ -82,6 +95,7 @@ class ThreatProcessor:
         )
         self.model = self._normalize_model_name(model_name)
         self._configure_api_keys()
+        self._load_prompts()
 
         # Token and cost tracking for threat extraction
         self.input_tokens = 0
@@ -107,6 +121,40 @@ class ThreatProcessor:
         if prefix:
             return f"{prefix}{model}"
         return model
+
+    def _load_prompts(self):
+        """Load threat extraction prompts from files."""
+        prompts_dir = Path(__file__).parent.parent / "prompts"
+        system_path = prompts_dir / "threat_extraction_system.txt"
+        user_path = prompts_dir / "threat_extraction_user.txt"
+
+        try:
+            self.system_prompt = system_path.read_text(encoding="utf-8")
+            self.user_prompt_template = user_path.read_text(encoding="utf-8")
+            logger.info("Loaded threat extraction prompts from %s", prompts_dir)
+        except FileNotFoundError as e:
+            logger.warning(
+                "Threat extraction prompt file not found: %s, using defaults", e
+            )
+            self.system_prompt = self._get_default_system_prompt()
+            self.user_prompt_template = self._get_default_user_prompt()
+
+    def _get_default_system_prompt(self) -> str:
+        """Return default system prompt if file not found."""
+        return (
+            "You are a security threat modeling expert specializing in the STRIDE framework. "
+            "Extract and structure security threats from infrastructure analysis content. "
+            "Return ONLY a JSON array of threat objects with fields: name, description, "
+            "threat_type, severity, score, mitigation, affected_components."
+        )
+
+    def _get_default_user_prompt(self) -> str:
+        """Return default user prompt template if file not found."""
+        return (
+            'Analyze the following infrastructure security analysis for repository "{repo_name}" '
+            "and extract all security threats.\n\nAnalysis Content:\n---\n{analysis_content}\n---\n\n"
+            "Extract and structure all security threats. Respond with ONLY the JSON array."
+        )
 
     def _configure_api_keys(self):
         """Configure API keys for LiteLLM based on the selected provider."""
@@ -141,56 +189,12 @@ class ThreatProcessor:
         """
         logger.info(f"Extracting threats from analysis for {repo_name}")
 
-        # Build prompt for threat extraction
-        system_prompt = """You are a security threat modeling expert specializing in the STRIDE framework. Your task is to extract and structure security threats from infrastructure analysis content.
-
-For each security issue or concern mentioned in the analysis:
-1. Create a clear, concise threat name (max 100 characters)
-2. Provide a concise description of the threat, risk, and impact (max 200 characters)
-3. Classify the threat using the STRIDE framework by evaluating ALL categories and including EVERY applicable one:
-
-   STRIDE Categories:
-   - Spoofing: Could an attacker impersonate a valid user, system, or process?
-   - Tampering: Could an attacker modify data, code, or configurations without authorization?
-   - Repudiation: Could a user or system deny having performed a specific action without proof otherwise?
-   - Information Disclosure: Could an attacker gain unauthorized access to sensitive data?
-   - Denial of Service: Could an attacker disrupt availability or performance for legitimate users?
-   - Elevation of Privilege: Could an attacker gain higher privileges than entitled?
-
-   IMPORTANT: A single threat may violate multiple security properties. Include ALL applicable STRIDE categories as a comma-separated string.
-
-4. Assign severity: Critical, High, Medium, or Low
-5. Suggest specific, actionable mitigation strategies (max 300 characters)
-
-# Output Format
-
-You MUST return ONLY a JSON array. Do not include any explanation, preamble, markdown formatting, or code fences. Your entire response must be valid JSON starting with [ and ending with ].
-
-Each element in the array must be an object with exactly these fields:
-{
-  "name": "Brief threat title",
-  "description": "Concise threat description with risk and impact",
-  "threat_type": "Comma-separated STRIDE categories",
-  "severity": "Critical|High|Medium|Low",
-  "mitigation": "Recommended mitigation strategies"
-}
-
-IMPORTANT:
-- Do NOT use HTML tags in any field values. Use plain text only.
-- Keep field values concise to avoid exceeding output limits.
-- If no security threats are found, return an empty array: []
-- Do NOT wrap the JSON in markdown code fences or add any text before or after the array."""
-
-        user_prompt = f"""Analyze the following infrastructure security analysis for repository "{repo_name}" and extract all security threats.
-
-Focus on the Security Observations section and any other security concerns mentioned in the analysis.
-
-Analysis Content:
----
-{analysis_content}
----
-
-Extract and structure all security threats found in this analysis. Remember: respond with ONLY the JSON array, no other text."""
+        # Build prompts from templates
+        system_prompt = self.system_prompt
+        user_prompt = self.user_prompt_template.format(
+            repo_name=repo_name,
+            analysis_content=analysis_content,
+        )
 
         try:
             response = litellm.completion(
@@ -246,7 +250,11 @@ Extract and structure all security threats found in this analysis. Remember: res
                     description=threat_data.get("description", ""),
                     threat_type=threat_data.get("threat_type", "Unclassified"),
                     severity=threat_data.get("severity", "Medium"),
+                    score=threat_data.get("score"),
+                    cvss=threat_data.get("cvss"),
+                    cwe_id=threat_data.get("cwe_id"),
                     mitigation=threat_data.get("mitigation"),
+                    affected_components=threat_data.get("affected_components"),
                     status="Open",
                 )
                 threats.append(threat)
@@ -257,6 +265,42 @@ Extract and structure all security threats found in this analysis. Remember: res
         except Exception as e:
             logger.error(f"Failed to extract threats from analysis: {e}")
             return []
+
+    def threats_from_findings(
+        self,
+        findings: List[Dict[str, Any]],
+        repo_name: str,
+    ) -> List[SecurityThreat]:
+        """
+        Convert structured security findings (from Phase 3 JSON) into SecurityThreat objects.
+
+        This skips the LLM call since the findings are already structured.
+
+        Args:
+            findings: List of security finding dicts from Phase 3 analysis
+            repo_name: Repository name for logging
+
+        Returns:
+            List of SecurityThreat objects
+        """
+        logger.info(f"Converting {len(findings)} structured findings for {repo_name}")
+        threats = []
+        for finding in findings:
+            threat = SecurityThreat(
+                name=finding.get("name", "Unnamed Threat"),
+                description=finding.get("description", ""),
+                threat_type=finding.get("threat_type", "Unclassified"),
+                severity=finding.get("severity", "Medium"),
+                score=finding.get("score"),
+                cvss=finding.get("cvss"),
+                cwe_id=finding.get("cwe_id"),
+                mitigation=finding.get("mitigation"),
+                affected_components=finding.get("affected_components"),
+                status="Open",
+            )
+            threats.append(threat)
+        logger.info(f"Converted {len(threats)} threats from {repo_name}")
+        return threats
 
     def create_threats_in_tmi(
         self,
@@ -293,6 +337,9 @@ Extract and structure all security threats found in this analysis. Remember: res
                     description=threat.description,
                     mitigation=threat.mitigation,
                     severity=threat.severity,
+                    score=threat.score,
+                    cvss=threat.cvss,
+                    cwe_id=threat.cwe_id,
                     status=threat.status,
                     diagram_id=diagram_id,
                     metadata=metadata,

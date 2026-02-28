@@ -1,0 +1,10 @@
+Analyze the following infrastructure security analysis for repository "{repo_name}" and extract all security threats.
+
+Focus on the Security Observations section and any other security concerns mentioned in the analysis.
+
+Analysis Content:
+---
+{analysis_content}
+---
+
+Extract and structure all security threats found in this analysis. Remember: respond with ONLY the JSON array, no other text.

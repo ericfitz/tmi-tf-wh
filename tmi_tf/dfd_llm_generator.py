@@ -2,7 +2,7 @@
 LLM-based DFD Generator.
 
 This module uses LiteLLM to generate structured component and flow data
-from Terraform analysis markdown.
+from Terraform analysis structured JSON.
 """
 
 import json
@@ -105,27 +105,32 @@ class DFDLLMGenerator:
                 os.environ["GEMINI_API_KEY"] = config.gemini_api_key
 
     def _load_prompt_template(self):
-        """Load the DFD generation prompt template."""
-        prompt_path = (
-            Path(__file__).parent.parent / "prompts" / "terraform_dfd_generation.txt"
-        )
+        """Load the DFD generation prompt templates."""
+        prompts_dir = Path(__file__).parent.parent / "prompts"
+        system_path = prompts_dir / "dfd_generation_system.txt"
+        user_path = prompts_dir / "dfd_generation_user.txt"
 
         try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                self.prompt_template = f.read()
-            logger.info("Loaded DFD generation prompt template from %s", prompt_path)
+            with open(system_path, "r", encoding="utf-8") as f:
+                self.system_prompt = f.read()
+            with open(user_path, "r", encoding="utf-8") as f:
+                self.user_prompt_template = f.read()
+            logger.info("Loaded DFD generation prompt templates from %s", prompts_dir)
         except Exception as e:
-            logger.error("Failed to load DFD generation prompt template: %s", e)
+            logger.error("Failed to load DFD generation prompt templates: %s", e)
             raise
 
     def generate_structured_components(
-        self, analysis_markdown: str
+        self,
+        inventory: Dict[str, Any],
+        infrastructure: Dict[str, Any],
     ) -> Optional[Dict[str, List[Dict[str, Any]]]]:
         """
-        Generate structured component and flow data from analysis markdown.
+        Generate structured component and flow data from analysis JSON.
 
         Args:
-            analysis_markdown: The Terraform analysis markdown content
+            inventory: Phase 1 inventory JSON (components, services)
+            infrastructure: Phase 2 infrastructure JSON (relationships, flows, boundaries)
 
         Returns:
             Dictionary with "components" and "flows" keys, or None on error
@@ -133,13 +138,19 @@ class DFDLLMGenerator:
         logger.info("Generating structured DFD data from analysis using %s", self.model)
 
         try:
-            # Build the full prompt
-            full_prompt = f"{self.prompt_template}\n\n# Infrastructure Analysis\n\n{analysis_markdown}"
+            # Build the user prompt from template with JSON data
+            user_prompt = self.user_prompt_template.format(
+                inventory_json=json.dumps(inventory, indent=2),
+                infrastructure_json=json.dumps(infrastructure, indent=2),
+            )
 
-            # Call LLM API via LiteLLM
+            # Call LLM API via LiteLLM with system + user messages
             response = litellm.completion(
                 model=self.model,
-                messages=[{"role": "user", "content": full_prompt}],
+                messages=[
+                    {"role": "system", "content": self.system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
                 max_tokens=16000,
                 temperature=get_effective_temperature(self.model, 0),
                 timeout=180.0,
