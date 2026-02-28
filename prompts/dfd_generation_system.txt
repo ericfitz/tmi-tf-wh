@@ -85,13 +85,15 @@ tenant
 
 # Output Format
 
+IMPORTANT: All string values in the output (names, descriptions, data_type, etc.) must be plain text only. Do NOT use any markup, markdown formatting (asterisks, backticks, headers), HTML tags, or special formatting characters anywhere in the JSON output.
+
 Generate a JSON object with two main sections: "components" and "flows".
 
 ## Components
 
 Each component should include:
 - **id** - Unique identifier (use resource name or generate one)
-- **name** - Descriptive display label for the diagram (e.g., 'Application Load Balancer', 'Primary Database'). Do NOT include resource types, protocols, ports, or technical identifiers in names — put those in `subtype` and `metadata`.
+- **name** - Short, plain-text display label for the diagram (e.g., 'App Load Balancer', 'Primary DB'). Do NOT include resource types, protocols, ports, or technical identifiers in names — put those in `subtype` and `metadata`. Do NOT include any markup, markdown formatting, asterisks, backticks, HTML tags, or special formatting characters in names.
 - **type** - One of: tenant, container, network, network_access_control, gateway, compute, service, storage, actor
 - **subtype** - Specific resource type (vpc, subnet, security_group, ec2, rds, etc.)
 - **description** - Brief description of the resource
@@ -102,12 +104,13 @@ Each component should include:
 
 Each data flow should include:
 - **id** - Unique identifier for the flow
-- **name** - Description of what data moves (e.g., 'User Authentication Requests', 'Database Queries'). Do NOT include protocol or port in the name — put those in the `protocol` and `port` fields.
+- **name** - Short label (1-3 words) summarizing the flow (e.g., 'Web Traffic', 'DB Queries', 'Auth', 'Logs', 'API Calls'). This is displayed as an edge label on the diagram, so brevity is essential. Put any additional detail in `data_type` and `description`.
 - **source_id** - Component ID where data originates
 - **target_id** - Component ID where data goes
 - **protocol** - Protocol used (HTTPS, HTTP, SSH, TLS, TCP, UDP, etc.)
 - **port** - Port number if applicable
 - **data_type** - Type of data being transferred (API requests, web traffic, database queries, etc.)
+- **description** - Longer description of the flow if needed (not displayed on the diagram)
 - **bidirectional** - Boolean indicating if this is a two-way communication
 
 # Special Considerations

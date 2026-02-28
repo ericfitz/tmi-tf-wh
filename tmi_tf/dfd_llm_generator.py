@@ -194,6 +194,9 @@ class DFDLLMGenerator:
                 logger.error("Failed to extract JSON from Claude response")
                 return None
 
+            # Strip any markup from all string values
+            self._strip_markup(structured_data)
+
             # Validate structure
             if not self._validate_structure(structured_data):
                 logger.error("Invalid structure in generated data")
@@ -251,6 +254,38 @@ class DFDLLMGenerator:
                 continue
 
         return None
+
+    @staticmethod
+    def _strip_markup_string(text: str) -> str:
+        """Strip markdown and HTML markup from a string.
+
+        Removes: HTML tags, markdown bold/italic (*** / ** / * / __ ),
+        backticks, and markdown header prefixes (# ).
+        """
+        # HTML tags
+        text = re.sub(r"<[^>]+>", "", text)
+        # Markdown bold/italic markers (*** ** * __ )
+        text = re.sub(r"\*{1,3}|_{2}", "", text)
+        # Backticks
+        text = text.replace("`", "")
+        # Markdown header prefixes
+        text = re.sub(r"^#{1,6}\s+", "", text)
+        return text.strip()
+
+    def _strip_markup(self, data: Any) -> None:
+        """Recursively strip markup from all string values in a data structure."""
+        if isinstance(data, dict):
+            for key in data:
+                if isinstance(data[key], str):
+                    data[key] = self._strip_markup_string(data[key])
+                else:
+                    self._strip_markup(data[key])
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                if isinstance(item, str):
+                    data[i] = self._strip_markup_string(item)
+                else:
+                    self._strip_markup(item)
 
     def _validate_structure(self, data: Dict[str, Any]) -> bool:
         """
