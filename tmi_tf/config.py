@@ -1,6 +1,7 @@
 """Configuration management for tmi-tf."""
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -64,16 +65,19 @@ class Config:
         self.max_repos: int = int(os.getenv("MAX_REPOS", "3"))
         self.clone_timeout: int = int(os.getenv("CLONE_TIMEOUT", "300"))
 
-        # Note and diagram names include model identifier
+        # Note and diagram names include model identifier and timestamp
         effective_model = self.llm_model or self.DEFAULT_MODELS.get(
             self.llm_provider, "unknown"
         )
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         base_note_name = os.getenv("ANALYSIS_NOTE_NAME", "Terraform Analysis Report")
         base_diagram_name = os.getenv(
             "DIAGRAM_NAME", "Infrastructure Data Flow Diagram"
         )
-        self.analysis_note_name: str = f"{base_note_name} ({effective_model})"
-        self.diagram_name: str = f"{base_diagram_name} ({effective_model})"
+        self.analysis_note_name: str = (
+            f"{base_note_name} ({effective_model}, {timestamp})"
+        )
+        self.diagram_name: str = f"{base_diagram_name} ({effective_model}, {timestamp})"
 
         # Token cache directory
         self.cache_dir = Path.home() / ".tmi-tf"

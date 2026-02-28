@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import secrets
+import tempfile
 import webbrowser
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -83,12 +84,20 @@ class TokenCache:
         self.cache_file = cache_file
 
     def save_token(self, token: str, expires_in: int):
-        """Save token to cache file."""
+        """Save token to cache file using atomic write."""
         expires_at = datetime.now() + timedelta(seconds=expires_in)
         cache_data = {"token": token, "expires_at": expires_at.isoformat()}
 
-        with open(self.cache_file, "w") as f:
-            json.dump(cache_data, f)
+        # Write to temp file then rename for atomicity (os.rename is atomic on POSIX)
+        cache_dir = self.cache_file.parent
+        fd, tmp_path = tempfile.mkstemp(dir=cache_dir, suffix=".tmp")
+        try:
+            with open(fd, "w") as f:
+                json.dump(cache_data, f)
+            Path(tmp_path).rename(self.cache_file)
+        except BaseException:
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
 
         logger.info(f"Token cached to {self.cache_file}")
 
