@@ -8,7 +8,9 @@
       "Bash(mkdir:*)",
       "Bash(uv sync:*)",
       "Bash(uv run:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(git stash)",
+      "Bash(git stash pop)"
     ],
     "deny": [],
     "ask": []
