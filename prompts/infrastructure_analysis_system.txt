@@ -61,6 +61,12 @@ Array of data flow paths through the infrastructure:
 
 Include both explicit flows (from Terraform security group rules, load balancer configs) and inferred flows (web servers query databases, instances route through NAT gateways).
 
+**Route-Aware Reachability**: Before creating a data flow, verify that a valid network routing path exists between the source and target:
+- Analyze route tables, route rules, and route table associations defined in the Terraform code
+- Check that the source subnet's route table has a route whose destination CIDR covers the target's network, with an appropriate next-hop target (IGW, NAT Gateway, VPN Gateway, peering connection, etc.)
+- Do NOT create data flows between components in subnets that have no routing path to each other, even if security group rules would permit the traffic
+- If no explicit route tables are defined, assume standard cloud provider default routing behavior (local VPC/VCN routing for same-VPC traffic, no internet access from private subnets without an explicit gateway and route)
+
 ## trust_boundaries
 Array of security trust boundaries:
 - **name**: Boundary name (e.g., "Public Internet Zone", "Application VPC", "Database Subnet")

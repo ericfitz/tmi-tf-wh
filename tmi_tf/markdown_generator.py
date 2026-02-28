@@ -2,20 +2,92 @@
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from html import escape as html_escape
+from typing import Any, Dict, List, Optional, Sequence
 
 from tmi_tf.llm_analyzer import TerraformAnalysis
 
 logger = logging.getLogger(__name__)
 
 
+def _esc(value: str) -> str:
+    """HTML-escape a string for safe embedding in table cells."""
+    return html_escape(str(value), quote=True)
+
+
+def _html_list(items: Sequence[str]) -> str:
+    """Render a list of items as an HTML <ul> list, or empty string if empty."""
+    if not items:
+        return ""
+    li = "".join(f"<li>{_esc(item)}</li>" for item in items)
+    return f"<ul>{li}</ul>"
+
+
+def _html_table(
+    headers: List[str],
+    rows: List[List[str]],
+    col_widths: Optional[List[str]] = None,
+    col_aligns: Optional[List[str]] = None,
+    bold_last_row: bool = False,
+) -> str:
+    """Build an HTML table with optional colgroup widths and alignment.
+
+    Args:
+        headers: Column header labels.
+        rows: List of rows, each row is a list of cell HTML content strings
+              (already escaped or containing nested HTML).
+        col_widths: Optional list of CSS width values (e.g. "20%", "150px").
+        col_aligns: Optional list of CSS text-align values per column.
+        bold_last_row: If True, wrap last row cells in <strong>.
+    """
+    parts: list[str] = ['<table style="width:100%">']
+
+    # Column widths via colgroup
+    if col_widths:
+        parts.append("<colgroup>")
+        for w in col_widths:
+            parts.append(f'<col style="width:{w}">')
+        parts.append("</colgroup>")
+
+    # Header
+    parts.append("<thead><tr>")
+    for i, h in enumerate(headers):
+        style = f' style="text-align:{col_aligns[i]}"' if col_aligns else ""
+        parts.append(f"<th{style}>{_esc(h)}</th>")
+    parts.append("</tr></thead>")
+
+    # Body
+    parts.append("<tbody>")
+    for row_idx, row in enumerate(rows):
+        parts.append("<tr>")
+        is_bold = bold_last_row and row_idx == len(rows) - 1
+        for i, cell in enumerate(row):
+            style = f' style="text-align:{col_aligns[i]}"' if col_aligns else ""
+            content = f"<strong>{cell}</strong>" if is_bold else cell
+            parts.append(f"<td{style}>{content}</td>")
+        parts.append("</tr>")
+    parts.append("</tbody>")
+
+    parts.append("</table>")
+    return "".join(parts)
+
+
+def _config_nested_table(config: Dict[str, Any]) -> str:
+    """Render a configuration dict as a nested table inside a cell."""
+    if not config:
+        return ""
+    parts = ['<table style="width:100%">']
+    for k, v in list(config.items())[:5]:
+        parts.append(
+            f"<tr><td><strong>{_esc(str(k))}</strong></td>"
+            f"<td><code>{_esc(str(v))}</code></td></tr>"
+        )
+    parts.append("</table>")
+    return "".join(parts)
+
+
 class MarkdownGenerator:
     """Generates markdown reports from structured analysis results."""
-
-    @staticmethod
-    def _table_cell(value: str) -> str:
-        """Escape pipe characters in a value for use in a markdown table cell."""
-        return str(value).replace("|", "\\|")
 
     def generate_report(
         self,
@@ -112,7 +184,7 @@ class MarkdownGenerator:
         return "\n\n---\n\n".join(sections)
 
     def _format_inventory_section(self, inventory: Dict[str, Any]) -> str:
-        """Format inventory JSON into markdown section."""
+        """Format inventory JSON into markdown section with HTML tables."""
         parts = ["### Infrastructure Inventory"]
 
         components = inventory.get("components", [])
@@ -141,67 +213,71 @@ class MarkdownGenerator:
             "other",
         ]
 
-        tc = self._table_cell
         for comp_type in type_order:
             group = by_type.get(comp_type, [])
             if not group:
                 continue
 
             parts.append(f"#### {comp_type.replace('_', ' ').title()}")
-            parts.append("")
-            parts.append("| Name | Resource Type | Purpose | Configuration |")
-            parts.append("|------|---------------|---------|---------------|")
+
+            rows: List[List[str]] = []
             for comp in group:
-                name = comp.get("name", "Unknown")
+                name = _esc(comp.get("name", "Unknown"))
                 resource_type = comp.get("resource_type", "")
-                purpose = comp.get("purpose", "")
+                rt_str = f"<code>{_esc(resource_type)}</code>" if resource_type else ""
+                purpose = _esc(comp.get("purpose", ""))
                 config = comp.get("configuration", {})
-
-                config_str = ""
-                if isinstance(config, dict) and config:
-                    config_items = [f"{k}: `{v}`" for k, v in list(config.items())[:5]]
-                    config_str = ", ".join(config_items)
-
-                rt_str = f"`{resource_type}`" if resource_type else ""
-                parts.append(
-                    f"| {tc(name)} | {rt_str} | {tc(purpose)} | {tc(config_str)} |"
+                config_html = (
+                    _config_nested_table(config)
+                    if isinstance(config, dict) and config
+                    else ""
                 )
+                rows.append([name, rt_str, purpose, config_html])
+
+            parts.append(
+                _html_table(
+                    ["Name", "Resource Type", "Purpose", "Configuration"],
+                    rows,
+                    col_widths=["20%", "15%", "30%", "35%"],
+                )
+            )
 
         # Services
         services = inventory.get("services", [])
         if services:
-            parts.append("")
             parts.append("#### Services (Logical Groupings)")
-            parts.append("")
-            parts.append(
-                "| Service | Criteria | Compute Units | Associated Resources |"
-            )
-            parts.append(
-                "|---------|----------|---------------|----------------------|"
-            )
+
+            rows = []
             for svc in services:
-                svc_name = svc.get("name", "Unknown")
+                svc_name = _esc(svc.get("name", "Unknown"))
                 criteria = svc.get("criteria", [])
                 compute_units = svc.get("compute_units", [])
                 associated = svc.get("associated_resources", [])
-
-                criteria_str = ", ".join(criteria) if criteria else ""
-                compute_str = ", ".join(compute_units) if compute_units else ""
-                assoc_str = ", ".join(associated) if associated else ""
-                parts.append(
-                    f"| {tc(svc_name)} | {tc(criteria_str)} "
-                    f"| {tc(compute_str)} | {tc(assoc_str)} |"
+                rows.append(
+                    [
+                        svc_name,
+                        _html_list(criteria),
+                        _html_list(compute_units),
+                        _html_list(associated),
+                    ]
                 )
 
-        return "\n".join(parts)
+            parts.append(
+                _html_table(
+                    ["Service", "Criteria", "Compute Units", "Associated Resources"],
+                    rows,
+                    col_widths=["15%", "30%", "25%", "30%"],
+                )
+            )
+
+        return "\n\n".join(parts)
 
     def _format_relationships_section(self, infrastructure: Dict[str, Any]) -> str:
-        """Format relationships JSON into markdown section."""
+        """Format relationships JSON into markdown section with HTML tables."""
         relationships = infrastructure.get("relationships", [])
         if not relationships:
             return ""
 
-        tc = self._table_cell
         parts = ["### Component Relationships"]
 
         # Group by relationship type
@@ -214,100 +290,133 @@ class MarkdownGenerator:
 
         for rel_type, rels in by_type.items():
             parts.append(f"\n#### {rel_type.replace('_', ' ').title()}")
-            parts.append("")
-            parts.append("| Source | Target | Description |")
-            parts.append("|--------|--------|-------------|")
+
+            rows: List[List[str]] = []
             for rel in rels:
-                source = rel.get("source_id", "?")
-                target = rel.get("target_id", "?")
-                desc = rel.get("description", "")
-                parts.append(f"| {tc(source)} | {tc(target)} | {tc(desc)} |")
+                source = _esc(rel.get("source_id", "?"))
+                target = _esc(rel.get("target_id", "?"))
+                desc = _esc(rel.get("description", ""))
+                rows.append([source, target, desc])
+
+            parts.append(
+                _html_table(
+                    ["Source", "Target", "Description"],
+                    rows,
+                    col_widths=["25%", "25%", "50%"],
+                )
+            )
 
         return "\n".join(parts)
 
     def _format_data_flows_section(self, infrastructure: Dict[str, Any]) -> str:
-        """Format data flows JSON into markdown section."""
+        """Format data flows JSON into markdown section with HTML tables."""
         flows = infrastructure.get("data_flows", [])
         if not flows:
             return ""
 
-        parts = ["### Data Flows", ""]
-        parts.append("| Flow | Source | Target | Protocol | Port | Data Type |")
-        parts.append("|------|--------|--------|----------|------|-----------|")
+        parts = ["### Data Flows"]
 
+        rows: List[List[str]] = []
         for flow in flows:
-            name = flow.get("name", "")
-            source = flow.get("source_id", "")
-            target = flow.get("target_id", "")
-            protocol = flow.get("protocol", "")
-            port = flow.get("port", "")
-            data_type = flow.get("data_type", "")
-            parts.append(
-                f"| {name} | {source} | {target} | {protocol} | {port} | {data_type} |"
+            rows.append(
+                [
+                    _esc(flow.get("name", "")),
+                    _esc(flow.get("source_id", "")),
+                    _esc(flow.get("target_id", "")),
+                    _esc(flow.get("protocol", "")),
+                    _esc(str(flow.get("port", ""))),
+                    _esc(flow.get("data_type", "")),
+                ]
             )
+
+        parts.append(
+            _html_table(
+                ["Flow", "Source", "Target", "Protocol", "Port", "Data Type"],
+                rows,
+                col_widths=["20%", "15%", "15%", "10%", "10%", "30%"],
+            )
+        )
 
         # Trust boundaries
         boundaries = infrastructure.get("trust_boundaries", [])
         if boundaries:
-            tc = self._table_cell
-            parts.append("")
             parts.append("#### Trust Boundaries")
-            parts.append("")
-            parts.append("| Boundary | Type | Components |")
-            parts.append("|----------|------|------------|")
-            for boundary in boundaries:
-                name = boundary.get("name", "")
-                btype = boundary.get("boundary_type", "")
-                component_ids = boundary.get("component_ids", [])
-                parts.append(
-                    f"| {tc(name)} | {tc(btype)} | {tc(', '.join(component_ids))} |"
-                )
 
-        return "\n".join(parts)
+            rows = []
+            for boundary in boundaries:
+                name = _esc(boundary.get("name", ""))
+                btype = _esc(boundary.get("boundary_type", ""))
+                component_ids = boundary.get("component_ids", [])
+                rows.append([name, btype, _html_list(component_ids)])
+
+            parts.append(
+                _html_table(
+                    ["Boundary", "Type", "Components"],
+                    rows,
+                    col_widths=["25%", "20%", "55%"],
+                )
+            )
+
+        return "\n\n".join(parts)
 
     def _format_security_section(self, security_findings: List[Dict[str, Any]]) -> str:
-        """Format security findings JSON into markdown section."""
+        """Format security findings JSON into markdown section with HTML tables."""
         if not security_findings:
             return "### Security Observations\n\nNo security findings identified."
 
-        tc = self._table_cell
-        parts = ["### Security Observations", ""]
-        parts.append(
-            "| Finding | Severity | STRIDE | Category "
-            "| Description | Mitigation | Affected Components |"
-        )
-        parts.append(
-            "|---------|----------|--------|----------"
-            "|-------------|------------|---------------------|"
-        )
+        parts = ["### Security Observations"]
 
+        rows: List[List[str]] = []
         for finding in security_findings:
-            name = finding.get("name", "Unknown")
+            name = _esc(finding.get("name", "Unknown"))
             severity = finding.get("severity", "Medium")
             score = finding.get("score")
-            description = finding.get("description", "")
-            threat_type = finding.get("threat_type", "")
-            category = finding.get("category", "")
-            mitigation = finding.get("mitigation", "")
+            description = _esc(finding.get("description", ""))
+            threat_type = _esc(finding.get("threat_type", ""))
+            category = _esc(finding.get("category", ""))
+            mitigation = _esc(finding.get("mitigation", ""))
             cwe_id = finding.get("cwe_id", [])
             affected = finding.get("affected_components", [])
 
-            severity_str = severity
+            severity_str = _esc(severity)
             if score is not None:
-                severity_str += f" ({score})"
+                severity_str += f" ({_esc(str(score))})"
 
-            name_str = name
+            # CWE IDs as separate code elements
+            name_html = name
             if cwe_id:
-                name_str += f" [{', '.join(cwe_id)}]"
+                cwe_html = " ".join(f"<code>{_esc(cid)}</code>" for cid in cwe_id)
+                name_html += f"<br>{cwe_html}"
 
-            affected_str = ", ".join(affected) if affected else ""
-            parts.append(
-                f"| {tc(name_str)} | {tc(severity_str)} | {tc(threat_type)} "
-                f"| {tc(category)} | {tc(description)} | {tc(mitigation)} "
-                f"| {tc(affected_str)} |"
+            rows.append(
+                [
+                    name_html,
+                    severity_str,
+                    threat_type,
+                    category,
+                    description,
+                    mitigation,
+                    _html_list(affected),
+                ]
             )
 
-        return "\n".join(parts)
+        parts.append(
+            _html_table(
+                [
+                    "Finding",
+                    "Severity",
+                    "STRIDE",
+                    "Category",
+                    "Description",
+                    "Mitigation",
+                    "Affected Components",
+                ],
+                rows,
+                col_widths=["15%", "8%", "8%", "10%", "24%", "20%", "15%"],
+            )
+        )
+
+        return "\n\n".join(parts)
 
     def _generate_consolidated_findings(self, analyses: List[TerraformAnalysis]) -> str:
         """Generate consolidated findings section."""
@@ -387,19 +496,18 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 
         # Per-repository metrics table
         if successful:
-            tc = self._table_cell
             parts.append("### Per-Repository Metrics")
-            parts.append(
-                "| Repository | Time | Input Tokens "
-                "| Output Tokens | Cost |\n"
-                "|------------|------|-------------- "
-                "|---------------|------|"
-            )
+
+            rows: List[List[str]] = []
             for a in successful:
-                parts.append(
-                    f"| {tc(a.repo_name)} | {a.elapsed_time:.2f}s "
-                    f"| {a.input_tokens:,} | {a.output_tokens:,} "
-                    f"| ${a.total_cost:.4f} |"
+                rows.append(
+                    [
+                        _esc(a.repo_name),
+                        f"{a.elapsed_time:.2f}s",
+                        f"{a.input_tokens:,}",
+                        f"{a.output_tokens:,}",
+                        f"${a.total_cost:.4f}",
+                    ]
                 )
 
             # Totals row
@@ -407,10 +515,24 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
             total_input = sum(a.input_tokens for a in successful)
             total_output = sum(a.output_tokens for a in successful)
             total_cost = sum(a.total_cost for a in successful)
+            rows.append(
+                [
+                    "Total",
+                    f"{total_time:.2f}s",
+                    f"{total_input:,}",
+                    f"{total_output:,}",
+                    f"${total_cost:.4f}",
+                ]
+            )
+
             parts.append(
-                f"| **Total** | **{total_time:.2f}s** "
-                f"| **{total_input:,}** | **{total_output:,}** "
-                f"| **${total_cost:.4f}** |"
+                _html_table(
+                    ["Repository", "Time", "Input Tokens", "Output Tokens", "Cost"],
+                    rows,
+                    col_widths=["30%", "15%", "20%", "20%", "15%"],
+                    col_aligns=["left", "right", "right", "right", "right"],
+                    bold_last_row=True,
+                )
             )
 
         parts.append(

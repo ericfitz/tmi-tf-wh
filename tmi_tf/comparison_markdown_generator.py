@@ -9,6 +9,7 @@ from tmi_tf.analysis_comparer import (
     ComparisonResult,
     NormalizedDiscovery,
 )
+from tmi_tf.markdown_generator import _esc, _html_table
 
 logger = logging.getLogger(__name__)
 
@@ -162,24 +163,48 @@ This report compares infrastructure analysis results from multiple AI models to 
         )
         single_model = sum(1 for d in all_discoveries if len(d.models_that_found) == 1)
 
+        summary_table = _html_table(
+            ["Metric", "Value"],
+            [
+                ["Total Unique Discoveries", str(comparison.total_unique_discoveries)],
+                [
+                    "Agreement Rate (all models)",
+                    f"{comparison.agreement_rate:.1f}%",
+                ],
+                ["Full Agreement", f"{full_agreement} discoveries"],
+                ["Partial Agreement", f"{partial_agreement} discoveries"],
+                ["Single Model Only", f"{single_model} discoveries"],
+            ],
+            col_widths=["60%", "40%"],
+        )
+
+        breakdown_table = _html_table(
+            ["Category", "Count"],
+            [
+                [
+                    "Infrastructure Components",
+                    str(len(comparison.infrastructure_comparison)),
+                ],
+                [
+                    "Component Relationships",
+                    str(len(comparison.relationships_comparison)),
+                ],
+                ["Data Flows", str(len(comparison.data_flows_comparison))],
+                [
+                    "Security Observations",
+                    str(len(comparison.security_comparison)),
+                ],
+            ],
+            col_widths=["60%", "40%"],
+        )
+
         return f"""## Summary Statistics
 
-| Metric | Value |
-|--------|-------|
-| Total Unique Discoveries | {comparison.total_unique_discoveries} |
-| Agreement Rate (all models) | {comparison.agreement_rate:.1f}% |
-| Full Agreement | {full_agreement} discoveries |
-| Partial Agreement | {partial_agreement} discoveries |
-| Single Model Only | {single_model} discoveries |
+{summary_table}
 
 ### Breakdown by Category
 
-| Category | Count |
-|----------|-------|
-| Infrastructure Components | {len(comparison.infrastructure_comparison)} |
-| Component Relationships | {len(comparison.relationships_comparison)} |
-| Data Flows | {len(comparison.data_flows_comparison)} |
-| Security Observations | {len(comparison.security_comparison)} |"""
+{breakdown_table}"""
 
     def _generate_model_cost_table(self, model_costs: List[ModelCostInfo]) -> str:
         """Generate a table comparing costs/tokens across models."""
@@ -193,30 +218,46 @@ This report compares infrastructure analysis results from multiple AI models to 
         )
         lines.append("")
 
-        # Table header
-        lines.append("| Model | Provider | Input Tokens | Output Tokens | Cost (USD) |")
-        lines.append("|-------|----------|-------------:|-------------:|----------:|")
-
         # Calculate totals
         total_input = 0
         total_output = 0
         total_cost = 0.0
 
+        rows: list[list[str]] = []
         for cost_info in model_costs:
             short_name = self._get_short_model_name(cost_info.model_name)
-            lines.append(
-                f"| {short_name} | {cost_info.provider} | "
-                f"{cost_info.input_tokens:,} | {cost_info.output_tokens:,} | "
-                f"${cost_info.cost_usd:.4f} |"
+            rows.append(
+                [
+                    _esc(short_name),
+                    _esc(cost_info.provider),
+                    f"{cost_info.input_tokens:,}",
+                    f"{cost_info.output_tokens:,}",
+                    f"${cost_info.cost_usd:.4f}",
+                ]
             )
             total_input += cost_info.input_tokens
             total_output += cost_info.output_tokens
             total_cost += cost_info.cost_usd
 
-        # Add totals row
+        # Totals row
+        rows.append(
+            [
+                "Total",
+                "",
+                f"{total_input:,}",
+                f"{total_output:,}",
+                f"${total_cost:.4f}",
+            ]
+        )
+
         lines.append(
-            f"| **Total** | | **{total_input:,}** | **{total_output:,}** | "
-            f"**${total_cost:.4f}** |"
+            _html_table(
+                ["Model", "Provider", "Input Tokens", "Output Tokens", "Cost (USD)"],
+                rows,
+                col_widths=["20%", "15%", "25%", "25%", "15%"],
+                col_aligns=["left", "left", "right", "right", "right"],
+                bold_last_row=True,
+            )
         )
 
         return "\n".join(lines)
@@ -255,19 +296,17 @@ This report compares infrastructure analysis results from multiple AI models to 
         # Create short model names for column headers
         short_names = [self._get_short_model_name(m) for m in models]
 
-        # Header row
-        header = "| Discovery | " + " | ".join(short_names) + " | Notes |"
-        separator = (
-            "|"
-            + "-" * 40
-            + "|"
-            + "|".join(":---:" for _ in models)
-            + "|"
-            + "-" * 30
-            + "|"
-        )
+        headers = ["Discovery"] + short_names + ["Notes"]
 
-        rows = [header, separator]
+        # Column widths: Discovery ~40%, model columns split evenly, Notes ~30%
+        n_models = len(models)
+        model_width_each = max(5, int(30 / n_models))
+        col_widths = (
+            ["40%"]
+            + [f"{model_width_each}%" for _ in models]
+            + [f"{100 - 40 - model_width_each * n_models}%"]
+        )
+        col_aligns = ["left"] + ["center" for _ in models] + ["left"]
 
         # Sort discoveries: full agreement first, then by name
         sorted_discoveries = sorted(
@@ -275,6 +314,7 @@ This report compares infrastructure analysis results from multiple AI models to 
             key=lambda d: (-len(d.models_that_found), d.canonical_name.lower()),
         )
 
+        rows: list[list[str]] = []
         for discovery in sorted_discoveries:
             # Discovery name (truncate if too long)
             name = discovery.canonical_name
@@ -304,10 +344,14 @@ This report compares infrastructure analysis results from multiple AI models to 
                     f"Only {self._get_short_model_name(discovery.models_that_found[0])}"
                 )
 
-            row = f"| {name} | " + " | ".join(indicators) + f" | {notes} |"
-            rows.append(row)
+            rows.append([_esc(name)] + [_esc(i) for i in indicators] + [_esc(notes)])
 
-        return "\n".join(rows)
+        return _html_table(
+            headers,
+            rows,
+            col_widths=col_widths,
+            col_aligns=col_aligns,
+        )
 
     def _generate_section_narrative(
         self,
@@ -470,15 +514,23 @@ This report compares infrastructure analysis results from multiple AI models to 
             lines.append("")
             lines.append("### Comparison Report Generation")
             lines.append("")
-            lines.append("| Metric | Value |")
-            lines.append("|--------|-------|")
+
+            rows: list[list[str]] = []
             if comparison_cost.provider:
-                lines.append(f"| Provider | {comparison_cost.provider} |")
+                rows.append(["Provider", _esc(comparison_cost.provider)])
             if comparison_cost.model:
-                lines.append(f"| Model | {comparison_cost.model} |")
-            lines.append(f"| Input Tokens | {comparison_cost.input_tokens:,} |")
-            lines.append(f"| Output Tokens | {comparison_cost.output_tokens:,} |")
-            lines.append(f"| Cost (USD) | ${comparison_cost.cost_usd:.4f} |")
+                rows.append(["Model", _esc(comparison_cost.model)])
+            rows.append(["Input Tokens", f"{comparison_cost.input_tokens:,}"])
+            rows.append(["Output Tokens", f"{comparison_cost.output_tokens:,}"])
+            rows.append(["Cost (USD)", f"${comparison_cost.cost_usd:.4f}"])
+
+            lines.append(
+                _html_table(
+                    ["Metric", "Value"],
+                    rows,
+                    col_widths=["40%", "60%"],
+                )
+            )
 
         lines.append("")
         lines.append(

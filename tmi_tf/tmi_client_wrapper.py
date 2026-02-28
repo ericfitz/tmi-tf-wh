@@ -1,10 +1,11 @@
 """TMI API client wrapper."""
 
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Union
+
+import nh3  # type: ignore[import-untyped]
 
 # Add tmi-client to path
 tmi_client_path = Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
@@ -36,13 +37,38 @@ from tmi_tf.config import Config  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+ALLOWED_TAGS = {
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "p", "br", "hr", "span", "div",
+    "strong", "em", "del", "code", "pre",
+    "a", "img",
+    "ul", "ol", "li", "blockquote",
+    "table", "colgroup", "col", "thead", "tbody", "tr", "th", "td",
+    "input",
+    "svg", "path", "g", "rect", "circle", "line", "polygon", "text", "tspan",
+}  # fmt: skip
+
+ALLOWED_ATTRIBUTES = {
+    "*": {
+        "href", "src", "alt", "title", "class", "id", "style",
+        "type", "checked", "disabled",
+        "data-line", "data-sourcepos",
+        "target",
+        "width", "height",
+        "viewBox", "xmlns", "fill", "stroke", "stroke-width",
+        "d", "x", "y", "x1", "y1", "x2", "y2", "points", "transform",
+    },
+}  # fmt: skip
+
+
 def sanitize_content_for_api(content: str) -> str:
     """
     Sanitize content to match TMI API requirements.
 
-    This removes:
-    - HTML tags (to avoid server-side XSS rejection)
-    - Control characters (U+0000-U+001F) except \n, \r, \t
+    Uses nh3 (Python equivalent of DOMPurify/bluemonday) to sanitize HTML,
+    allowing only the tags and attributes accepted by the TMI platform.
+    Also removes:
+    - Control characters (U+0000-U+001F) except newline, carriage return, tab
     - Characters above U+FFFF (emoji and supplementary Unicode)
 
     Args:
@@ -54,20 +80,23 @@ def sanitize_content_for_api(content: str) -> str:
     if not content:
         return content
 
-    # Strip HTML tags to prevent XSS detection by the API
-    sanitized = re.sub(r"<[^>]*>", "", content)
+    # Sanitize HTML: allow only permitted tags and attributes
+    # link_rel=None prevents nh3 from adding rel="noopener noreferrer" to links
+    sanitized = nh3.clean(
+        content,
+        tags=ALLOWED_TAGS,
+        attributes=ALLOWED_ATTRIBUTES,
+        link_rel=None,
+    )
 
     # Replace characters outside the allowed range
     # Keep: U+0020-U+FFFF, \n (U+000A), \r (U+000D), \t (U+0009)
     def char_filter(char: str) -> str:
         code = ord(char)
-        # Allow newline, carriage return, tab
         if code in (0x0A, 0x0D, 0x09):
             return char
-        # Allow space through U+FFFF
         if 0x0020 <= code <= 0xFFFF:
             return char
-        # Replace everything else with space
         return " "
 
     sanitized = "".join(char_filter(c) for c in sanitized)

@@ -8,7 +8,7 @@ Categorize each infrastructure component into one of these types:
 
 1. **tenant** - Cloud account/subscription level (AWS Account, GCP Project, Azure Subscription, OCI Tenancy)
 2. **container** - Resource grouping (Azure Resource Group, OCI Compartment)
-3. **network** - Network boundaries (AWS VPC, VCN, Subnet, Route Table)
+3. **network** - Network boundaries (AWS VPC, VCN, Subnet)
 4. **network_access_control** - Network access control mechanisms (AWS Security Group, Network ACL, firewall rules/policies, firewalls, web application firewalls/cloud armor, GCP VPC service controls)
 5. **gateway** - Network gateways (Internet Gateway, NAT Gateway, VPN Gateway, Load Balancers, peering connections, VPC endpoints, private endpoints/privatelink/service connect, direct connect)
 6. **compute** - Compute resources (EC2, VM, Container Instance, Function)
@@ -132,6 +132,14 @@ Each data flow should include:
    - Application servers query databases
    - Instances in private subnets route through NAT gateways for outbound internet
 
+8. **Route Tables**: Do NOT create components for route tables. Route tables are infrastructure configuration, not diagram-worthy entities. Instead, use route table configurations (destination CIDRs, next-hop targets, subnet associations) to validate whether flows between components are actually routable. If a route table does not contain a route that would allow traffic between two components, do not create a flow between them.
+
+9. **Route-Aware Flow Validation**: Before creating a data flow, verify that a valid routing path exists:
+   - Check route table associations for the source and target subnets
+   - Verify that destination CIDR blocks cover the target component's network
+   - Confirm that next-hop targets (IGW, NAT Gateway, peering connection, etc.) are present and correctly configured
+   - If no explicit route tables are defined in the Terraform, assume standard cloud provider default routing (local VPC routing, no internet access for private subnets unless a gateway and route exist)
+
 # Critical Instructions
 
 - Apply the Layout Optimization Guidelines to create a flat, clear hierarchy
@@ -140,5 +148,6 @@ Each data flow should include:
 - Model network access controls as processes that intermediate flows
 - Place gateways at the VPC level when they serve the entire network
 - Separate subnets should be siblings within the VPC, each containing their own resources
+- Do NOT create components for route tables — use their routing rules to validate flow reachability
 
 CRITICAL: Return ONLY the JSON object. Do not include any explanation, preamble, markdown formatting, or code fences. Your entire response must be valid JSON starting with { and ending with }. Do not add any text before or after the JSON.
