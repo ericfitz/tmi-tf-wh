@@ -39,13 +39,8 @@ class MarkdownGenerator:
         # Build sections
         sections = []
 
-        # Header
-        sections.append(
-            self._generate_header(threat_model_name, threat_model_id, analyses)
-        )
-
-        # Executive Summary
-        sections.append(self._generate_executive_summary(analyses))
+        # Header (just title + threat model name)
+        sections.append(self._generate_header(threat_model_name))
 
         # Individual Repository Analyses
         sections.append(self._generate_repository_sections(analyses))
@@ -53,86 +48,33 @@ class MarkdownGenerator:
         # Consolidated Findings
         sections.append(self._generate_consolidated_findings(analyses))
 
-        # Footer
-        sections.append(self._generate_footer(analyses))
+        # Analysis Job Information (all metadata at the end)
+        sections.append(self._generate_analysis_job_info(threat_model_id, analyses))
 
         return "\n\n---\n\n".join(sections)
 
     def _generate_header(
         self,
         threat_model_name: str,
-        threat_model_id: str,
-        analyses: List[TerraformAnalysis],
     ) -> str:
-        """Generate report header."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        successful = sum(1 for a in analyses if a.success)
-        failed = len(analyses) - successful
-
+        """Generate report header with just title and threat model name."""
         return f"""# Terraform Infrastructure Analysis
 
-**Threat Model**: {threat_model_name}
-**Threat Model ID**: `{threat_model_id}`
-**Generated**: {timestamp}
-**Repositories Analyzed**: {len(analyses)} ({successful} successful, {failed} failed)
-
-This report provides an automated analysis of Terraform infrastructure code associated with this threat model. The analysis identifies infrastructure components, relationships, data flows, and potential security considerations."""
-
-    def _generate_executive_summary(self, analyses: List[TerraformAnalysis]) -> str:
-        """Generate executive summary."""
-        successful = [a for a in analyses if a.success]
-        failed = [a for a in analyses if not a.success]
-
-        summary_parts = ["## Executive Summary"]
-
-        if successful:
-            summary_parts.append(
-                f"Successfully analyzed {len(successful)} "
-                f"repository/repositories containing Terraform infrastructure code. "
-                "Each repository has been examined to identify cloud resources, "
-                "component relationships, data flows, and potential security concerns."
-            )
-
-        if failed:
-            summary_parts.append(
-                f"\n**Warning**: {len(failed)} repository/repositories failed analysis: "
-                f"{', '.join(a.repo_name for a in failed)}"
-            )
-
-        summary_parts.append(
-            "\nThe detailed analysis for each repository is provided below, "
-            "followed by consolidated findings and recommendations for threat modeling focus areas."
-        )
-
-        return "\n\n".join(summary_parts)
+**Threat Model**: {threat_model_name}"""
 
     def _generate_repository_sections(self, analyses: List[TerraformAnalysis]) -> str:
         """Generate individual repository analysis sections from structured JSON."""
         sections = []
 
         for i, analysis in enumerate(analyses, 1):
-            status_icon = "+" if analysis.success else "x"
+            header = f"""## Repository {i}: {analysis.repo_name}
 
-            # Build metrics section
-            metrics = []
-            if analysis.success:
-                if analysis.elapsed_time > 0:
-                    metrics.append(f"**Analysis Time**: {analysis.elapsed_time:.2f}s")
-                if analysis.input_tokens > 0:
-                    metrics.append(f"**Input Tokens**: {analysis.input_tokens:,}")
-                if analysis.output_tokens > 0:
-                    metrics.append(f"**Output Tokens**: {analysis.output_tokens:,}")
-
-            metrics_str = " | ".join(metrics) if metrics else ""
-
-            header = f"""## Repository {i}: {analysis.repo_name} [{status_icon}]
-
-**URL**: [{analysis.repo_url}]({analysis.repo_url})
-**Status**: {"Analysis Successful" if analysis.success else "Analysis Failed"}
-{metrics_str if metrics_str else ""}"""
+**URL**: [{analysis.repo_url}]({analysis.repo_url})"""
 
             if not analysis.success:
-                sections.append(f"{header}\n\n{analysis.error_message}")
+                sections.append(
+                    f"{header}\n\n*Analysis failed: {analysis.error_message}*"
+                )
                 continue
 
             # Assemble markdown from structured JSON outputs
@@ -406,35 +348,78 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 - Cross-reference with your organization's security policies and compliance requirements
 - Consider running automated security scanning tools (e.g., tfsec, checkov) for additional validation"""
 
-    def _generate_footer(self, analyses: List[TerraformAnalysis]) -> str:
-        """Generate report footer with total metrics."""
-        # Calculate totals for successful analyses
+    def _generate_analysis_job_info(
+        self,
+        threat_model_id: str,
+        analyses: List[TerraformAnalysis],
+    ) -> str:
+        """Generate Analysis Job Information section combining all metadata."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         successful = [a for a in analyses if a.success]
-        total_time = sum(a.elapsed_time for a in successful)
-        total_input_tokens = sum(a.input_tokens for a in successful)
-        total_output_tokens = sum(a.output_tokens for a in successful)
-        total_cost = sum(a.total_cost for a in successful)
+        failed = [a for a in analyses if not a.success]
 
-        metrics_section = ""
+        parts = ["## Analysis Job Information"]
+
+        # Job summary
+        parts.append(
+            f"**Threat Model ID**: `{threat_model_id}`\n"
+            f"**Generated**: {timestamp}\n"
+            f"**Repositories Analyzed**: {len(analyses)} "
+            f"({len(successful)} successful, {len(failed)} failed)"
+        )
+
+        if failed:
+            parts.append(
+                f"**Failed Repositories**: {', '.join(a.repo_name for a in failed)}"
+            )
+
+        # Model & provider (use first successful analysis for model info)
         if successful:
-            metrics_section = f"""
-### Analysis Metrics
+            model = successful[0].model
+            provider = successful[0].provider
+            if model or provider:
+                model_info = []
+                if provider:
+                    model_info.append(f"**LLM Provider**: {provider}")
+                if model:
+                    model_info.append(f"**LLM Model**: {model}")
+                parts.append("\n".join(model_info))
 
-- **Total Analysis Time**: {total_time:.2f}s
-- **Total Input Tokens**: {total_input_tokens:,}
-- **Total Output Tokens**: {total_output_tokens:,}
-- **Total Tokens**: {total_input_tokens + total_output_tokens:,}
-- **Estimated Cost**: ${total_cost:.4f} USD
+        # Per-repository metrics table
+        if successful:
+            tc = self._table_cell
+            parts.append("### Per-Repository Metrics")
+            parts.append(
+                "| Repository | Time | Input Tokens "
+                "| Output Tokens | Cost |\n"
+                "|------------|------|-------------- "
+                "|---------------|------|"
+            )
+            for a in successful:
+                parts.append(
+                    f"| {tc(a.repo_name)} | {a.elapsed_time:.2f}s "
+                    f"| {a.input_tokens:,} | {a.output_tokens:,} "
+                    f"| ${a.total_cost:.4f} |"
+                )
 
-"""
+            # Totals row
+            total_time = sum(a.elapsed_time for a in successful)
+            total_input = sum(a.input_tokens for a in successful)
+            total_output = sum(a.output_tokens for a in successful)
+            total_cost = sum(a.total_cost for a in successful)
+            parts.append(
+                f"| **Total** | **{total_time:.2f}s** "
+                f"| **{total_input:,}** | **{total_output:,}** "
+                f"| **${total_cost:.4f}** |"
+            )
 
-        return f"""---
+        parts.append(
+            "*This is an automated analysis. Review findings with your "
+            "security and infrastructure teams for validation "
+            "and prioritization.*"
+        )
 
-{metrics_section}**Report Generated By**: TMI Terraform Analysis Tool
-**Analysis Engine**: LiteLLM (multi-provider)
-**Tool Version**: 0.1.0
-
-*This is an automated analysis. Please review findings with your security and infrastructure teams for validation and prioritization.*"""
+        return "\n\n".join(parts)
 
     def save_to_file(self, content: str, filepath: str) -> None:
         """
