@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 class MarkdownGenerator:
     """Generates markdown reports from structured analysis results."""
 
+    @staticmethod
+    def _table_cell(value: str) -> str:
+        """Escape pipe characters in a value for use in a markdown table cell."""
+        return str(value).replace("|", "\\|")
+
     def generate_report(
         self,
         threat_model_name: str,
@@ -194,50 +199,57 @@ This report provides an automated analysis of Terraform infrastructure code asso
             "other",
         ]
 
+        tc = self._table_cell
         for comp_type in type_order:
             group = by_type.get(comp_type, [])
             if not group:
                 continue
 
             parts.append(f"#### {comp_type.replace('_', ' ').title()}")
+            parts.append("")
+            parts.append("| Name | Resource Type | Purpose | Configuration |")
+            parts.append("|------|---------------|---------|---------------|")
             for comp in group:
                 name = comp.get("name", "Unknown")
                 resource_type = comp.get("resource_type", "")
                 purpose = comp.get("purpose", "")
                 config = comp.get("configuration", {})
 
-                line = f"- **{name}**"
-                if resource_type:
-                    line += f" (`{resource_type}`)"
-                if purpose:
-                    line += f": {purpose}"
-                parts.append(line)
-
-                # Include key config details
+                config_str = ""
                 if isinstance(config, dict) and config:
-                    config_items = [
-                        f"  - {k}: `{v}`" for k, v in list(config.items())[:5]
-                    ]
-                    parts.extend(config_items)
+                    config_items = [f"{k}: `{v}`" for k, v in list(config.items())[:5]]
+                    config_str = ", ".join(config_items)
+
+                rt_str = f"`{resource_type}`" if resource_type else ""
+                parts.append(
+                    f"| {tc(name)} | {rt_str} | {tc(purpose)} | {tc(config_str)} |"
+                )
 
         # Services
         services = inventory.get("services", [])
         if services:
+            parts.append("")
             parts.append("#### Services (Logical Groupings)")
+            parts.append("")
+            parts.append(
+                "| Service | Criteria | Compute Units | Associated Resources |"
+            )
+            parts.append(
+                "|---------|----------|---------------|----------------------|"
+            )
             for svc in services:
                 svc_name = svc.get("name", "Unknown")
                 criteria = svc.get("criteria", [])
                 compute_units = svc.get("compute_units", [])
                 associated = svc.get("associated_resources", [])
 
-                parts.append(f"- **{svc_name}**")
-                if criteria:
-                    for c in criteria:
-                        parts.append(f"  - Criteria: {c}")
-                if compute_units:
-                    parts.append(f"  - Compute units: {', '.join(compute_units)}")
-                if associated:
-                    parts.append(f"  - Associated resources: {', '.join(associated)}")
+                criteria_str = ", ".join(criteria) if criteria else ""
+                compute_str = ", ".join(compute_units) if compute_units else ""
+                assoc_str = ", ".join(associated) if associated else ""
+                parts.append(
+                    f"| {tc(svc_name)} | {tc(criteria_str)} "
+                    f"| {tc(compute_str)} | {tc(assoc_str)} |"
+                )
 
         return "\n".join(parts)
 
@@ -247,6 +259,7 @@ This report provides an automated analysis of Terraform infrastructure code asso
         if not relationships:
             return ""
 
+        tc = self._table_cell
         parts = ["### Component Relationships"]
 
         # Group by relationship type
@@ -258,12 +271,15 @@ This report provides an automated analysis of Terraform infrastructure code asso
             by_type[rel_type].append(rel)
 
         for rel_type, rels in by_type.items():
-            parts.append(f"#### {rel_type.replace('_', ' ').title()}")
+            parts.append(f"\n#### {rel_type.replace('_', ' ').title()}")
+            parts.append("")
+            parts.append("| Source | Target | Description |")
+            parts.append("|--------|--------|-------------|")
             for rel in rels:
                 source = rel.get("source_id", "?")
                 target = rel.get("target_id", "?")
                 desc = rel.get("description", "")
-                parts.append(f"- {source} -> {target}: {desc}")
+                parts.append(f"| {tc(source)} | {tc(target)} | {tc(desc)} |")
 
         return "\n".join(parts)
 
@@ -291,13 +307,19 @@ This report provides an automated analysis of Terraform infrastructure code asso
         # Trust boundaries
         boundaries = infrastructure.get("trust_boundaries", [])
         if boundaries:
+            tc = self._table_cell
             parts.append("")
             parts.append("#### Trust Boundaries")
+            parts.append("")
+            parts.append("| Boundary | Type | Components |")
+            parts.append("|----------|------|------------|")
             for boundary in boundaries:
                 name = boundary.get("name", "")
                 btype = boundary.get("boundary_type", "")
                 component_ids = boundary.get("component_ids", [])
-                parts.append(f"- **{name}** ({btype}): {', '.join(component_ids)}")
+                parts.append(
+                    f"| {tc(name)} | {tc(btype)} | {tc(', '.join(component_ids))} |"
+                )
 
         return "\n".join(parts)
 
@@ -306,7 +328,16 @@ This report provides an automated analysis of Terraform infrastructure code asso
         if not security_findings:
             return "### Security Observations\n\nNo security findings identified."
 
-        parts = ["### Security Observations"]
+        tc = self._table_cell
+        parts = ["### Security Observations", ""]
+        parts.append(
+            "| Finding | Severity | STRIDE | Category "
+            "| Description | Mitigation | Affected Components |"
+        )
+        parts.append(
+            "|---------|----------|--------|----------"
+            "|-------------|------------|---------------------|"
+        )
 
         for finding in security_findings:
             name = finding.get("name", "Unknown")
@@ -318,32 +349,21 @@ This report provides an automated analysis of Terraform infrastructure code asso
             mitigation = finding.get("mitigation", "")
             cwe_id = finding.get("cwe_id", [])
             affected = finding.get("affected_components", [])
-            cvss = finding.get("cvss", [])
 
-            # Title with severity and CVSS score
-            title = f"**{name}** (Severity: {severity}"
+            severity_str = severity
             if score is not None:
-                title += f", CVSS: {score}"
-            title += ")"
-            parts.append(f"\n{title}")
+                severity_str += f" ({score})"
 
-            if category:
-                parts.append(f"- **Category**: {category}")
-            if threat_type:
-                parts.append(f"- **STRIDE**: {threat_type}")
-            if description:
-                parts.append(f"- **Finding**: {description}")
-            if mitigation:
-                parts.append(f"- **Mitigation**: {mitigation}")
+            name_str = name
             if cwe_id:
-                parts.append(f"- **CWE**: {', '.join(cwe_id)}")
-            if cvss:
-                for c in cvss:
-                    vector = c.get("vector", "")
-                    if vector:
-                        parts.append(f"- **CVSS Vector**: `{vector}`")
-            if affected:
-                parts.append(f"- **Affected Components**: {', '.join(affected)}")
+                name_str += f" [{', '.join(cwe_id)}]"
+
+            affected_str = ", ".join(affected) if affected else ""
+            parts.append(
+                f"| {tc(name_str)} | {tc(severity_str)} | {tc(threat_type)} "
+                f"| {tc(category)} | {tc(description)} | {tc(mitigation)} "
+                f"| {tc(affected_str)} |"
+            )
 
         return "\n".join(parts)
 
