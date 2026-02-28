@@ -34,5 +34,6 @@ dev = [
     "pyright>=1.1.407",
 ]
 
-[tool.ty.rules]
-unresolved-import = "ignore"
+[tool.pyright]
+# tmi_client is added to sys.path at runtime from ~/Projects/tmi-clients/
+# and cannot be resolved statically; imports are suppressed per-line

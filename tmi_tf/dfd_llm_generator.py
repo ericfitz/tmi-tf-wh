@@ -10,9 +10,10 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import litellm
+from litellm import ModelResponse
 
 from tmi_tf.config import get_effective_temperature
 
@@ -145,23 +146,25 @@ class DFDLLMGenerator:
             )
 
             # Call LLM API via LiteLLM with system + user messages
-            response = litellm.completion(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=16000,
-                temperature=get_effective_temperature(self.model, 0),
-                timeout=180.0,
+            response = cast(
+                ModelResponse,
+                litellm.completion(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=16000,
+                    temperature=get_effective_temperature(self.model, 0),
+                    timeout=180.0,
+                ),
             )
 
             # Extract token usage from response
-            if hasattr(response, "usage") and response.usage:
-                self.input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens = (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+            usage = getattr(response, "usage", None)
+            if usage:
+                self.input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                self.output_tokens = getattr(usage, "completion_tokens", 0) or 0
                 # Calculate cost using litellm's cost calculator
                 try:
                     self.total_cost = litellm.completion_cost(
@@ -175,8 +178,7 @@ class DFDLLMGenerator:
                 )
 
             # Extract the response content
-            # LiteLLM returns ModelResponse with choices attribute at runtime
-            if not getattr(response, "choices", None) or len(response.choices) == 0:  # type: ignore[union-attr]
+            if not response.choices or len(response.choices) == 0:
                 logger.error("Empty response from LLM API")
                 return None
 

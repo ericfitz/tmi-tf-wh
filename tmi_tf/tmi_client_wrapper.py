@@ -16,10 +16,10 @@ else:
         "Please ensure it's available at ~/Projects/tmi-clients/python-client-generated"
     )
 
-import tmi_client  # noqa: E402
-from tmi_client.api_client import ApiClient  # noqa: E402
-from tmi_client.configuration import Configuration  # noqa: E402
-from tmi_client.models import (  # noqa: E402
+import tmi_client  # noqa: E402  # type: ignore[import-not-found]
+from tmi_client.api_client import ApiClient  # noqa: E402  # type: ignore[import-not-found]
+from tmi_client.configuration import Configuration  # noqa: E402  # type: ignore[import-not-found]
+from tmi_client.models import (  # noqa: E402  # type: ignore[import-not-found]
     CreateDiagramRequest,
     DiagramListItem,
     Metadata,
@@ -417,7 +417,9 @@ class TMIClient:
             logger.error(f"Failed to get diagrams: {e}")
             raise
 
-    def find_diagram_by_name(self, threat_model_id: str, name: str) -> Optional[dict]:
+    def find_diagram_by_name(
+        self, threat_model_id: str, name: str
+    ) -> Optional[DiagramListItem]:
         """
         Find a diagram by name in a threat model.
 
@@ -452,11 +454,7 @@ class TMIClient:
 
         if existing_diagram:
             logger.info(f"Diagram '{name}' already exists, updating...")
-            raw_id = (
-                existing_diagram.id
-                if hasattr(existing_diagram, "id")
-                else existing_diagram.get("id")
-            )  # type: ignore[union-attr]
+            raw_id = existing_diagram.id
             diagram_id = str(raw_id) if raw_id else ""
             return self.update_diagram_cells(threat_model_id, diagram_id, cells)
         else:

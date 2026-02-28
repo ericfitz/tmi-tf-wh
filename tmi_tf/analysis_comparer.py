@@ -8,9 +8,10 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import litellm
+from litellm import ModelResponse
 
 from tmi_tf.config import Config, get_effective_temperature
 
@@ -489,31 +490,33 @@ Return JSON with this structure:
 }}"""
 
         try:
-            response = litellm.completion(
-                model=self._get_llm_model(),
-                messages=[
-                    {"role": "system", "content": self.comparison_system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=get_effective_temperature(self._get_llm_model(), 0.2),
+            response = cast(
+                ModelResponse,
+                litellm.completion(
+                    model=self._get_llm_model(),
+                    messages=[
+                        {"role": "system", "content": self.comparison_system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=get_effective_temperature(self._get_llm_model(), 0.2),
+                ),
             )
 
             # Track token usage
-            if hasattr(response, "usage") and response.usage:
-                self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens += (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+            usage = getattr(response, "usage", None)
+            if usage:
+                self.input_tokens += getattr(usage, "prompt_tokens", 0) or 0
+                self.output_tokens += getattr(usage, "completion_tokens", 0) or 0
                 try:
                     call_cost = litellm.completion_cost(completion_response=response)
                     self.total_cost += call_cost
                 except Exception:
                     pass
 
-            response_text = response.choices[0].message.content
+            response_text = response.choices[0].message.content  # type: ignore[union-attr]
 
             # Extract JSON from response
-            normalized_data = self._extract_json(response_text)
+            normalized_data = self._extract_json(response_text or "")
 
             if not normalized_data or "normalized_items" not in normalized_data:
                 logger.warning("Failed to parse normalization response, using fallback")
@@ -686,28 +689,30 @@ Provide insights about:
 Keep the summary concise (under 400 words) but insightful."""
 
         try:
-            response = litellm.completion(
-                model=self._get_llm_model(),
-                messages=[
-                    {"role": "system", "content": self.insights_system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=get_effective_temperature(self._get_llm_model(), 0.3),
+            response = cast(
+                ModelResponse,
+                litellm.completion(
+                    model=self._get_llm_model(),
+                    messages=[
+                        {"role": "system", "content": self.insights_system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=get_effective_temperature(self._get_llm_model(), 0.3),
+                ),
             )
 
             # Track token usage
-            if hasattr(response, "usage") and response.usage:
-                self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens += (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+            usage = getattr(response, "usage", None)
+            if usage:
+                self.input_tokens += getattr(usage, "prompt_tokens", 0) or 0
+                self.output_tokens += getattr(usage, "completion_tokens", 0) or 0
                 try:
                     call_cost = litellm.completion_cost(completion_response=response)
                     self.total_cost += call_cost
                 except Exception:
                     pass
 
-            return response.choices[0].message.content
+            return response.choices[0].message.content or ""  # type: ignore[union-attr]
 
         except Exception as e:
             logger.error(f"Failed to generate insights: {e}")

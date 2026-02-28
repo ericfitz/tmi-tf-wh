@@ -26,7 +26,7 @@ else:
 
 from tmi_tf.config import get_config  # noqa: E402
 from tmi_tf.tmi_client_wrapper import TMIClient  # noqa: E402
-from tmi_client.models import ThreatModelInput, RepositoryInput  # noqa: E402
+from tmi_client.models import ThreatModelInput, RepositoryInput  # noqa: E402  # type: ignore[import-not-found]
 
 
 def create_example_threat_model(force_auth=False):

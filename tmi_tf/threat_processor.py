@@ -5,9 +5,10 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, cast
 
 import litellm
+from litellm import ModelResponse
 
 from tmi_tf.config import Config, get_effective_temperature
 
@@ -197,23 +198,25 @@ class ThreatProcessor:
         )
 
         try:
-            response = litellm.completion(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=16000,
-                temperature=get_effective_temperature(self.model, 0.3),
-                timeout=180.0,
+            response = cast(
+                ModelResponse,
+                litellm.completion(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=16000,
+                    temperature=get_effective_temperature(self.model, 0.3),
+                    timeout=180.0,
+                ),
             )
 
             # Extract token usage from response and accumulate
-            if hasattr(response, "usage") and response.usage:
-                self.input_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                self.output_tokens += (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+            usage = getattr(response, "usage", None)
+            if usage:
+                self.input_tokens += getattr(usage, "prompt_tokens", 0) or 0
+                self.output_tokens += getattr(usage, "completion_tokens", 0) or 0
                 # Calculate cost using litellm's cost calculator
                 try:
                     call_cost = litellm.completion_cost(completion_response=response)
@@ -222,12 +225,11 @@ class ThreatProcessor:
                     pass
                 logger.info(
                     f"Threat extraction for {repo_name}: "
-                    f"{getattr(response.usage, 'prompt_tokens', 0)} input tokens, "
-                    f"{getattr(response.usage, 'completion_tokens', 0)} output tokens"
+                    f"{getattr(usage, 'prompt_tokens', 0)} input tokens, "
+                    f"{getattr(usage, 'completion_tokens', 0)} output tokens"
                 )
 
             # Extract JSON from response
-            # LiteLLM returns ModelResponse with choices attribute at runtime
             content = response.choices[0].message.content  # type: ignore[union-attr]
             if not content:
                 logger.warning(f"Empty response from LLM for {repo_name}")
