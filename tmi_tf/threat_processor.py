@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, Union
 
 import litellm
 
-from tmi_tf.config import Config
+from tmi_tf.config import Config, get_effective_temperature
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +200,7 @@ Extract and structure all security threats found in this analysis. Remember: res
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=16000,
-                temperature=0.3,
+                temperature=get_effective_temperature(self.model, 0.3),
                 timeout=180.0,
             )
 

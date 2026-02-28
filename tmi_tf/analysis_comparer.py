@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import litellm
 
-from tmi_tf.config import Config
+from tmi_tf.config import Config, get_effective_temperature
 
 logger = logging.getLogger(__name__)
 
@@ -495,7 +495,7 @@ Return JSON with this structure:
                     {"role": "system", "content": self.comparison_system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.2,
+                temperature=get_effective_temperature(self._get_llm_model(), 0.2),
             )
 
             # Track token usage
@@ -692,7 +692,7 @@ Keep the summary concise (under 400 words) but insightful."""
                     {"role": "system", "content": self.insights_system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
+                temperature=get_effective_temperature(self._get_llm_model(), 0.3),
             )
 
             # Track token usage

@@ -133,6 +133,26 @@ class Config:
         )
 
 
+def get_effective_temperature(model: str, desired: float) -> float:
+    """Return the effective temperature for the given model.
+
+    Some models require default temperature (1.0):
+    - Gemini 3+ models: custom temperature causes loops and degraded reasoning
+    - OpenAI GPT-5/o-series reasoning models: temperature parameter not supported
+    """
+    model_lower = model.lower()
+    if "gemini-3" in model_lower or "gemini-2.5" in model_lower:
+        return 1.0
+    if (
+        "gpt-5" in model_lower
+        or "/o1" in model_lower
+        or "/o3" in model_lower
+        or "/o4" in model_lower
+    ):
+        return 1.0
+    return desired
+
+
 # Global config instance
 _config: Optional[Config] = None
 

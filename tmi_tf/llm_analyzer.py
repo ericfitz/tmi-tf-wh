@@ -10,6 +10,7 @@ from pathlib import Path
 
 import litellm
 
+from tmi_tf.config import get_effective_temperature
 from tmi_tf.repo_analyzer import TerraformRepository
 
 logger = logging.getLogger(__name__)
@@ -296,7 +297,7 @@ Provide a mermaid diagram showing the architecture and relationships between com
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=16000,
-                temperature=0.3,
+                temperature=get_effective_temperature(self.model, 0.3),
                 timeout=300.0,
             )
 

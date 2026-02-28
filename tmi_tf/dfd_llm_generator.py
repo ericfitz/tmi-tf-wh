@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 
 import litellm
 
+from tmi_tf.config import get_effective_temperature
+
 logger = logging.getLogger(__name__)
 
 # Suppress LiteLLM's verbose logging
@@ -139,7 +141,7 @@ class DFDLLMGenerator:
                 model=self.model,
                 messages=[{"role": "user", "content": full_prompt}],
                 max_tokens=16000,
-                temperature=0,  # Deterministic output for structured data
+                temperature=get_effective_temperature(self.model, 0),
                 timeout=180.0,
             )
 
