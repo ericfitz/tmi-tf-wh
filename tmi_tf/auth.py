@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
-import requests
+import requests  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import Config
 

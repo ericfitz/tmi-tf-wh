@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import litellm
+import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import get_effective_temperature
 from tmi_tf.repo_analyzer import TerraformRepository

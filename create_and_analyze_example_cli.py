@@ -33,7 +33,7 @@ def load_token():
 
 def create_threat_model_via_api(token, server_url="https://api.tmi.dev"):
     """Create threat model using direct API call."""
-    import requests
+    import requests  # ty:ignore[unresolved-import]
 
     print("📝 Creating threat model...")
 
@@ -71,7 +71,7 @@ def add_repository_to_threat_model(
     token, threat_model_id, server_url="https://api.tmi.dev"
 ):
     """Add repository to threat model using direct API call."""
-    import requests
+    import requests  # ty:ignore[unresolved-import]
 
     print("\n📦 Adding repository to threat model...")
 

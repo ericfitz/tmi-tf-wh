@@ -10,8 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
-import litellm
-from litellm import ModelResponse
+import litellm  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
+from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import Config, get_effective_temperature
 

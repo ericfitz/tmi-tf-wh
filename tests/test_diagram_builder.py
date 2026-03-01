@@ -1,6 +1,6 @@
 """Tests for the DFD diagram builder."""
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 
 from tmi_tf.diagram_builder import DFDBuilder
 

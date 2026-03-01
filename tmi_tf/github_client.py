@@ -4,8 +4,8 @@ import logging
 from typing import Optional
 from urllib.parse import urlparse
 
-from github import Auth, Github, GithubException
-from github.Repository import Repository
+from github import Auth, Github, GithubException  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+from github.Repository import Repository  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import Config
 

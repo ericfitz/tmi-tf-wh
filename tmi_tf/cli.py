@@ -4,7 +4,7 @@ import logging
 import sys
 from typing import Optional
 
-import click
+import click  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.analysis_comparer import AnalysisComparer
 from tmi_tf.artifact_metadata import (

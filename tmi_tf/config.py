@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 
 class Config:
