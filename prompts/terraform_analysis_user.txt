@@ -3,10 +3,6 @@ URL: {repo_url}
 
 Please analyze the following Terraform infrastructure code to support threat modeling activities.
 
-{documentation_summary}
-
----
-
 ## Terraform Configuration Files
 
 {terraform_contents}

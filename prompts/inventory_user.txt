@@ -1,8 +1,6 @@
 Repository: {repo_name}
 URL: {repo_url}
 
-{documentation_summary}
-
 ## Terraform Configuration Files
 
 {terraform_contents}

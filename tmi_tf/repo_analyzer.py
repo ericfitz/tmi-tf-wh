@@ -23,7 +23,6 @@ class TerraformRepository:
         url: str,
         clone_path: Path,
         terraform_files: List[Path],
-        documentation_files: List[Path],
     ):
         """
         Initialize Terraform repository.
@@ -33,13 +32,11 @@ class TerraformRepository:
             url: Repository URL
             clone_path: Local clone path
             terraform_files: List of .tf file paths
-            documentation_files: List of documentation file paths
         """
         self.name = name
         self.url = url
         self.clone_path = clone_path
         self.terraform_files = terraform_files
-        self.documentation_files = documentation_files
 
     def get_terraform_content(self) -> dict[str, str]:
         """
@@ -57,28 +54,11 @@ class TerraformRepository:
                 logger.warning(f"Failed to read {tf_file}: {e}")
         return content
 
-    def get_documentation_content(self) -> dict[str, str]:
-        """
-        Get content of all documentation files.
-
-        Returns:
-            Dictionary mapping relative file paths to content
-        """
-        content = {}
-        for doc_file in self.documentation_files:
-            try:
-                relative_path = doc_file.relative_to(self.clone_path)
-                content[str(relative_path)] = doc_file.read_text(encoding="utf-8")
-            except Exception as e:
-                logger.warning(f"Failed to read {doc_file}: {e}")
-        return content
-
     def __repr__(self) -> str:
         """Return string representation."""
         return (
             f"TerraformRepository(name={self.name}, "
-            f"tf_files={len(self.terraform_files)}, "
-            f"docs={len(self.documentation_files)})"
+            f"tf_files={len(self.terraform_files)})"
         )
 
 
@@ -185,10 +165,6 @@ class RepositoryAnalyzer:
             patterns = [
                 "*.tf",
                 "*.tfvars",
-                "*.md",
-                "README*",
-                "LICENSE*",
-                "*.txt",
             ]
             sparse_checkout_file.write_text("\n".join(patterns))
 
@@ -208,11 +184,6 @@ class RepositoryAnalyzer:
             terraform_files = list(clone_path.rglob("*.tf"))
             terraform_files.extend(clone_path.rglob("*.tfvars"))
 
-            # Find documentation files
-            doc_files = list(clone_path.rglob("*.md"))
-            doc_files.extend(clone_path.rglob("README*"))
-            doc_files.extend(clone_path.rglob("LICENSE*"))
-
             if not terraform_files:
                 logger.warning(f"No Terraform files found in {repo_name}")
                 return None
@@ -222,7 +193,6 @@ class RepositoryAnalyzer:
                 url=repo_url,
                 clone_path=clone_path,
                 terraform_files=terraform_files,
-                documentation_files=doc_files,
             )
 
         except subprocess.TimeoutExpired:

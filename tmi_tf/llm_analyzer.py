@@ -254,9 +254,7 @@ class LLMAnalyzer:
         try:
             # Get and format Terraform contents
             tf_contents = terraform_repo.get_terraform_content()
-            doc_contents = terraform_repo.get_documentation_content()
             terraform_text = self._format_terraform_contents(tf_contents)
-            doc_summary = self._format_documentation_summary(doc_contents)
 
             # Phase 1: Inventory Extraction
             logger.info(f"Phase 1: Extracting inventory for {terraform_repo.name}")
@@ -264,7 +262,6 @@ class LLMAnalyzer:
                 repo_name=terraform_repo.name,
                 repo_url=terraform_repo.url,
                 terraform_contents=terraform_text,
-                documentation_summary=doc_summary,
             )
 
             inventory, tokens_in, tokens_out, cost = self._call_llm_json(
@@ -615,27 +612,6 @@ class LLMAnalyzer:
         sections = []
         for filepath, content in sorted(tf_contents.items()):
             sections.append(f"### File: {filepath}\n```hcl\n{content}\n```\n")
-
-        return "\n".join(sections)
-
-    def _format_documentation_summary(self, doc_contents: dict[str, str]) -> str:
-        """
-        Format documentation summary for prompt.
-
-        Args:
-            doc_contents: Dictionary of file paths to contents
-
-        Returns:
-            Formatted string
-        """
-        if not doc_contents:
-            return ""
-
-        sections = ["Documentation Files:"]
-        for filepath, content in sorted(doc_contents.items()):
-            # Truncate very long docs
-            truncated = content[:2000] + "..." if len(content) > 2000 else content
-            sections.append(f"### {filepath}\n{truncated}\n")
 
         return "\n".join(sections)
 
