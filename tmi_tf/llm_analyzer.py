@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
-from tmi_tf.config import get_effective_temperature
+from tmi_tf.config import save_llm_response
 from tmi_tf.repo_analyzer import TerraformRepository
 
 logger = logging.getLogger(__name__)
@@ -121,8 +121,8 @@ class LLMAnalyzer:
     DEFAULT_MODELS = {
         "anthropic": "claude-opus-4-5-20251101",
         "openai": "gpt-5.2",
-        "xai": "xai/grok-4-1-fast-reasoning",
-        "gemini": "gemini/gemini-3-pro-preview",
+        "xai": "xai/grok-4-1-fast-non-reasoning",
+        "gemini": "gemini/gemini-2.0-flash",
     }
 
     # LiteLLM model prefixes for each provider
@@ -268,7 +268,6 @@ class LLMAnalyzer:
                 system_prompt=self.inventory_system,
                 user_prompt=inventory_user,
                 phase_name="inventory",
-                temperature=0.2,
             )
             total_input_tokens += tokens_in
             total_output_tokens += tokens_out
@@ -296,7 +295,6 @@ class LLMAnalyzer:
                 system_prompt=self.infra_system,
                 user_prompt=infra_user,
                 phase_name="infrastructure",
-                temperature=0.3,
             )
             total_input_tokens += tokens_in
             total_output_tokens += tokens_out
@@ -326,7 +324,6 @@ class LLMAnalyzer:
                     system_prompt=self.security_system,
                     user_prompt=security_user,
                     phase_name="security",
-                    temperature=0.3,
                 )
             )
             total_input_tokens += sec_tokens_in
@@ -381,7 +378,6 @@ class LLMAnalyzer:
         system_prompt: str,
         user_prompt: str,
         phase_name: str,
-        temperature: float = 0.3,
         max_tokens: int = 16000,
         timeout: float = 300.0,
     ) -> tuple[Optional[Dict[str, Any]], int, int, float]:
@@ -392,7 +388,6 @@ class LLMAnalyzer:
             system_prompt: System prompt
             user_prompt: User prompt
             phase_name: Name of the phase (for logging)
-            temperature: Desired temperature
             max_tokens: Max output tokens
             timeout: Request timeout in seconds
 
@@ -400,7 +395,7 @@ class LLMAnalyzer:
             Tuple of (parsed JSON dict or None, input_tokens, output_tokens, cost)
         """
         response_text, tokens_in, tokens_out, cost = self._call_llm(
-            system_prompt, user_prompt, phase_name, temperature, max_tokens, timeout
+            system_prompt, user_prompt, phase_name, max_tokens, timeout
         )
 
         if not response_text:
@@ -418,7 +413,6 @@ class LLMAnalyzer:
         system_prompt: str,
         user_prompt: str,
         phase_name: str,
-        temperature: float = 0.3,
         max_tokens: int = 16000,
         timeout: float = 300.0,
     ) -> tuple[List[Dict[str, Any]], int, int, float]:
@@ -429,7 +423,6 @@ class LLMAnalyzer:
             system_prompt: System prompt
             user_prompt: User prompt
             phase_name: Name of the phase (for logging)
-            temperature: Desired temperature
             max_tokens: Max output tokens
             timeout: Request timeout in seconds
 
@@ -437,7 +430,7 @@ class LLMAnalyzer:
             Tuple of (parsed JSON list, input_tokens, output_tokens, cost)
         """
         response_text, tokens_in, tokens_out, cost = self._call_llm(
-            system_prompt, user_prompt, phase_name, temperature, max_tokens, timeout
+            system_prompt, user_prompt, phase_name, max_tokens, timeout
         )
 
         if not response_text:
@@ -456,7 +449,6 @@ class LLMAnalyzer:
         system_prompt: str,
         user_prompt: str,
         phase_name: str,
-        temperature: float = 0.3,
         max_tokens: int = 16000,
         timeout: float = 300.0,
     ) -> tuple[Optional[str], int, int, float]:
@@ -467,7 +459,6 @@ class LLMAnalyzer:
             system_prompt: System prompt
             user_prompt: User prompt
             phase_name: Name of the phase (for logging)
-            temperature: Desired temperature
             max_tokens: Max output tokens
             timeout: Request timeout in seconds
 
@@ -483,7 +474,6 @@ class LLMAnalyzer:
                 {"role": "user", "content": user_prompt},
             ],
             max_tokens=max_tokens,
-            temperature=get_effective_temperature(self.model, temperature),
             timeout=timeout,
         )
 
@@ -508,6 +498,10 @@ class LLMAnalyzer:
         if not content:
             logger.warning(f"Phase {phase_name}: Empty response from LLM")
             return None, tokens_in, tokens_out, cost
+
+        # Save response to file for debugging
+        response_file = save_llm_response(content, phase_name)
+        logger.debug(f"Phase {phase_name}: Response saved to {response_file}")
 
         return content.strip(), tokens_in, tokens_out, cost
 

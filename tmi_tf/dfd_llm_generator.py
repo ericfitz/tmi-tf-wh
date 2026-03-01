@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, cast
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
-from tmi_tf.config import get_effective_temperature
+from tmi_tf.config import save_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,6 @@ class DFDLLMGenerator:
                         {"role": "user", "content": user_prompt},
                     ],
                     max_tokens=16000,
-                    temperature=get_effective_temperature(self.model, 0),
                     timeout=180.0,
                 ),
             )
@@ -186,6 +185,10 @@ class DFDLLMGenerator:
             if not response_text:
                 logger.error("Empty content in LLM response")
                 return None
+
+            # Save response to file for debugging
+            response_file = save_llm_response(response_text, "dfd")
+            logger.debug(f"DFD response saved to {response_file}")
 
             # Parse JSON from response
             structured_data = self._extract_json(response_text)

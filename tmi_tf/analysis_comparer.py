@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, cast
 import litellm  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
-from tmi_tf.config import Config, get_effective_temperature
+from tmi_tf.config import Config, save_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -498,7 +498,6 @@ Return JSON with this structure:
                         {"role": "system", "content": self.comparison_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=get_effective_temperature(self._get_llm_model(), 0.2),
                 ),
             )
 
@@ -514,6 +513,13 @@ Return JSON with this structure:
                     pass
 
             response_text = response.choices[0].message.content  # type: ignore[union-attr]
+
+            # Save response to file for debugging
+            if response_text:
+                response_file = save_llm_response(
+                    response_text, f"compare_normalize_{category.value}"
+                )
+                logger.debug(f"Normalization response saved to {response_file}")
 
             # Extract JSON from response
             normalized_data = self._extract_json(response_text or "")
@@ -697,7 +703,6 @@ Keep the summary concise (under 400 words) but insightful."""
                         {"role": "system", "content": self.insights_system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=get_effective_temperature(self._get_llm_model(), 0.3),
                 ),
             )
 
@@ -712,7 +717,14 @@ Keep the summary concise (under 400 words) but insightful."""
                 except Exception:
                     pass
 
-            return response.choices[0].message.content or ""  # type: ignore[union-attr]
+            insights_text = response.choices[0].message.content or ""  # type: ignore[union-attr]
+
+            # Save response to file for debugging
+            if insights_text:
+                response_file = save_llm_response(insights_text, "compare_insights")
+                logger.debug(f"Insights response saved to {response_file}")
+
+            return insights_text
 
         except Exception as e:
             logger.error(f"Failed to generate insights: {e}")

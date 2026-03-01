@@ -1,11 +1,17 @@
 """Configuration management for tmi-tf."""
 
+import itertools
+import logging
 import os
+import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+logger = logging.getLogger(__name__)
 
 
 class Config:
@@ -15,8 +21,8 @@ class Config:
     DEFAULT_MODELS = {
         "anthropic": "anthropic/claude-opus-4-5-20251101",
         "openai": "openai/gpt-5.2",
-        "xai": "xai/grok-4-1-fast-reasoning",
-        "gemini": "gemini/gemini-3-pro-preview",
+        "xai": "xai/grok-4-1-fast-non-reasoning",
+        "gemini": "gemini/gemini-2.0-flash",
     }
 
     # Provider prefixes for LiteLLM
@@ -137,26 +143,6 @@ class Config:
         )
 
 
-def get_effective_temperature(model: str, desired: float) -> float:
-    """Return the effective temperature for the given model.
-
-    Some models require default temperature (1.0):
-    - Gemini 3+ models: custom temperature causes loops and degraded reasoning
-    - OpenAI GPT-5/o-series reasoning models: temperature parameter not supported
-    """
-    model_lower = model.lower()
-    if "gemini-3" in model_lower or "gemini-2.5" in model_lower:
-        return 1.0
-    if (
-        "gpt-5" in model_lower
-        or "/o1" in model_lower
-        or "/o3" in model_lower
-        or "/o4" in model_lower
-    ):
-        return 1.0
-    return desired
-
-
 # Global config instance
 _config: Optional[Config] = None
 
@@ -167,3 +153,35 @@ def get_config() -> Config:
     if _config is None:
         _config = Config()
     return _config
+
+
+# LLM response file management
+_response_dir: Optional[Path] = None
+_response_counter = itertools.count(1)
+
+
+def get_response_dir() -> Path:
+    """Get or create session-level temp directory for LLM response files."""
+    global _response_dir
+    if _response_dir is None:
+        _response_dir = Path(tempfile.mkdtemp(prefix="tmi-tf-responses-"))
+        logger.info(f"LLM response files directory: {_response_dir}")
+    return _response_dir
+
+
+def save_llm_response(content: str, label: str) -> Path:
+    """Save LLM response content to a file in the response directory.
+
+    Args:
+        content: The raw LLM response text
+        label: Descriptive label for the file (e.g. "inventory", "dfd")
+
+    Returns:
+        Path to the saved response file
+    """
+    response_dir = get_response_dir()
+    safe_label = re.sub(r"[^\w\-.]", "_", label)
+    n = next(_response_counter)
+    filepath = response_dir / f"{n:02d}_{safe_label}.txt"
+    filepath.write_text(content, encoding="utf-8")
+    return filepath

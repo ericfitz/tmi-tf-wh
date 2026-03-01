@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Union, cast
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
-from tmi_tf.config import Config, get_effective_temperature
+from tmi_tf.config import Config, save_llm_response
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +207,6 @@ class ThreatProcessor:
                         {"role": "user", "content": user_prompt},
                     ],
                     max_tokens=16000,
-                    temperature=get_effective_temperature(self.model, 0.3),
                     timeout=180.0,
                 ),
             )
@@ -235,6 +234,10 @@ class ThreatProcessor:
                 logger.warning(f"Empty response from LLM for {repo_name}")
                 return []
             response_text = content.strip()
+
+            # Save response to file for debugging
+            response_file = save_llm_response(response_text, f"threats_{repo_name}")
+            logger.debug(f"Threat extraction response saved to {response_file}")
 
             # Try to find JSON array in the response
             json_match = re.search(r"\[[\s\S]*\]", response_text)
