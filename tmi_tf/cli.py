@@ -198,11 +198,21 @@ def analyze(
         # Create note in TMI
         if not dry_run:
             logger.info("\n[7/7] Creating note in TMI...")
+            repo_short_names = [
+                a.repo_url.rstrip("/").removesuffix(".git").split("/")[-1]
+                for a in analyses
+            ]
+            repo_word = "repository" if len(repo_short_names) == 1 else "repositories"
+            repo_list = ", ".join(repo_short_names)
+            note_description = (
+                f"Discovered and analyzed Terraform templates in the "
+                f"following {repo_word}: {repo_list}"
+            )
             note = tmi_client.create_or_update_note(
                 threat_model_id=threat_model_id,
                 name=config.analysis_note_name,
                 content=markdown_content,
-                description=f"Automated analysis of {len(analyses)} Terraform repositories",
+                description=note_description,
             )
             logger.info(f"Note created/updated successfully: {note.id}")
             logger.info(f"Note name: {note.name}")
