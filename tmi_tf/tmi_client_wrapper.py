@@ -1,6 +1,7 @@
 """TMI API client wrapper."""
 
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional, Union
@@ -61,15 +62,53 @@ ALLOWED_ATTRIBUTES = {
 }  # fmt: skip
 
 
+def _escape_template_patterns(content: str) -> str:
+    """Escape template injection patterns outside code blocks.
+
+    The TMI server rejects content containing ``${``, ``{{``, or ``<%``
+    outside of fenced code blocks and inline code spans.  We replace the
+    leading character of each pattern with its HTML entity so the server
+    validation passes while the browser still renders the intended glyph.
+
+    Replacements (outside code only):
+        ``${``  -> ``&#36;{``   (``$`` as HTML entity)
+        ``{{``  -> ``&#123;{``  (first ``{`` as HTML entity)
+        ``<%``  -> ``&lt;%``    (``<`` as HTML entity)
+    """
+    if not content:
+        return content
+
+    # Split content into code (fenced blocks and inline code) vs. prose.
+    # Using a capturing group so that the delimiters are included in the
+    # result list — odd-indexed elements are code, even are prose.
+    segments = re.split(r"(```[^\n]*\n[\s\S]*?\n```|`[^`\n]+`)", content)
+
+    result: list[str] = []
+    for i, segment in enumerate(segments):
+        if i % 2 == 1:
+            # Inside a code block / inline code — keep as-is
+            result.append(segment)
+        else:
+            # Prose — escape template-injection patterns
+            segment = segment.replace("${", "&#36;{")
+            segment = segment.replace("{{", "&#123;{")
+            segment = segment.replace("<%", "&lt;%")
+            result.append(segment)
+    return "".join(result)
+
+
 def sanitize_content_for_api(content: str) -> str:
     """
     Sanitize content to match TMI API requirements.
 
     Uses nh3 (Python equivalent of DOMPurify/bluemonday) to sanitize HTML,
     allowing only the tags and attributes accepted by the TMI platform.
-    Also removes:
-    - Control characters (U+0000-U+001F) except newline, carriage return, tab
-    - Characters above U+FFFF (emoji and supplementary Unicode)
+    Also:
+    - Escapes template injection patterns (``${``, ``{{``, ``<%``) outside
+      code blocks so the server does not reject the content.
+    - Removes control characters (U+0000-U+001F) except newline, carriage
+      return, tab.
+    - Removes characters above U+FFFF (emoji and supplementary Unicode).
 
     Args:
         content: Raw content string
@@ -88,6 +127,9 @@ def sanitize_content_for_api(content: str) -> str:
         attributes=ALLOWED_ATTRIBUTES,
         link_rel=None,
     )
+
+    # Escape template injection patterns outside code blocks
+    sanitized = _escape_template_patterns(sanitized)
 
     # Replace characters outside the allowed range
     # Keep: U+0020-U+FFFF, \n (U+000A), \r (U+000D), \t (U+0009)
