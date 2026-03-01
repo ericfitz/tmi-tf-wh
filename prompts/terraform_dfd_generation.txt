@@ -102,17 +102,19 @@ Each component should include:
 
 Each data flow should include:
 - **id** - Unique identifier for the flow
-- **name** - Description of the data flow
+- **name** - Short label (1-3 words) summarizing the flow. For unidirectional flows, this is displayed as an edge label on the diagram, so brevity is essential.
 - **source_id** - Component ID where data originates
 - **target_id** - Component ID where data goes
 - **protocol** - Protocol used (HTTPS, HTTP, SSH, TLS, TCP, UDP, etc.)
 - **port** - Port number if applicable
 - **data_type** - Type of data being transferred (API requests, web traffic, database queries, etc.)
 - **bidirectional** - Boolean indicating if this is a two-way communication
+- **forward_label** - (Required when bidirectional is true) Short label (1-3 words) for the source-to-target direction edge. Use domain-appropriate terminology (e.g., 'Web Request', 'Database Query', 'API Call'). Do NOT include arrows or directional symbols.
+- **reverse_label** - (Required when bidirectional is true) Short label (1-3 words) for the target-to-source direction edge. Use domain-appropriate terminology for the return communication (e.g., 'Web Response', 'Query Results', 'API Response'). Do NOT include arrows or directional symbols.
 
 # Special Considerations
 
-1. **Bidirectional Flows**: If communication goes both ways (e.g., HTTPS request/response), set "bidirectional": true. We will create two unidirectional edges from this.
+1. **Bidirectional Flows**: If communication goes both ways (e.g., HTTPS request/response), set "bidirectional": true and provide `forward_label` and `reverse_label` with descriptive terms for each direction. We will create two unidirectional edges from this, one labeled with `forward_label` and the other with `reverse_label`.
 
 2. **Network Boundaries**: Create subnet, and VCN components as separate boundary objects even if they don't directly participate in flows.
 
@@ -244,7 +246,9 @@ Each data flow should include:
       "protocol": "HTTPS",
       "port": 443,
       "data_type": "Web requests",
-      "bidirectional": true
+      "bidirectional": true,
+      "forward_label": "Web Request",
+      "reverse_label": "Web Response"
     },
     {
       "id": "flow-2",
@@ -254,7 +258,9 @@ Each data flow should include:
       "protocol": "HTTP",
       "port": 80,
       "data_type": "Proxied requests",
-      "bidirectional": true
+      "bidirectional": true,
+      "forward_label": "HTTP Request",
+      "reverse_label": "HTTP Response"
     },
     {
       "id": "flow-3",
@@ -264,7 +270,9 @@ Each data flow should include:
       "protocol": "HTTP",
       "port": 80,
       "data_type": "Proxied requests",
-      "bidirectional": true
+      "bidirectional": true,
+      "forward_label": "HTTP Request",
+      "reverse_label": "HTTP Response"
     }
   ]
 }

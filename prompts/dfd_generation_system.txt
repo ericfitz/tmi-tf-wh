@@ -104,7 +104,7 @@ Each component should include:
 
 Each data flow should include:
 - **id** - Unique identifier for the flow
-- **name** - Short label (1-3 words) summarizing the flow (e.g., 'Web Traffic', 'DB Queries', 'Auth', 'Logs', 'API Calls'). This is displayed as an edge label on the diagram, so brevity is essential. Put any additional detail in `data_type` and `description`.
+- **name** - Short label (1-3 words) summarizing the flow (e.g., 'Web Traffic', 'DB Queries', 'Auth', 'Logs', 'API Calls'). For unidirectional flows, this is displayed as an edge label on the diagram, so brevity is essential. Put any additional detail in `data_type` and `description`.
 - **source_id** - Component ID where data originates
 - **target_id** - Component ID where data goes
 - **protocol** - Protocol used (HTTPS, HTTP, SSH, TLS, TCP, UDP, etc.)
@@ -112,10 +112,12 @@ Each data flow should include:
 - **data_type** - Type of data being transferred (API requests, web traffic, database queries, etc.)
 - **description** - Longer description of the flow if needed (not displayed on the diagram)
 - **bidirectional** - Boolean indicating if this is a two-way communication
+- **forward_label** - (Required when bidirectional is true) Short label (1-3 words) for the source-to-target direction edge. Use domain-appropriate terminology describing what travels in this direction (e.g., 'Web Request', 'Database Query', 'Auth Request', 'API Call', 'Log Data'). Do NOT include arrows or directional symbols.
+- **reverse_label** - (Required when bidirectional is true) Short label (1-3 words) for the target-to-source direction edge. Use domain-appropriate terminology for the return communication (e.g., 'Web Response', 'Query Results', 'Auth Token', 'API Response', 'Acknowledgement'). Do NOT include arrows or directional symbols.
 
 # Special Considerations
 
-1. **Bidirectional Flows**: If communication goes both ways (e.g., HTTPS request/response), set "bidirectional": true. We will create two unidirectional edges from this.
+1. **Bidirectional Flows**: If communication goes both ways (e.g., HTTPS request/response), set "bidirectional": true and provide `forward_label` and `reverse_label` with descriptive terms for each direction. We will create two unidirectional edges from this, one labeled with `forward_label` and the other with `reverse_label`. Use domain-appropriate terminology rather than generic "request"/"response" where possible (e.g., "Database Query"/"Query Results", "DNS Lookup"/"DNS Resolution", "SSH Command"/"SSH Output").
 
 2. **Network Boundaries**: Create subnet, and VCN components as separate boundary objects even if they don't directly participate in flows.
 

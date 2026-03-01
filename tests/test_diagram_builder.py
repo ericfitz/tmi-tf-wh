@@ -29,6 +29,8 @@ def make_flow(
     protocol: str | None = None,
     port: int | None = None,
     bidirectional: bool = False,
+    forward_label: str | None = None,
+    reverse_label: str | None = None,
 ) -> dict:
     flow: dict = {
         "id": id,
@@ -41,6 +43,10 @@ def make_flow(
         flow["protocol"] = protocol
     if port is not None:
         flow["port"] = port
+    if forward_label is not None:
+        flow["forward_label"] = forward_label
+    if reverse_label is not None:
+        flow["reverse_label"] = reverse_label
     return flow
 
 
@@ -258,12 +264,39 @@ class TestEdges:
             make_component("c1", "Client", "compute"),
             make_component("c2", "Server", "compute"),
         ]
+        flows = [
+            make_flow(
+                "f1",
+                "c1",
+                "c2",
+                name="API",
+                bidirectional=True,
+                forward_label="API Call",
+                reverse_label="API Response",
+            )
+        ]
+        builder = DFDBuilder(components, flows)
+        cells = builder.build_cells()
+
+        edges = get_edge_cells(cells)
+        assert len(edges) == 2
+        labels = {e["labels"][0]["attrs"]["text"]["text"] for e in edges}
+        assert labels == {"API Call", "API Response"}
+
+    def test_bidirectional_flow_falls_back_to_name(self):
+        """Bidirectional flow without forward/reverse labels falls back to name."""
+        components = [
+            make_component("c1", "Client", "compute"),
+            make_component("c2", "Server", "compute"),
+        ]
         flows = [make_flow("f1", "c1", "c2", name="API", bidirectional=True)]
         builder = DFDBuilder(components, flows)
         cells = builder.build_cells()
 
         edges = get_edge_cells(cells)
         assert len(edges) == 2
+        labels = [e["labels"][0]["attrs"]["text"]["text"] for e in edges]
+        assert all(label == "API" for label in labels)
 
     def test_missing_endpoint_skips_edge(self):
         components = [make_component("c1", "Server", "compute")]

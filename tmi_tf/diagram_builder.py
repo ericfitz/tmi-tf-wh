@@ -259,19 +259,21 @@ class DFDBuilder:
             edges_to_create = []
 
             if flow.get("bidirectional", False):
-                # Create two edges for bidirectional flow
+                # Create two edges for bidirectional flow using directional labels
+                forward_label = flow.get("forward_label", flow["name"])
+                reverse_label = flow.get("reverse_label", flow["name"])
                 edges_to_create.append(
                     {
                         "source_id": flow["source_id"],
                         "target_id": flow["target_id"],
-                        "label": f"{flow['name']} →",
+                        "label": forward_label,
                     }
                 )
                 edges_to_create.append(
                     {
                         "source_id": flow["target_id"],
                         "target_id": flow["source_id"],
-                        "label": f"{flow['name']} ←",
+                        "label": reverse_label,
                     }
                 )
             else:
