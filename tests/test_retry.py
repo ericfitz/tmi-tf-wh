@@ -3,9 +3,9 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 
-import litellm  # pyright: ignore[reportMissingImports]
+import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.retry import (
     DEFAULT_RETRY_DELAY,

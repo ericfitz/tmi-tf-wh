@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Callable, TypeVar
 
-import litellm  # pyright: ignore[reportMissingImports]
+import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 logger = logging.getLogger(__name__)
 
