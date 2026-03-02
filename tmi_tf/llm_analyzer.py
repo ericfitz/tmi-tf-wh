@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
+from tmi_tf.retry import retry_transient_llm_call
+
 from tmi_tf.config import save_llm_response
 from tmi_tf.repo_analyzer import TerraformRepository
 
@@ -467,14 +469,17 @@ class LLMAnalyzer:
         """
         logger.info(f"Phase {phase_name}: Calling {self.provider} ({self.model})...")
 
-        response = litellm.completion(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=max_tokens,
-            timeout=timeout,
+        response = retry_transient_llm_call(
+            lambda: litellm.completion(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=max_tokens,
+                timeout=timeout,
+            ),
+            description=f"Phase {phase_name}",
         )
 
         # Extract token usage

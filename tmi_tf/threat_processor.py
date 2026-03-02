@@ -11,6 +11,7 @@ import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-
 from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import Config, save_llm_response
+from tmi_tf.retry import retry_transient_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -200,14 +201,17 @@ class ThreatProcessor:
         try:
             response = cast(
                 ModelResponse,
-                litellm.completion(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=16000,
-                    timeout=180.0,
+                retry_transient_llm_call(
+                    lambda: litellm.completion(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        max_tokens=16000,
+                        timeout=180.0,
+                    ),
+                    description=f"Threat extraction for {repo_name}",
                 ),
             )
 

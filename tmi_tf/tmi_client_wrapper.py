@@ -3,6 +3,7 @@
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Callable, List, Optional, TypeVar, Union
 
@@ -36,6 +37,7 @@ from tmi_client.rest import ApiException  # noqa: E402  # type: ignore[import-no
 
 from tmi_tf.auth import TMIAuthenticator  # noqa: E402
 from tmi_tf.config import Config  # noqa: E402
+from tmi_tf.retry import DEFAULT_RETRY_DELAY, TRANSIENT_API_STATUSES  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -223,8 +225,13 @@ class TMIClient:
         self.threat_models_api = new_client.threat_models_api
         self.sub_resources_api = new_client.sub_resources_api
 
-    def _call_with_auth_retry(self, api_call: Callable[[], T]) -> T:
-        """Execute an API call, retrying once with re-authentication on 401."""
+    def _call_with_retry(self, api_call: Callable[[], T]) -> T:
+        """Execute an API call with retry on auth failure or transient errors.
+
+        Retries once on:
+        - 401 Unauthorized (re-authenticates first)
+        - Transient HTTP errors (429, 500, 502, 503, 504) after a brief delay
+        """
         try:
             return api_call()
         except ApiException as e:
@@ -233,6 +240,17 @@ class TMIClient:
                     "Received 401 Unauthorized, re-authenticating and retrying..."
                 )
                 self._reauthenticate()
+                return api_call()
+            if e.status in TRANSIENT_API_STATUSES:
+                logger.warning(
+                    "TMI API call failed with transient error (HTTP %d: %s). "
+                    "Retrying in %.0f seconds...",
+                    e.status,
+                    e.reason,
+                    DEFAULT_RETRY_DELAY,
+                )
+                time.sleep(DEFAULT_RETRY_DELAY)
+                logger.info("Retrying TMI API call...")
                 return api_call()
             raise
 
@@ -248,7 +266,7 @@ class TMIClient:
         """
         logger.info(f"Fetching threat model: {threat_model_id}")
         try:
-            threat_model = self._call_with_auth_retry(
+            threat_model = self._call_with_retry(
                 lambda: self.threat_models_api.get_threat_model(threat_model_id)
             )
             logger.info(f"Retrieved threat model: {threat_model.name}")
@@ -269,7 +287,7 @@ class TMIClient:
         """
         logger.info(f"Fetching repositories for threat model: {threat_model_id}")
         try:
-            response = self._call_with_auth_retry(
+            response = self._call_with_retry(
                 lambda: self.sub_resources_api.get_threat_model_repositories(
                     threat_model_id
                 )
@@ -307,7 +325,7 @@ class TMIClient:
             note_input = NoteInput(
                 name=name, content=sanitized_content, description=sanitized_description
             )
-            note = self._call_with_auth_retry(
+            note = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_note(
                     note_input, threat_model_id
                 )
@@ -333,7 +351,7 @@ class TMIClient:
         """
         logger.info(f"Fetching notes for threat model: {threat_model_id}")
         try:
-            response = self._call_with_auth_retry(
+            response = self._call_with_retry(
                 lambda: self.sub_resources_api.get_threat_model_notes(threat_model_id)
             )
             notes = response.notes
@@ -356,7 +374,7 @@ class TMIClient:
         """
         logger.info(f"Fetching note {note_id} from threat model {threat_model_id}")
         try:
-            note = self._call_with_auth_retry(
+            note = self._call_with_retry(
                 lambda: self.sub_resources_api.get_threat_model_note(
                     threat_model_id, note_id
                 )
@@ -399,7 +417,7 @@ class TMIClient:
             note_input = NoteInput(
                 name=name, content=sanitized_content, description=sanitized_description
             )
-            note = self._call_with_auth_retry(
+            note = self._call_with_retry(
                 lambda: self.sub_resources_api.update_threat_model_note(
                     note_input, threat_model_id, note_id
                 )
@@ -467,7 +485,7 @@ class TMIClient:
         logger.info(f"Creating diagram '{name}' in threat model {threat_model_id}")
         try:
             request = CreateDiagramRequest(name=name, type="DFD-1.0.0")
-            diagram = self._call_with_auth_retry(
+            diagram = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_diagram(
                     request, threat_model_id
                 )
@@ -501,7 +519,7 @@ class TMIClient:
             # JSON Patch operation: replace the /cells path with new cells
             patch_operations = [{"op": "replace", "path": "/cells", "value": cells}]
 
-            diagram = self._call_with_auth_retry(
+            diagram = self._call_with_retry(
                 lambda: self.sub_resources_api.patch_threat_model_diagram(
                     patch_operations, threat_model_id, diagram_id
                 )
@@ -524,7 +542,7 @@ class TMIClient:
         """
         logger.info(f"Fetching diagrams for threat model: {threat_model_id}")
         try:
-            response = self._call_with_auth_retry(
+            response = self._call_with_retry(
                 lambda: self.sub_resources_api.get_threat_model_diagrams(
                     threat_model_id
                 )
@@ -653,7 +671,7 @@ class TMIClient:
                 cell_id=cell_id,
                 metadata=metadata_objects,
             )
-            threat = self._call_with_auth_retry(
+            threat = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_threat(
                     threat_input, threat_model_id
                 )
@@ -686,7 +704,7 @@ class TMIClient:
             metadata_objects = [
                 Metadata(key=m["key"], value=m["value"]) for m in metadata
             ]
-            result = self._call_with_auth_retry(
+            result = self._call_with_retry(
                 lambda: self.sub_resources_api.bulk_create_note_metadata(
                     metadata_objects, threat_model_id, note_id
                 )
@@ -719,7 +737,7 @@ class TMIClient:
             metadata_objects = [
                 Metadata(key=m["key"], value=m["value"]) for m in metadata
             ]
-            result = self._call_with_auth_retry(
+            result = self._call_with_retry(
                 lambda: self.sub_resources_api.bulk_create_diagram_metadata(
                     metadata_objects, threat_model_id, diagram_id
                 )

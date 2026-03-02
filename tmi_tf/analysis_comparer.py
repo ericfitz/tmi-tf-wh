@@ -14,6 +14,7 @@ import litellm  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-i
 from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import Config, save_llm_response
+from tmi_tf.retry import retry_transient_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -492,12 +493,18 @@ Return JSON with this structure:
         try:
             response = cast(
                 ModelResponse,
-                litellm.completion(
-                    model=self._get_llm_model(),
-                    messages=[
-                        {"role": "system", "content": self.comparison_system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                retry_transient_llm_call(
+                    lambda: litellm.completion(
+                        model=self._get_llm_model(),
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": self.comparison_system_prompt,
+                            },
+                            {"role": "user", "content": user_prompt},
+                        ],
+                    ),
+                    description=f"Comparison normalization ({category.value})",
                 ),
             )
 
@@ -697,12 +704,18 @@ Keep the summary concise (under 400 words) but insightful."""
         try:
             response = cast(
                 ModelResponse,
-                litellm.completion(
-                    model=self._get_llm_model(),
-                    messages=[
-                        {"role": "system", "content": self.insights_system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                retry_transient_llm_call(
+                    lambda: litellm.completion(
+                        model=self._get_llm_model(),
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": self.insights_system_prompt,
+                            },
+                            {"role": "user", "content": user_prompt},
+                        ],
+                    ),
+                    description="Comparison insights generation",
                 ),
             )
 
