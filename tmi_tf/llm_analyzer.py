@@ -14,7 +14,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
@@ -231,7 +231,9 @@ class LLMAnalyzer:
             return ""
 
     def analyze_repository(
-        self, terraform_repo: TerraformRepository
+        self,
+        terraform_repo: TerraformRepository,
+        status_callback: Optional[Callable[[str], None]] = None,
     ) -> TerraformAnalysis:
         """
         Analyze Terraform repository using 3-phase LLM pipeline.
@@ -259,6 +261,8 @@ class LLMAnalyzer:
             terraform_text = self._format_terraform_contents(tf_contents)
 
             # Phase 1: Inventory Extraction
+            if status_callback:
+                status_callback("Phase 1 (Inventory) started")
             logger.info(f"Phase 1: Extracting inventory for {terraform_repo.name}")
             inventory_user = self.inventory_user_template.format(
                 repo_name=terraform_repo.name,
@@ -282,8 +286,12 @@ class LLMAnalyzer:
                 f"Phase 1 complete: {len(inventory.get('components', []))} components, "
                 f"{len(inventory.get('services', []))} services"
             )
+            if status_callback:
+                status_callback("Phase 1 (Inventory) complete")
 
             # Phase 2: Infrastructure Analysis
+            if status_callback:
+                status_callback("Phase 2 (Infrastructure) started")
             logger.info(f"Phase 2: Analyzing infrastructure for {terraform_repo.name}")
             inventory_json_str = json.dumps(inventory, indent=2)
             infra_user = self.infra_user_template.format(
@@ -309,8 +317,12 @@ class LLMAnalyzer:
                 f"Phase 2 complete: {len(infrastructure.get('relationships', []))} relationships, "
                 f"{len(infrastructure.get('data_flows', []))} data flows"
             )
+            if status_callback:
+                status_callback("Phase 2 (Infrastructure) complete")
 
             # Phase 3: Security Analysis
+            if status_callback:
+                status_callback("Phase 3 (Security) started")
             logger.info(f"Phase 3: Security analysis for {terraform_repo.name}")
             infrastructure_json_str = json.dumps(infrastructure, indent=2)
             security_user = self.security_user_template.format(
@@ -331,6 +343,9 @@ class LLMAnalyzer:
             total_input_tokens += sec_tokens_in
             total_output_tokens += sec_tokens_out
             total_cost += sec_cost
+
+            if status_callback:
+                status_callback("Phase 3 (Security) complete")
 
             elapsed_time = time.time() - start_time
 
