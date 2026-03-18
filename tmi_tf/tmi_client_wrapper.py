@@ -67,6 +67,8 @@ ALLOWED_ATTRIBUTES = {
     },
 }  # fmt: skip
 
+STATUS_NOTE_NAME = "TMI-TF Analysis Status"
+
 
 def _escape_template_patterns(content: str) -> str:
     """Escape template injection patterns outside code blocks.
@@ -193,6 +195,11 @@ class TMIClient:
         self.api_client = ApiClient(configuration=tmi_config)
         self.threat_models_api = tmi_client.ThreatModelsApi(self.api_client)
         self.sub_resources_api = tmi_client.ThreatModelSubResourcesApi(self.api_client)
+
+        # Status note tracking
+        self._status_note_id: Optional[str] = None
+        self._status_note_initialized: bool = False
+        self._status_note_content: str = ""
 
         logger.info(f"TMI client initialized for {config.tmi_server_url}")
 
@@ -444,6 +451,59 @@ class TMIClient:
             if note.name == note_name:
                 return note
         return None
+
+    def update_status_note(self, threat_model_id: str, message: str) -> None:
+        """Update the analysis status tracking note.
+
+        First call per run overwrites any existing content.
+        Subsequent calls append a new timestamped line.
+
+        Args:
+            threat_model_id: Threat model UUID
+            message: Status message to record
+        """
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        line = f"[{timestamp}] {message}"
+
+        try:
+            if not self._status_note_initialized:
+                # First call: find or create the note, overwrite content
+                existing = self.find_note_by_name(threat_model_id, STATUS_NOTE_NAME)
+                if existing:
+                    self._status_note_id = existing.id
+                    self._status_note_content = line
+                    self.update_note(
+                        threat_model_id=threat_model_id,
+                        note_id=existing.id,
+                        name=STATUS_NOTE_NAME,
+                        content=line,
+                        description="Tracks tmi-tf analysis progress",
+                    )
+                else:
+                    note = self.create_note(
+                        threat_model_id=threat_model_id,
+                        name=STATUS_NOTE_NAME,
+                        content=line,
+                        description="Tracks tmi-tf analysis progress",
+                    )
+                    self._status_note_id = note.id
+                    self._status_note_content = line
+                self._status_note_initialized = True
+            else:
+                # Subsequent calls: append to existing content
+                self._status_note_content += f"\n{line}"
+                if self._status_note_id:
+                    self.update_note(
+                        threat_model_id=threat_model_id,
+                        note_id=self._status_note_id,
+                        name=STATUS_NOTE_NAME,
+                        content=self._status_note_content,
+                        description="Tracks tmi-tf analysis progress",
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to update status note: {e}")
 
     def create_or_update_note(
         self, threat_model_id: str, name: str, content: str, description: str = ""
