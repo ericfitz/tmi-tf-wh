@@ -107,6 +107,11 @@ def analyze(
         if max_repos:
             config.max_repos = max_repos
 
+        # Construct artifact names from model identifier and timestamp
+        artifact_suffix = f"({config.effective_model}, {config.timestamp})"
+        analysis_note_name = f"Terraform Analysis Report {artifact_suffix}"
+        diagram_name = f"Infrastructure Data Flow Diagram {artifact_suffix}"
+
         logger.info(f"Threat Model ID: {threat_model_id}")
         logger.info(f"Max Repositories: {config.max_repos}")
         logger.info(f"TMI Server: {config.tmi_server_url}")
@@ -210,7 +215,7 @@ def analyze(
             )
             note = tmi_client.create_or_update_note(
                 threat_model_id=threat_model_id,
-                name=config.analysis_note_name,
+                name=analysis_note_name,
                 content=markdown_content,
                 description=note_description,
             )
@@ -300,7 +305,7 @@ def analyze(
                     # Create or update diagram in TMI
                     diagram = tmi_client.create_or_update_diagram(
                         threat_model_id=threat_model_id,
-                        name=config.diagram_name,
+                        name=diagram_name,
                         cells=cells,
                     )
                     # Handle both dict and object responses
@@ -363,7 +368,7 @@ def analyze(
                     if not skip_diagram:
                         try:
                             existing_diagram = tmi_client.find_diagram_by_name(
-                                threat_model_id, config.diagram_name
+                                threat_model_id, diagram_name
                             )
                             if existing_diagram:
                                 raw_id = existing_diagram.id
@@ -490,8 +495,9 @@ def config_info():
         print(f"OAuth IDP: {config.tmi_oauth_idp}")
         print(f"Max Repositories: {config.max_repos}")
         print(f"Clone Timeout: {config.clone_timeout}s")
-        print(f"Note Name: {config.analysis_note_name}")
-        print(f"Diagram Name: {config.diagram_name}")
+        artifact_suffix = f"({config.effective_model}, {config.timestamp})"
+        print(f"Note Name: Terraform Analysis Report {artifact_suffix}")
+        print(f"Diagram Name: Infrastructure Data Flow Diagram {artifact_suffix}")
         print(
             f"GitHub Token: {'Configured' if config.github_token else 'Not configured'}"
         )
