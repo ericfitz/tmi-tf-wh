@@ -543,6 +543,80 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 
         return "\n\n".join(parts)
 
+    def generate_inventory_report(
+        self,
+        threat_model_name: str,
+        threat_model_id: str,
+        analyses: List[TerraformAnalysis],
+        environment_name: Optional[str] = None,
+    ) -> str:
+        """Generate inventory-only markdown report."""
+        sections = []
+
+        title = "Terraform Infrastructure Inventory"
+        if environment_name:
+            title += f" - {environment_name}"
+        sections.append(f"# {title}\n\n**Threat Model**: {threat_model_name}")
+
+        for i, analysis in enumerate(analyses, 1):
+            header = f"## Repository {i}: {analysis.repo_name}\n\n**URL**: [{analysis.repo_url}]({analysis.repo_url})"
+            if not analysis.success:
+                sections.append(
+                    f"{header}\n\n*Analysis failed: {analysis.error_message}*"
+                )
+                continue
+            parts = [header]
+            parts.append(self._format_inventory_section(analysis.inventory))
+            sections.append("\n\n".join(part for part in parts if part))
+
+        sections.append(self._generate_analysis_job_info(threat_model_id, analyses))
+        return "\n\n---\n\n".join(sections)
+
+    def generate_analysis_report(
+        self,
+        threat_model_name: str,
+        threat_model_id: str,
+        analyses: List[TerraformAnalysis],
+        environment_name: Optional[str] = None,
+    ) -> str:
+        """Generate analysis markdown report (architecture, relationships, security)."""
+        sections = []
+
+        title = "Terraform Infrastructure Analysis"
+        if environment_name:
+            title += f" - {environment_name}"
+        sections.append(f"# {title}\n\n**Threat Model**: {threat_model_name}")
+
+        for i, analysis in enumerate(analyses, 1):
+            header = f"## Repository {i}: {analysis.repo_name}\n\n**URL**: [{analysis.repo_url}]({analysis.repo_url})"
+            if not analysis.success:
+                sections.append(
+                    f"{header}\n\n*Analysis failed: {analysis.error_message}*"
+                )
+                continue
+
+            parts = [header]
+
+            arch_summary = analysis.infrastructure.get("architecture_summary", "")
+            if arch_summary:
+                parts.append(f"### Architecture Summary\n\n{arch_summary}")
+
+            mermaid = analysis.infrastructure.get("mermaid_diagram", "")
+            if mermaid:
+                if not mermaid.strip().startswith("```"):
+                    mermaid = f"```mermaid\n{mermaid}\n```"
+                parts.append(f"### Architecture Diagram\n\n{mermaid}")
+
+            parts.append(self._format_relationships_section(analysis.infrastructure))
+            parts.append(self._format_data_flows_section(analysis.infrastructure))
+            parts.append(self._format_security_section(analysis.security_findings))
+
+            sections.append("\n\n".join(part for part in parts if part))
+
+        sections.append(self._generate_consolidated_findings(analyses))
+        sections.append(self._generate_analysis_job_info(threat_model_id, analyses))
+        return "\n\n---\n\n".join(sections)
+
     def save_to_file(self, content: str, filepath: str) -> None:
         """
         Save markdown content to file.

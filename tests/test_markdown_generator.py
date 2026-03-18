@@ -1,5 +1,6 @@
 """Tests for the HTML table generation in MarkdownGenerator."""
 
+from tmi_tf.llm_analyzer import TerraformAnalysis
 from tmi_tf.markdown_generator import (
     MarkdownGenerator,
     _config_nested_table,
@@ -7,6 +8,76 @@ from tmi_tf.markdown_generator import (
     _html_list,
     _html_table,
 )
+
+
+def _make_analysis() -> TerraformAnalysis:
+    """Create a sample TerraformAnalysis for testing."""
+    return TerraformAnalysis(
+        repo_name="test-repo",
+        repo_url="https://github.com/org/test-repo",
+        inventory={
+            "components": [
+                {
+                    "name": "web-server",
+                    "type": "compute",
+                    "resource_type": "aws_instance",
+                    "purpose": "Web server",
+                    "configuration": {"instance_type": "t3.micro"},
+                },
+            ],
+            "services": [
+                {
+                    "name": "web-service",
+                    "criteria": ["serves HTTP"],
+                    "compute_units": ["web-server"],
+                    "associated_resources": [],
+                },
+            ],
+        },
+        infrastructure={
+            "architecture_summary": "A simple web app",
+            "mermaid_diagram": "graph TD\n  A-->B",
+            "relationships": [
+                {
+                    "source_id": "web",
+                    "target_id": "db",
+                    "relationship_type": "connects_to",
+                    "description": "Web connects to DB",
+                },
+            ],
+            "data_flows": [
+                {
+                    "name": "HTTP",
+                    "source_id": "user",
+                    "target_id": "web",
+                    "protocol": "HTTPS",
+                    "port": "443",
+                    "data_type": "requests",
+                },
+            ],
+            "trust_boundaries": [],
+        },
+        security_findings=[
+            {
+                "name": "Open port",
+                "severity": "Medium",
+                "score": 5.0,
+                "threat_type": "Information Disclosure",
+                "category": "Network",
+                "description": "Port open",
+                "mitigation": "Close it",
+                "cwe_id": [],
+                "affected_components": ["web"],
+            },
+        ],
+        success=True,
+        elapsed_time=10.0,
+        input_tokens=1000,
+        output_tokens=500,
+        model="anthropic/claude-opus-4-5",
+        provider="anthropic",
+        total_cost=0.05,
+    )
 
 
 class TestEsc:
@@ -305,3 +376,85 @@ class TestMarkdownGeneratorMetrics:
         assert "1,000" in result
         # Totals row should be bold
         assert "<strong>" in result
+
+
+class TestGenerateInventoryReport:
+    def test_includes_inventory_section(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
+        assert "Infrastructure Inventory" in report
+        assert "web-server" in report
+
+    def test_includes_services(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
+        assert "web-service" in report
+
+    def test_excludes_security_findings(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
+        assert "Security Observations" not in report
+        assert "Open port" not in report
+
+    def test_excludes_architecture_summary(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
+        assert "Architecture Summary" not in report
+
+    def test_includes_environment_name_in_title(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_inventory_report(
+            "TM", "tm-1", [_make_analysis()], environment_name="oci-private"
+        )
+        assert "oci-private" in report
+
+    def test_includes_job_info(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
+        assert "Analysis Job Information" in report
+
+
+class TestGenerateAnalysisReport:
+    def test_includes_architecture(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Architecture Summary" in report
+        assert "simple web app" in report
+
+    def test_includes_security_findings(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Security Observations" in report
+        assert "Open port" in report
+
+    def test_includes_relationships(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Component Relationships" in report
+
+    def test_includes_data_flows(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Data Flows" in report
+
+    def test_excludes_inventory(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Infrastructure Inventory" not in report
+
+    def test_includes_environment_name_in_title(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report(
+            "TM", "tm-1", [_make_analysis()], environment_name="aws-public"
+        )
+        assert "aws-public" in report
+
+    def test_includes_consolidated_findings(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Consolidated Findings" in report
+
+    def test_includes_job_info(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Analysis Job Information" in report
