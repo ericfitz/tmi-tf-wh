@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,6 +13,15 @@ from typing import List, Optional
 from tmi_tf.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TerraformEnvironment:
+    """Represents a detected Terraform environment (root module)."""
+
+    name: str
+    path: Path
+    tf_files: List[Path]
 
 
 class TerraformRepository:
@@ -23,6 +33,8 @@ class TerraformRepository:
         url: str,
         clone_path: Path,
         terraform_files: List[Path],
+        environment_name: Optional[str] = None,
+        environments_found: Optional[List[str]] = None,
     ):
         """
         Initialize Terraform repository.
@@ -32,11 +44,15 @@ class TerraformRepository:
             url: Repository URL
             clone_path: Local clone path
             terraform_files: List of .tf file paths
+            environment_name: Optional detected environment name
+            environments_found: Optional list of detected environment names
         """
         self.name = name
         self.url = url
         self.clone_path = clone_path
         self.terraform_files = terraform_files
+        self.environment_name = environment_name
+        self.environments_found = environments_found or []
 
     def get_terraform_content(self) -> dict[str, str]:
         """
@@ -73,6 +89,64 @@ class RepositoryAnalyzer:
             config: Application configuration
         """
         self.config = config
+
+    @staticmethod
+    def detect_environments(clone_path: Path) -> List[TerraformEnvironment]:
+        """Detect Terraform environments (root modules) in a cloned repository.
+
+        Finds directories containing main.tf or backend.tf, excluding any
+        directories under a 'modules' path segment.
+
+        Args:
+            clone_path: Root of the cloned repository
+
+        Returns:
+            Sorted list of detected TerraformEnvironment objects
+        """
+        candidates: dict[Path, None] = {}  # Use dict for ordered dedup
+
+        for marker in ("main.tf", "backend.tf"):
+            for match in clone_path.rglob(marker):
+                candidates[match.parent] = None
+
+        # Filter out directories under any 'modules' path segment
+        environments: list[TerraformEnvironment] = []
+        for dir_path in candidates:
+            rel = dir_path.relative_to(clone_path)
+            if "modules" in rel.parts:
+                continue
+
+            # Collect .tf and .tfvars files directly in this directory (non-recursive)
+            tf_files = sorted(
+                [
+                    f
+                    for f in dir_path.iterdir()
+                    if f.is_file() and f.suffix in (".tf", ".tfvars")
+                ]
+            )
+
+            environments.append(
+                TerraformEnvironment(
+                    name=str(rel),  # Temporary — may be shortened below
+                    path=dir_path,
+                    tf_files=tf_files,
+                )
+            )
+
+        # Derive short names: use directory basename if unique, else relative path
+        basenames = [e.path.name for e in environments]
+        basename_counts: dict[str, int] = {}
+        for b in basenames:
+            basename_counts[b] = basename_counts.get(b, 0) + 1
+
+        for env in environments:
+            if basename_counts[env.path.name] == 1:
+                env.name = env.path.name
+            else:
+                env.name = str(env.path.relative_to(clone_path))
+
+        environments.sort(key=lambda e: e.name)
+        return environments
 
     @contextmanager
     def clone_repository_sparse(self, repo_url: str, repo_name: str):
