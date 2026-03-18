@@ -104,8 +104,11 @@ class ComparisonResult:
 class AnalysisParser:
     """Parses analysis markdown notes into structured data."""
 
-    # Pattern to match note names like "Terraform Analysis Report (anthropic/claude-opus-4-5-20251101)"
-    NOTE_NAME_PATTERN = re.compile(r"Terraform Analysis Report \(([^)]+)\)")
+    # Matches old format "Terraform Analysis Report (...)" and new formats
+    # "Terraform Analysis - env (...)" and "Terraform Analysis (...)"
+    NOTE_NAME_PATTERN = re.compile(
+        r"Terraform Analysis(?:\s+Report)?(?:\s+-\s+[^(]+)?\s*\(([^)]+)\)"
+    )
 
     # Section header patterns - flexible to handle numbered or unnumbered headers
     SECTION_PATTERNS = {
