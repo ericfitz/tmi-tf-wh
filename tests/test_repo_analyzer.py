@@ -1,5 +1,6 @@
 """Tests for environment detection and module resolution in repo_analyzer."""
 
+import textwrap
 from pathlib import Path
 
 from tmi_tf.repo_analyzer import (
@@ -114,3 +115,106 @@ class TestDetectEnvironments:
         envs = RepositoryAnalyzer.detect_environments(clone)
         names = [e.name for e in envs]
         assert names == sorted(names)
+
+
+class TestResolveModules:
+    """Test resolve_modules method."""
+
+    def _make_tree(self, tmp_path: Path, files: dict[str, str]) -> Path:
+        for rel, content in files.items():
+            p = tmp_path / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return tmp_path
+
+    def test_resolves_relative_module_sources(self, tmp_path):
+        clone = self._make_tree(
+            tmp_path,
+            {
+                "envs/prod/main.tf": textwrap.dedent("""\
+                module "network" {
+                  source = "../../modules/network"
+                }
+            """),
+                "envs/prod/variables.tf": 'variable "region" {}',
+                "modules/network/main.tf": 'resource "aws_vpc" "main" {}',
+                "modules/network/outputs.tf": 'output "vpc_id" {}',
+            },
+        )
+        envs = RepositoryAnalyzer.detect_environments(clone)
+        assert len(envs) == 1
+
+        all_files = RepositoryAnalyzer.resolve_modules(envs[0], clone)
+        filenames = {f.name for f in all_files}
+        # Should include env files + module files
+        assert "main.tf" in filenames
+        assert "variables.tf" in filenames
+        assert "outputs.tf" in filenames
+
+    def test_ignores_registry_sources(self, tmp_path):
+        clone = self._make_tree(
+            tmp_path,
+            {
+                "env/prod/main.tf": textwrap.dedent("""\
+                module "vpc" {
+                  source = "terraform-aws-modules/vpc/aws"
+                }
+                module "local_mod" {
+                  source = "../../modules/local"
+                }
+            """),
+                "modules/local/main.tf": "",
+            },
+        )
+        envs = RepositoryAnalyzer.detect_environments(clone)
+        all_files = RepositoryAnalyzer.resolve_modules(envs[0], clone)
+        # Should include env file + local module, but not fail on registry source
+        assert len(all_files) >= 2
+
+    def test_deduplicates_files(self, tmp_path):
+        clone = self._make_tree(
+            tmp_path,
+            {
+                "env/prod/main.tf": textwrap.dedent("""\
+                module "a" {
+                  source = "../modules/shared"
+                }
+                module "b" {
+                  source = "../modules/shared"
+                }
+            """),
+                "modules/shared/main.tf": "",
+            },
+        )
+        envs = RepositoryAnalyzer.detect_environments(clone)
+        all_files = RepositoryAnalyzer.resolve_modules(envs[0], clone)
+        # No duplicates
+        assert len(all_files) == len(set(all_files))
+
+    def test_no_modules_returns_env_files_only(self, tmp_path):
+        clone = self._make_tree(
+            tmp_path,
+            {
+                "env/prod/main.tf": 'resource "aws_instance" "web" {}',
+                "env/prod/variables.tf": 'variable "x" {}',
+            },
+        )
+        envs = RepositoryAnalyzer.detect_environments(clone)
+        all_files = RepositoryAnalyzer.resolve_modules(envs[0], clone)
+        assert len(all_files) == 2
+
+    def test_nonexistent_module_path_skipped(self, tmp_path):
+        clone = self._make_tree(
+            tmp_path,
+            {
+                "env/prod/main.tf": textwrap.dedent("""\
+                module "ghost" {
+                  source = "../modules/nonexistent"
+                }
+            """),
+            },
+        )
+        envs = RepositoryAnalyzer.detect_environments(clone)
+        all_files = RepositoryAnalyzer.resolve_modules(envs[0], clone)
+        # Should just return the env file, not crash
+        assert len(all_files) == 1

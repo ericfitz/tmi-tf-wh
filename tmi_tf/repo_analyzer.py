@@ -1,6 +1,7 @@
 """Repository cloning and Terraform file extraction."""
 
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -147,6 +148,66 @@ class RepositoryAnalyzer:
 
         environments.sort(key=lambda e: e.name)
         return environments
+
+    @staticmethod
+    def resolve_modules(
+        environment: TerraformEnvironment, clone_path: Path
+    ) -> List[Path]:
+        """Resolve module source references and return combined file list.
+
+        Parses .tf files in the environment for module source attributes,
+        resolves relative paths, and collects .tf files from those modules.
+
+        Args:
+            environment: The selected TerraformEnvironment
+            clone_path: Root of the cloned repository
+
+        Returns:
+            Deduplicated list of .tf/.tfvars file paths (environment + modules)
+        """
+        source_pattern = re.compile(r'source\s*=\s*"([^"]+)"')
+        seen_paths: set[Path] = set()
+        all_files: list[Path] = []
+
+        # Add environment files first
+        for f in environment.tf_files:
+            resolved = f.resolve()
+            if resolved not in seen_paths:
+                seen_paths.add(resolved)
+                all_files.append(f)
+
+        # Find module source references
+        module_dirs: set[Path] = set()
+        for tf_file in environment.tf_files:
+            if tf_file.suffix != ".tf":
+                continue
+            try:
+                content = tf_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+            for match in source_pattern.finditer(content):
+                source = match.group(1)
+                # Only resolve relative paths
+                if not source.startswith(("./", "../")):
+                    logger.debug(f"Skipping non-relative module source: {source}")
+                    continue
+
+                resolved_dir = (environment.path / source).resolve()
+                if resolved_dir.is_dir():
+                    module_dirs.add(resolved_dir)
+                else:
+                    logger.debug(f"Module source path does not exist: {resolved_dir}")
+
+        # Collect .tf files from resolved module directories
+        for mod_dir in sorted(module_dirs):
+            for tf_file in sorted(mod_dir.rglob("*.tf")):
+                resolved = tf_file.resolve()
+                if resolved not in seen_paths:
+                    seen_paths.add(resolved)
+                    all_files.append(tf_file)
+
+        return all_files
 
     @contextmanager
     def clone_repository_sparse(self, repo_url: str, repo_name: str):
