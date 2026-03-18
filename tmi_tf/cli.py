@@ -78,6 +78,13 @@ cli: click.Group = click.version_option(version="0.1.0")(click.group()(_cli_impl
     is_flag=True,
     help="Skip extracting and creating threat objects from security issues",
 )
+@click.option(
+    "--environment",
+    "-e",
+    type=str,
+    default=None,
+    help="Pre-select a Terraform environment by name (skip interactive prompt)",
+)
 def analyze(
     threat_model_id: str,
     max_repos: Optional[int],
@@ -87,6 +94,7 @@ def analyze(
     verbose: bool,
     skip_diagram: bool,
     skip_threats: bool,
+    environment: Optional[str],
 ):
     """
     Analyze Terraform repositories for a threat model.
@@ -107,11 +115,6 @@ def analyze(
         if max_repos:
             config.max_repos = max_repos
 
-        # Construct artifact names from model identifier and timestamp
-        artifact_suffix = f"({config.effective_model}, {config.timestamp})"
-        analysis_note_name = f"Terraform Analysis Report {artifact_suffix}"
-        diagram_name = f"Infrastructure Data Flow Diagram {artifact_suffix}"
-
         logger.info(f"Threat Model ID: {threat_model_id}")
         logger.info(f"Max Repositories: {config.max_repos}")
         logger.info(f"TMI Server: {config.tmi_server_url}")
@@ -119,6 +122,7 @@ def analyze(
         # Initialize clients
         logger.info("\n[1/7] Initializing clients...")
         tmi_client = TMIClient.create_authenticated(config, force_refresh=force_auth)
+        tmi_client.update_status_note(threat_model_id, "Analysis started")
         github_client = GitHubClient(config)
         repo_analyzer = RepositoryAnalyzer(config)
         llm_analyzer = LLMAnalyzer(config)
@@ -154,6 +158,7 @@ def analyze(
         # Analyze repositories
         logger.info(f"\n[4/7] Analyzing {len(repos_to_analyze)} repositories...")
         analyses = []
+        selected_env_name: Optional[str] = None
 
         for i, repo in enumerate(repos_to_analyze, 1):
             logger.info(
@@ -164,12 +169,110 @@ def analyze(
             try:
                 # Clone repository
                 repo_name = repo_analyzer.extract_repository_name(repo.uri)
+                tmi_client.update_status_note(
+                    threat_model_id, f"Cloning repository: {repo.uri}"
+                )
                 with repo_analyzer.clone_repository_sparse(
                     repo.uri, repo_name
                 ) as tf_repo:
                     if tf_repo:
-                        # Analyze with Claude
-                        analysis = llm_analyzer.analyze_repository(tf_repo)
+                        # Status: cloning done
+                        tmi_client.update_status_note(
+                            threat_model_id, f"Clone complete: {repo_name}"
+                        )
+
+                        # Detect Terraform environments
+                        envs = RepositoryAnalyzer.detect_environments(
+                            tf_repo.clone_path
+                        )
+                        tf_repo.environments_found = [e.name for e in envs]
+
+                        if len(envs) == 0:
+                            logger.info(
+                                "No Terraform environments detected, analyzing all files"
+                            )
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"No environments detected in {repo_name}, analyzing all files",
+                            )
+                        elif len(envs) == 1:
+                            selected = envs[0]
+                            tf_repo.environment_name = selected.name
+                            selected_env_name = selected.name
+                            logger.info(f"Auto-selected environment: {selected.name}")
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"Found 1 Terraform environment: {selected.name}",
+                            )
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"Selected environment: {selected.name}",
+                            )
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"Resolving modules for environment: {selected.name}",
+                            )
+                            tf_repo.terraform_files = (
+                                RepositoryAnalyzer.resolve_modules(
+                                    selected, tf_repo.clone_path
+                                )
+                            )
+                        else:
+                            env_names = ", ".join(e.name for e in envs)
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"Found {len(envs)} Terraform environments: {env_names}",
+                            )
+
+                            if environment:
+                                matches = [
+                                    e
+                                    for e in envs
+                                    if e.name.lower() == environment.lower()
+                                ]
+                                if not matches:
+                                    available = ", ".join(e.name for e in envs)
+                                    raise click.ClickException(
+                                        f"Environment '{environment}' not found. "
+                                        f"Available: {available}"
+                                    )
+                                selected = matches[0]
+                            else:
+                                click.echo(
+                                    f"\nFound {len(envs)} Terraform environments:"
+                                )
+                                for idx, env in enumerate(envs, 1):
+                                    click.echo(f"  {idx}. {env.name}")
+                                choice = click.prompt(
+                                    "Select environment to analyze",
+                                    type=click.IntRange(1, len(envs)),
+                                )
+                                selected = envs[choice - 1]
+
+                            tf_repo.environment_name = selected.name
+                            selected_env_name = selected.name
+                            logger.info(f"Selected environment: {selected.name}")
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"Selected environment: {selected.name}",
+                            )
+                            tmi_client.update_status_note(
+                                threat_model_id,
+                                f"Resolving modules for environment: {selected.name}",
+                            )
+                            tf_repo.terraform_files = (
+                                RepositoryAnalyzer.resolve_modules(
+                                    selected, tf_repo.clone_path
+                                )
+                            )
+
+                        # Status callback for LLM phases
+                        def _status_cb(msg: str) -> None:
+                            tmi_client.update_status_note(threat_model_id, msg)
+
+                        analysis = llm_analyzer.analyze_repository(
+                            tf_repo, status_callback=_status_cb
+                        )
                         analyses.append(analysis)
                     else:
                         logger.warning(
@@ -185,44 +288,75 @@ def analyze(
             logger.error("No repositories were successfully analyzed")
             sys.exit(1)
 
-        logger.info(f"\n[5/7] Successfully analyzed {len(analyses)} repositories")
+        logger.info(f"\n[5/9] Successfully analyzed {len(analyses)} repositories")
 
-        # Generate markdown report
-        logger.info("\n[6/7] Generating markdown report...")
-        markdown_content = markdown_gen.generate_report(
+        # Build artifact names (environment-aware)
+        model_label = config.effective_model
+        ts = config.timestamp
+        if selected_env_name:
+            inventory_note_name = (
+                f"Terraform Inventory - {selected_env_name} ({model_label}, {ts})"
+            )
+            analysis_note_name = (
+                f"Terraform Analysis - {selected_env_name} ({model_label}, {ts})"
+            )
+            diagram_name = f"Infrastructure Data Flow Diagram - {selected_env_name} ({model_label}, {ts})"
+        else:
+            inventory_note_name = f"Terraform Inventory ({model_label}, {ts})"
+            analysis_note_name = f"Terraform Analysis ({model_label}, {ts})"
+            diagram_name = f"Infrastructure Data Flow Diagram ({model_label}, {ts})"
+
+        # Generate reports
+        tmi_client.update_status_note(threat_model_id, "Generating inventory report")
+        logger.info("\n[6/9] Generating inventory report...")
+        inventory_content = markdown_gen.generate_inventory_report(
             threat_model_name=threat_model.name,
             threat_model_id=threat_model_id,
             analyses=analyses,
+            environment_name=selected_env_name,
         )
 
-        # Save to file if requested
-        if output:
-            markdown_gen.save_to_file(markdown_content, output)
-            logger.info(f"Report saved to: {output}")
+        tmi_client.update_status_note(threat_model_id, "Generating analysis report")
+        logger.info("\n[7/9] Generating analysis report...")
+        analysis_content = markdown_gen.generate_analysis_report(
+            threat_model_name=threat_model.name,
+            threat_model_id=threat_model_id,
+            analyses=analyses,
+            environment_name=selected_env_name,
+        )
 
-        # Create note in TMI
+        # Save to files if requested
+        if output:
+            from pathlib import Path as _Path
+
+            out_path = _Path(output)
+            stem = out_path.stem
+            suffix = out_path.suffix or ".md"
+            parent = out_path.parent
+            inv_path = parent / f"{stem}-inventory{suffix}"
+            analysis_path = parent / f"{stem}-analysis{suffix}"
+            markdown_gen.save_to_file(inventory_content, str(inv_path))
+            markdown_gen.save_to_file(analysis_content, str(analysis_path))
+            logger.info(f"Inventory report saved to: {inv_path}")
+            logger.info(f"Analysis report saved to: {analysis_path}")
+
+        # Create notes in TMI
         if not dry_run:
-            logger.info("\n[7/7] Creating note in TMI...")
             repo_short_names = [
                 a.repo_url.rstrip("/").removesuffix(".git").split("/")[-1]
                 for a in analyses
             ]
             repo_word = "repository" if len(repo_short_names) == 1 else "repositories"
             repo_list = ", ".join(repo_short_names)
-            note_description = (
-                f"Discovered and analyzed Terraform templates in the "
-                f"following {repo_word}: {repo_list}"
-            )
-            note = tmi_client.create_or_update_note(
-                threat_model_id=threat_model_id,
-                name=analysis_note_name,
-                content=markdown_content,
-                description=note_description,
-            )
-            logger.info(f"Note created/updated successfully: {note.id}")
-            logger.info(f"Note name: {note.name}")
 
-            # Add metadata to the note
+            inv_note = tmi_client.create_or_update_note(
+                threat_model_id=threat_model_id,
+                name=inventory_note_name,
+                content=inventory_content,
+                description=f"Infrastructure inventory from Terraform templates in {repo_word}: {repo_list}",
+            )
+            logger.info(f"Inventory note created/updated: {inv_note.id}")
+
             artifact_metadata = aggregate_analysis_metadata(
                 analyses=analyses,
                 provider=llm_analyzer.provider,
@@ -231,24 +365,44 @@ def analyze(
             try:
                 tmi_client.set_note_metadata(
                     threat_model_id=threat_model_id,
-                    note_id=note.id,
+                    note_id=inv_note.id,
                     metadata=artifact_metadata.to_metadata_list(),
                 )
-                logger.info("Note metadata set successfully")
             except Exception as e:
-                logger.warning(f"Failed to set note metadata: {e}")
+                logger.warning(f"Failed to set inventory note metadata: {e}")
+
+            analysis_note = tmi_client.create_or_update_note(
+                threat_model_id=threat_model_id,
+                name=analysis_note_name,
+                content=analysis_content,
+                description=f"Terraform analysis for {repo_word}: {repo_list}",
+            )
+            logger.info(f"Analysis note created/updated: {analysis_note.id}")
+
+            try:
+                tmi_client.set_note_metadata(
+                    threat_model_id=threat_model_id,
+                    note_id=analysis_note.id,
+                    metadata=artifact_metadata.to_metadata_list(),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to set analysis note metadata: {e}")
         else:
-            logger.info("\n[7/7] Dry run - skipping note creation")
+            logger.info("Dry run - skipping note creation")
             if not output:
-                # Print to stdout if no output file specified
                 print("\n" + "=" * 80)
-                print("GENERATED MARKDOWN REPORT")
+                print("INVENTORY REPORT")
                 print("=" * 80 + "\n")
-                print(markdown_content)
+                print(inventory_content)
+                print("\n" + "=" * 80)
+                print("ANALYSIS REPORT")
+                print("=" * 80 + "\n")
+                print(analysis_content)
 
         # Generate and create data flow diagram
         if not skip_diagram and not dry_run:
-            logger.info("\n[8/7] Generating data flow diagram...")
+            tmi_client.update_status_note(threat_model_id, "Generating DFD diagram")
+            logger.info("\n[8/9] Generating data flow diagram...")
             try:
                 # Initialize DFD generator
                 dfd_generator = DFDLLMGenerator(config=config)
@@ -341,12 +495,13 @@ def analyze(
                 logger.info("Continuing without diagram...")
 
         elif skip_diagram:
-            logger.info("\n[8/7] Skipping diagram generation (--skip-diagram)")
+            logger.info("\n[8/9] Skipping diagram generation (--skip-diagram)")
 
         # Create threats from security issues
         if not skip_threats and not dry_run:
+            tmi_client.update_status_note(threat_model_id, "Creating threats")
             logger.info(
-                "\n[9/7] Extracting and creating threats from security issues..."
+                "\n[9/9] Extracting and creating threats from security issues..."
             )
             try:
                 threat_processor = ThreatProcessor(config)
@@ -410,14 +565,18 @@ def analyze(
                 logger.info("Continuing without threat creation...")
 
         elif skip_threats:
-            logger.info("\n[9/7] Skipping threat creation (--skip-threats)")
+            logger.info("\n[9/9] Skipping threat creation (--skip-threats)")
         elif dry_run:
-            logger.info("\n[9/7] Dry run - skipping threat creation")
+            logger.info("\n[9/9] Dry run - skipping threat creation")
 
+        tmi_client.update_status_note(threat_model_id, "Analysis complete")
         logger.info("\n" + "=" * 80)
         logger.info("Analysis complete!")
         logger.info("=" * 80)
 
+    except click.Abort:
+        logger.info("Analysis cancelled by user")
+        sys.exit(0)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
@@ -495,9 +654,8 @@ def config_info():
         print(f"OAuth IDP: {config.tmi_oauth_idp}")
         print(f"Max Repositories: {config.max_repos}")
         print(f"Clone Timeout: {config.clone_timeout}s")
-        artifact_suffix = f"({config.effective_model}, {config.timestamp})"
-        print(f"Note Name: Terraform Analysis Report {artifact_suffix}")
-        print(f"Diagram Name: Infrastructure Data Flow Diagram {artifact_suffix}")
+        print(f"LLM Model: {config.effective_model}")
+        print(f"Timestamp: {config.timestamp}")
         print(
             f"GitHub Token: {'Configured' if config.github_token else 'Not configured'}"
         )
