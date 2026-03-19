@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Suppress LiteLLM's verbose logging
 litellm.suppress_debug_info = True  # type: ignore[assignment]
-litellm.drop_params = True  # type: ignore[assignment]
+litellm.drop_params = False  # type: ignore[assignment]
 
 
 class TerraformAnalysis:
@@ -125,6 +125,7 @@ class LLMAnalyzer:
         "openai": "gpt-5.2",
         "xai": "xai/grok-4-1-fast-non-reasoning",
         "gemini": "gemini/gemini-2.0-flash",
+        "oci": "oci/xai.grok-4",
     }
 
     # LiteLLM model prefixes for each provider
@@ -133,6 +134,7 @@ class LLMAnalyzer:
         "openai": "openai/",
         "xai": "xai/",
         "gemini": "gemini/",
+        "oci": "oci/",
     }
 
     def __init__(self, config):
@@ -155,6 +157,7 @@ class LLMAnalyzer:
 
         # Set up API keys for LiteLLM based on provider
         self._configure_api_keys()
+        self.oci_kwargs = config.get_oci_completion_kwargs()
 
         # Load all phase prompts
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
@@ -493,6 +496,7 @@ class LLMAnalyzer:
                 ],
                 max_tokens=max_tokens,
                 timeout=timeout,
+                **self.oci_kwargs,
             ),
             description=f"Phase {phase_name}",
         )

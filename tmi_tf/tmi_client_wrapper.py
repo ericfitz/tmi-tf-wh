@@ -81,6 +81,7 @@ def _escape_template_patterns(content: str) -> str:
     Replacements (outside code only):
         ``${``  -> ``&#36;{``   (``$`` as HTML entity)
         ``{{``  -> ``&#123;{``  (first ``{`` as HTML entity)
+        ``}}``  -> ``&#125;}``  (first ``}`` as HTML entity)
         ``<%``  -> ``&lt;%``    (``<`` as HTML entity)
     """
     if not content:
@@ -100,6 +101,7 @@ def _escape_template_patterns(content: str) -> str:
             # Prose — escape template-injection patterns
             segment = segment.replace("${", "&#36;{")
             segment = segment.replace("{{", "&#123;{")
+            segment = segment.replace("}}", "&#125;}")
             segment = segment.replace("<%", "&lt;%")
             result.append(segment)
     return "".join(result)
@@ -112,8 +114,8 @@ def sanitize_content_for_api(content: str) -> str:
     Uses nh3 (Python equivalent of DOMPurify/bluemonday) to sanitize HTML,
     allowing only the tags and attributes accepted by the TMI platform.
     Also:
-    - Escapes template injection patterns (``${``, ``{{``, ``<%``) outside
-      code blocks so the server does not reject the content.
+    - Escapes template injection patterns (``${``, ``{{``, ``}}``, ``<%``)
+      outside code blocks so the server does not reject the content.
     - Removes control characters (U+0000-U+001F) except newline, carriage
       return, tab.
     - Removes characters above U+FFFF (emoji and supplementary Unicode).

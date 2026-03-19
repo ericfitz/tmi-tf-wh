@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Suppress LiteLLM's verbose logging
 litellm.suppress_debug_info = True  # type: ignore[assignment]
-litellm.drop_params = True  # type: ignore[assignment]
+litellm.drop_params = False  # type: ignore[assignment]
 
 
 class DFDLLMGenerator:
@@ -34,6 +34,7 @@ class DFDLLMGenerator:
         "openai": "openai/",
         "xai": "xai/",
         "gemini": "gemini/",
+        "oci": "oci/",
     }
 
     def __init__(
@@ -62,10 +63,12 @@ class DFDLLMGenerator:
             )
             self.model = self._normalize_model_name(model_name)
             self._configure_api_keys_from_config(config)
+            self.oci_kwargs = config.get_oci_completion_kwargs()
         else:
             # Backwards compatibility: direct api_key and model
             self.provider = "anthropic"
             self.model = model or "anthropic/claude-opus-4-5-20251101"
+            self.oci_kwargs: dict = {}
             if api_key:
                 os.environ["ANTHROPIC_API_KEY"] = api_key
 
@@ -158,6 +161,7 @@ class DFDLLMGenerator:
                         ],
                         max_tokens=16000,
                         timeout=180.0,
+                        **self.oci_kwargs,
                     ),
                     description="DFD generation",
                 ),

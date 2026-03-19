@@ -23,6 +23,7 @@ class Config:
         "openai": "openai/gpt-5.2",
         "xai": "xai/grok-4-1-fast-non-reasoning",
         "gemini": "gemini/gemini-2.0-flash",
+        "oci": "oci/xai.grok-4",
     }
 
     # Provider prefixes for LiteLLM
@@ -31,6 +32,7 @@ class Config:
         "openai": "openai/",
         "xai": "xai/",
         "gemini": "gemini/",
+        "oci": "oci/",
     }
 
     def __init__(self):
@@ -44,6 +46,8 @@ class Config:
         # TMI Server Configuration
         self.tmi_server_url: str = os.getenv("TMI_SERVER_URL", "https://api.tmi.dev")
         self.tmi_oauth_idp: str = os.getenv("TMI_OAUTH_IDP", "google")
+        self.tmi_client_id: Optional[str] = os.getenv("TMI_CLIENT_ID") or None
+        self.tmi_client_secret: Optional[str] = os.getenv("TMI_CLIENT_SECRET") or None
 
         # LLM Provider Configuration
         self.llm_provider: str = os.getenv("LLM_PROVIDER", "anthropic")
@@ -60,6 +64,10 @@ class Config:
 
         # Google (Gemini) API Configuration
         self.gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY") or None
+
+        # OCI Generative AI Configuration
+        self.oci_config_profile: str = os.getenv("OCI_CONFIG_PROFILE", "DEFAULT")
+        self.oci_compartment_id: Optional[str] = os.getenv("OCI_COMPARTMENT_ID") or None
 
         # Validate credentials for selected provider
         self._validate_llm_credentials()
@@ -120,11 +128,42 @@ class Config:
         elif self.llm_provider == "gemini":
             if not self.gemini_api_key:
                 raise ValueError("GEMINI_API_KEY required when LLM_PROVIDER=gemini")
+        elif self.llm_provider == "oci":
+            if not self.oci_compartment_id:
+                raise ValueError("OCI_COMPARTMENT_ID required when LLM_PROVIDER=oci")
+            oci_config_path = Path.home() / ".oci" / "config"
+            if not oci_config_path.exists():
+                logger.warning(
+                    f"OCI config file not found at {oci_config_path}. "
+                    "LiteLLM will fail unless OCI credentials are available."
+                )
         else:
             raise ValueError(
                 f"Invalid LLM_PROVIDER: {self.llm_provider}. "
-                f"Must be 'anthropic', 'openai', 'xai', or 'gemini'"
+                f"Must be 'anthropic', 'openai', 'xai', 'gemini', or 'oci'"
             )
+
+    def get_oci_completion_kwargs(self) -> dict:
+        """Return kwargs to pass to litellm.completion() for OCI provider.
+
+        For non-OCI providers, returns an empty dict so callers can always
+        unpack this into their completion() calls.
+        """
+        if self.llm_provider != "oci":
+            return {}
+        from oci.config import from_file as oci_from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+        oci_config = oci_from_file(
+            str(Path.home() / ".oci" / "config"), self.oci_config_profile
+        )
+        return {
+            "oci_region": oci_config.get("region", "us-ashburn-1"),
+            "oci_user": oci_config["user"],
+            "oci_fingerprint": oci_config["fingerprint"],
+            "oci_tenancy": oci_config["tenancy"],
+            "oci_key_file": oci_config["key_file"],
+            "oci_compartment_id": self.oci_compartment_id,
+        }
 
     def __repr__(self) -> str:
         """Return string representation of config (without secrets)."""

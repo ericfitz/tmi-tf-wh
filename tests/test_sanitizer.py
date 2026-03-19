@@ -152,7 +152,8 @@ class TestSanitizeContentForApi:
         text = "Template uses {{.Name}} for rendering"
         result = sanitize_content_for_api(text)
         assert "{{" not in result
-        assert "&#123;{.Name}" in result
+        assert "}}" not in result
+        assert "&#123;{.Name&#125;}" in result
 
     def test_erb_pattern_escaped_in_prose(self):
         text = "Uses <% erb %> syntax"

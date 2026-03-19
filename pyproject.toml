@@ -19,6 +19,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.132.0",
     "litellm>=1.80.11",
     "nh3>=0.3.3",
+    "oci>=2.168.2",
 ]
 
 [project.scripts]

@@ -18,7 +18,7 @@ from tmi_tf.retry import retry_transient_llm_call
 
 logger = logging.getLogger(__name__)
 
-litellm.drop_params = True  # type: ignore[assignment]
+litellm.drop_params = False  # type: ignore[assignment]
 
 
 class DiscoveryCategory(Enum):
@@ -315,6 +315,7 @@ class AnalysisComparer:
 
         # Configure LiteLLM
         self._configure_litellm()
+        self.oci_kwargs = config.get_oci_completion_kwargs()
 
     def _load_prompt(self, path: Path) -> str:
         """Load a prompt file."""
@@ -506,6 +507,7 @@ Return JSON with this structure:
                             },
                             {"role": "user", "content": user_prompt},
                         ],
+                        **self.oci_kwargs,
                     ),
                     description=f"Comparison normalization ({category.value})",
                 ),
@@ -717,6 +719,7 @@ Keep the summary concise (under 400 words) but insightful."""
                             },
                             {"role": "user", "content": user_prompt},
                         ],
+                        **self.oci_kwargs,
                     ),
                     description="Comparison insights generation",
                 ),

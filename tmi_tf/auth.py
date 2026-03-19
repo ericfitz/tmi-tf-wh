@@ -156,8 +156,53 @@ class TMIAuthenticator:
             if cached_token:
                 return cached_token
 
+        if self.config.tmi_oauth_idp == "tmi":
+            logger.info("Starting client_credentials authentication flow")
+            return self._perform_client_credentials_flow()
+
         logger.info("Starting OAuth authentication flow")
         return self._perform_oauth_flow()
+
+    def _perform_client_credentials_flow(self) -> str:
+        """
+        Perform OAuth 2.0 client_credentials flow for TMI IDP.
+
+        No browser or callback server needed — exchanges client_id and
+        client_secret directly for an access token.
+
+        Returns:
+            JWT access token
+        """
+        if not self.config.tmi_client_id or not self.config.tmi_client_secret:
+            raise RuntimeError(
+                "TMI_CLIENT_ID and TMI_CLIENT_SECRET must be set "
+                "when using TMI_OAUTH_IDP=tmi"
+            )
+
+        url = f"{self.config.tmi_server_url}/oauth2/token"
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self.config.tmi_client_id,
+            "client_secret": self.config.tmi_client_secret,
+        }
+
+        try:
+            response = requests.post(url, json=data)
+            response.raise_for_status()
+
+            token_data = response.json()
+            access_token = token_data.get("access_token")
+            expires_in = token_data.get("expires_in", 3600)
+
+            if not access_token:
+                raise RuntimeError("No access_token in client_credentials response")
+
+            self.token_cache.save_token(access_token, expires_in)
+            logger.info("Successfully obtained access token via client_credentials")
+            return access_token
+
+        except requests.RequestException as e:
+            raise RuntimeError(f"Client credentials authentication failed: {e}")
 
     def _generate_pkce_params(self):
         """Generate PKCE code verifier and challenge."""

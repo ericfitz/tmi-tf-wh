@@ -64,7 +64,7 @@ The TMI API client is **not** a pip dependency — it lives at `~/Projects/tmi-c
 
 ## Key Design Decisions
 
-- **LiteLLM as abstraction layer**: All LLM calls go through LiteLLM with provider-prefixed model names (e.g., `anthropic/claude-opus-4-5-20251101`). Provider switching is config-only.
+- **LiteLLM as abstraction layer**: All LLM calls go through LiteLLM with provider-prefixed model names (e.g., `anthropic/claude-opus-4-5-20251101`). Provider switching is config-only. OCI Generative AI is supported via `~/.oci/config` file authentication.
 - **Content sanitization**: All content sent to TMI API is sanitized (HTML tags stripped, control characters removed) to prevent server-side XSS rejection. See `sanitize_content_for_api()` in [tmi_client_wrapper.py](tmi_tf/tmi_client_wrapper.py).
 - **Graceful degradation**: If one repo fails analysis, the tool continues with remaining repos.
 - **Idempotent artifacts**: Notes and diagrams are created-or-updated by name, so re-running overwrites previous results for the same model.
@@ -72,6 +72,6 @@ The TMI API client is **not** a pip dependency — it lives at `~/Projects/tmi-c
 ## Configuration
 
 All config is via `.env` file (see `.env.example`). Key variables:
-- `LLM_PROVIDER` (anthropic/openai/xai/gemini) + corresponding `*_API_KEY`
+- `LLM_PROVIDER` (anthropic/openai/xai/gemini/oci) + corresponding `*_API_KEY` (or `OCI_COMPARTMENT_ID` + `~/.oci/config` for OCI)
 - `LLM_MODEL` — Optional override; auto-prefixed with provider if no `/` present
 - `TMI_SERVER_URL`, `GITHUB_TOKEN`, `MAX_REPOS`, `CLONE_TIMEOUT`

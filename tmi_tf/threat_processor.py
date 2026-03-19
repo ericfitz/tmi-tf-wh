@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Suppress LiteLLM's verbose logging
 litellm.suppress_debug_info = True  # type: ignore[assignment]
-litellm.drop_params = True  # type: ignore[assignment]
+litellm.drop_params = False  # type: ignore[assignment]
 
 
 class SecurityThreat:
@@ -81,6 +81,7 @@ class ThreatProcessor:
         "openai": "openai/",
         "xai": "xai/",
         "gemini": "gemini/",
+        "oci": "oci/",
     }
 
     def __init__(self, config: Config):
@@ -97,6 +98,7 @@ class ThreatProcessor:
         )
         self.model = self._normalize_model_name(model_name)
         self._configure_api_keys()
+        self.oci_kwargs = config.get_oci_completion_kwargs()
         self._load_prompts()
 
         # Token and cost tracking for threat extraction
@@ -210,6 +212,7 @@ class ThreatProcessor:
                         ],
                         max_tokens=16000,
                         timeout=180.0,
+                        **self.oci_kwargs,
                     ),
                     description=f"Threat extraction for {repo_name}",
                 ),
