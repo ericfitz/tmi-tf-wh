@@ -208,3 +208,9 @@ __marimo__/
 
 # Secrets
 *_api_key
+
+# Git worktrees
+.worktrees/
+
+# Superpowers brainstorming
+.superpowers/
