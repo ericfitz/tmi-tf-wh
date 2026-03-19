@@ -80,9 +80,12 @@ def _escape_template_patterns(content: str) -> str:
 
     Replacements (outside code only):
         ``${``  -> ``&#36;{``   (``$`` as HTML entity)
-        ``{{``  -> ``&#123;{``  (first ``{`` as HTML entity)
-        ``}}``  -> ``&#125;}``  (first ``}`` as HTML entity)
+        ``{{``  -> ``&#123;{``  (each extra ``{`` escaped via regex)
+        ``}}``  -> ``&#125;}``  (each extra ``}`` escaped via regex)
         ``<%``  -> ``&lt;%``    (``<`` as HTML entity)
+
+    The ``{{`` and ``}}`` escaping uses regex to handle runs of 2+ braces
+    (e.g., ``}}}`` → ``&#125;&#125;}``), avoiding residual pairs.
     """
     if not content:
         return content
@@ -100,8 +103,12 @@ def _escape_template_patterns(content: str) -> str:
         else:
             # Prose — escape template-injection patterns
             segment = segment.replace("${", "&#36;{")
-            segment = segment.replace("{{", "&#123;{")
-            segment = segment.replace("}}", "&#125;}")
+            segment = re.sub(
+                r"\{(\{+)", lambda m: "&#123;" * len(m.group(1)) + "{", segment
+            )
+            segment = re.sub(
+                r"\}(\}+)", lambda m: "&#125;" * len(m.group(1)) + "}", segment
+            )
             segment = segment.replace("<%", "&lt;%")
             result.append(segment)
     return "".join(result)

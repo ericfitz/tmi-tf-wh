@@ -283,7 +283,10 @@ class LLMAnalyzer:
             total_cost += cost
 
             if not inventory:
-                raise ValueError("Phase 1 (inventory) returned empty result")
+                raise ValueError(
+                    "Phase 1 (inventory) returned empty result. "
+                    "Check logs for finish_reason, token counts, and response preview."
+                )
 
             logger.info(
                 f"Phase 1 complete: {len(inventory.get('components', []))} components, "
@@ -423,8 +426,10 @@ class LLMAnalyzer:
 
         parsed = self._extract_json_object(response_text)
         if not parsed:
+            preview = response_text[:500] if response_text else "(empty)"
             logger.error(
-                f"Phase {phase_name}: Failed to parse JSON object from response"
+                f"Phase {phase_name}: Failed to parse JSON object from response. "
+                f"Response length: {len(response_text)} chars. Preview: {preview}"
             )
         return parsed, tokens_in, tokens_out, cost
 
@@ -485,7 +490,12 @@ class LLMAnalyzer:
         Returns:
             Tuple of (response text or None, input_tokens, output_tokens, cost)
         """
-        logger.info(f"Phase {phase_name}: Calling {self.provider} ({self.model})...")
+        prompt_chars = len(system_prompt) + len(user_prompt)
+        estimated_tokens = prompt_chars // 4
+        logger.info(
+            f"Phase {phase_name}: Calling {self.provider} ({self.model}), "
+            f"prompt ~{prompt_chars} chars (~{estimated_tokens} tokens est.)"
+        )
 
         response = retry_transient_llm_call(
             lambda: litellm.completion(
@@ -506,6 +516,12 @@ class LLMAnalyzer:
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
 
+        # Extract finish reason for diagnostics
+        choices = response.choices  # type: ignore[union-attr]
+        finish_reason = (
+            getattr(choices[0], "finish_reason", "unknown") if choices else "no_choices"
+        )
+
         # Calculate cost
         try:
             cost = litellm.completion_cost(completion_response=response)
@@ -514,18 +530,28 @@ class LLMAnalyzer:
 
         logger.info(
             f"Phase {phase_name}: {tokens_in} input, {tokens_out} output tokens, "
-            f"${cost:.4f}"
+            f"finish_reason={finish_reason}, ${cost:.4f}"
         )
+
+        if finish_reason == "length":
+            logger.warning(
+                f"Phase {phase_name}: Response truncated (finish_reason=length). "
+                f"max_tokens={max_tokens} may be insufficient."
+            )
 
         # LiteLLM returns ModelResponse with choices attribute at runtime
         content = response.choices[0].message.content  # type: ignore[union-attr]
         if not content:
-            logger.warning(f"Phase {phase_name}: Empty response from LLM")
+            logger.warning(
+                f"Phase {phase_name}: Empty response from LLM. "
+                f"finish_reason={finish_reason}, tokens_out={tokens_out}, "
+                f"model={self.model}"
+            )
             return None, tokens_in, tokens_out, cost
 
         # Save response to file for debugging
         response_file = save_llm_response(content, phase_name)
-        logger.debug(f"Phase {phase_name}: Response saved to {response_file}")
+        logger.info(f"Phase {phase_name}: Response saved to {response_file}")
 
         return content.strip(), tokens_in, tokens_out, cost
 
