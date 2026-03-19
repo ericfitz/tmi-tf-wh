@@ -67,7 +67,7 @@ The service accepts TMI webhook POSTs for any of these event types:
 
 Regardless of event type:
 - If the payload includes a specific repository ID (`resource_id` where `resource_type` is a repository), analyze only that repository
-- If no repository ID is present, analyze all repositories in the threat model
+- If no repository ID is present, analyze all repositories in the threat model that have GitHub URLs (filtered by `is_github_url()`, consistent with existing CLI behavior)
 
 ### Endpoints
 
@@ -129,7 +129,7 @@ Signature is in the `X-Webhook-Signature` header, format `sha256=<hex_digest>`.
 8. For each repo:
    a. Sparse clone to job temp dir (`.tf` and `.tfvars` files only)
    b. Detect Terraform environments
-   c. Analyze all environments found (no interactive prompt)
+   c. Analyze all environments found — behavioral change from CLI which prompts for one. In server mode, every detected environment is analyzed and included in the reports.
    d. Phase 1: Inventory extraction
    e. Phase 2: Infrastructure analysis
    f. Phase 3: Security analysis (STRIDE)
@@ -187,21 +187,24 @@ Three channels, always active where applicable:
 
 | Module | Changes |
 |--------|---------|
-| `config.py` | Add server config vars (MAX_CONCURRENT_JOBS, QUEUE_OCID, VAULT_OCID, SERVER_PORT, WEBHOOK_SECRET, LLM_API_KEY). Support Vault-sourced secrets. Map LLM_API_KEY to provider-specific env var based on LLM_PROVIDER. |
+| `config.py` | Add server config vars (MAX_CONCURRENT_JOBS, QUEUE_OCID, VAULT_OCID, SERVER_PORT, WEBHOOK_SECRET, LLM_API_KEY, TMI_CLIENT_PATH). Support Vault-sourced secrets. Map LLM_API_KEY to provider-specific env var: after Vault secrets are loaded, set `os.environ["ANTHROPIC_API_KEY"]` (or `OPENAI_API_KEY`, etc.) from `LLM_API_KEY` based on `LLM_PROVIDER`, before existing `_validate_llm_credentials()` runs. OCI provider validation must accept instance principal (IMDS) as an alternative to `~/.oci/config`. |
 | `repo_analyzer.py` | Accept per-job temp directory parameter instead of shared /tmp. Remove markdown file handling. Tighten sparse checkout to .tf and .tfvars only. |
+| `tmi_client_wrapper.py` | Make TMI client path configurable. In production, load from `/opt/tmi-tf-wh/vendor/tmi-client/`. In dev, load from `~/Projects/tmi-clients/python-client-generated` (current behavior). Resolve path from `TMI_CLIENT_PATH` env var with fallback to dev default. |
 | `cli.py` | Thin wrapper around analyzer.py's run_analysis(). Keeps all existing CLI functionality including browser-based PKCE auth. |
 
 ### Unchanged Modules
 
-`auth.py`, `llm_analyzer.py`, `dfd_llm_generator.py`, `diagram_builder.py`, `threat_processor.py`, `markdown_generator.py`, `tmi_client_wrapper.py`, `github_client.py`, `artifact_metadata.py`, `retry.py`. All prompt files unchanged.
+`auth.py`, `llm_analyzer.py`, `dfd_llm_generator.py`, `diagram_builder.py`, `threat_processor.py`, `markdown_generator.py`, `github_client.py`, `artifact_metadata.py`, `retry.py`. All prompt files unchanged.
 
 ### Core Refactor: cli.py → analyzer.py
 
 Extract the analysis pipeline from the Click command into a standalone function:
 
+The analysis pipeline is synchronous (LiteLLM, GitPython, requests are all sync). The `run_analysis()` function is synchronous; the async worker calls it via `asyncio.to_thread()` to avoid blocking the event loop.
+
 ```python
 # analyzer.py
-async def run_analysis(
+def run_analysis(
     config: Config,
     threat_model_id: str,
     repo_id: str | None = None,
@@ -215,10 +218,12 @@ async def run_analysis(
 def analyze(threat_model_id, ...):
     result = run_analysis(config, threat_model_id, temp_dir=Path(tempfile.mkdtemp()))
 
-# worker.py — thin wrapper
+# worker.py — runs sync pipeline in thread pool
 async def process_job(job: Job):
-    result = await run_analysis(config, job.threat_model_id, job.repo_id,
-                                temp_dir=job.temp_dir, callback=job.callback)
+    result = await asyncio.to_thread(
+        run_analysis, config, job.threat_model_id, job.repo_id,
+        temp_dir=job.temp_dir, callback=job.callback
+    )
 ```
 
 ## Configuration
