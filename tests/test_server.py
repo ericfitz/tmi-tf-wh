@@ -5,8 +5,8 @@ import hmac
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-from fastapi.testclient import TestClient
+import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+from fastapi.testclient import TestClient  # ty:ignore[unresolved-import]
 
 import tmi_tf.server as server_module
 

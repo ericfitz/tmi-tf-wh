@@ -4,7 +4,7 @@ import hashlib
 import hmac
 from unittest.mock import MagicMock, patch
 
-import requests
+import requests  # ty:ignore[unresolved-import]
 
 from tmi_tf.addon_callback import AddonCallback
 

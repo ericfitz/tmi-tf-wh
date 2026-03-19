@@ -3,7 +3,7 @@
 import hashlib
 import hmac
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.webhook_handler import (
     extract_job_id,
