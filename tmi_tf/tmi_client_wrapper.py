@@ -10,13 +10,22 @@ from typing import Callable, List, Optional, TypeVar, Union
 import nh3  # type: ignore[import-untyped]
 
 # Add tmi-client to path
-tmi_client_path = Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
+import os as _os
+
+_tmi_client_path_str = _os.getenv("TMI_CLIENT_PATH")
+if _tmi_client_path_str:
+    tmi_client_path = Path(_tmi_client_path_str)
+else:
+    tmi_client_path = (
+        Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
+    )
+
 if tmi_client_path.exists():
     sys.path.insert(0, str(tmi_client_path))
 else:
     raise ImportError(
         f"TMI Python client not found at {tmi_client_path}. "
-        "Please ensure it's available at ~/Projects/tmi-clients/python-client-generated"
+        "Set TMI_CLIENT_PATH environment variable or ensure client is at default location."
     )
 
 import tmi_client  # noqa: E402  # type: ignore[import-not-found]
