@@ -17,7 +17,7 @@ The TMI platform is deployed on OCI using Terraform, with an OKE cluster, OCI Va
 - **Exposure:** ClusterIP service only — no public LoadBalancer. TMI API calls the webhook internally at `http://tmi-tf-wh:8080/webhook`. TMI will be updated to allow HTTP webhook URLs for intra-cluster communication.
 - **LLM provider:** OCI Generative AI services only (no external LLM API calls needed from the cluster).
 - **Container images:** Must use OCIR only — no DockerHub or other non-Oracle registries.
-- **Base images:** `container-registry.oracle.com/os/oraclelinux:9` (build) and `oraclelinux:9-slim` (runtime), matching TMI server and Redis Dockerfiles.
+- **Base images:** `container-registry.oracle.com/os/oraclelinux:9` (build) and `container-registry.oracle.com/os/oraclelinux:9-slim` (runtime), matching TMI server and Redis Dockerfiles.
 - **Architecture:** arm64 (aarch64) — the OKE node pool uses `VM.Standard.A1.Flex`.
 - **TMI Python client:** Cloned from its source repo at container image build time (not vendored or published as a package).
 - **Deployment pattern:** Optional addon gated by `tmi_tf_wh_enabled` variable (same as `tmi_ux_enabled`).
@@ -31,15 +31,16 @@ The TMI platform is deployed on OCI using Terraform, with an OKE cluster, OCI Va
 
 **`Dockerfile`** — Multi-stage build:
 
-- **Build stage** (`oraclelinux:9`):
+- **Build stage** (`container-registry.oracle.com/os/oraclelinux:9`):
   - Install Python 3, pip, git via `dnf`
   - Clone the TMI Python client from its source repo
   - Copy tmi-tf-wh source code
   - Run `pip install .` to install the app and all dependencies
-- **Runtime stage** (`oraclelinux:9-slim`):
+- **Runtime stage** (`container-registry.oracle.com/os/oraclelinux:9-slim`):
   - Install Python 3 runtime and git via `microdnf` (git needed at runtime for sparse-cloning repos during analysis)
   - Copy installed Python packages from build stage
-  - Create non-root `tmi-tf` user
+  - Create non-root `tmi-tf` user with a writable home directory (for token cache at `~/.tmi-tf/`)
+  - Set `HOME` env var to the user's home directory
   - Entrypoint: `uvicorn tmi_tf.server:app --host 0.0.0.0 --port 8080`
   - Expose port 8080
 
@@ -64,16 +65,31 @@ All files under `deploy/` are removed:
 
 These represented a standalone VM deployment that is being replaced by the OKE-based deployment in the TMI repo.
 
-#### No application code changes
+#### Application code changes
 
-The existing application code (`server.py`, `worker.py`, `queue_client.py`, `vault_client.py`, `config.py`) already supports:
+**`config.py`** — `get_oci_completion_kwargs()` (lines 194-214):
+
+This method unconditionally reads `~/.oci/config` to construct OCI credentials for LiteLLM calls. On OKE with workload identity, there is no `~/.oci/config`. The method must be updated to support instance principal / workload identity authentication, falling back to config file — matching the pattern already used in `vault_client.py:_get_oci_signer()`.
+
+The updated method should:
+1. Try instance principal signer first (works with OKE workload identity)
+2. Fall back to `~/.oci/config` if instance principal is unavailable
+3. Extract region, user, fingerprint, tenancy, and key_file from whichever signer is used
+
+**`config.py`** — `_oci_credentials_available()` (lines 172-192):
+
+This method checks for `~/.oci/config` or IMDS at `169.254.169.254`. On OKE, IMDS may be reachable at the node level but workload identity uses the Kubernetes service account token. The check should also attempt `InstancePrincipalsSecurityTokenSigner` as a credential availability signal.
+
+#### No changes needed
+
+The remaining application code (`server.py`, `worker.py`, `queue_client.py`, `vault_client.py`) already supports:
 
 - OCI Queue for job dispatch
-- OCI Vault for secret loading (with instance principal / workload identity)
+- OCI Vault for secret loading (with instance principal / workload identity via `_get_oci_signer()`)
 - Configurable via environment variables
 - Health check endpoint at `/health`
 
-No modifications are needed for OKE deployment. The `TMI_CLIENT_PATH` env var (already in `config.py`) will point to the TMI client location inside the container.
+The `TMI_CLIENT_PATH` env var (already in `config.py`) will point to the TMI client location inside the container.
 
 ### 2. TMI repo (ericfitz/tmi)
 
@@ -103,6 +119,12 @@ variable "tmi_tf_wh_cpu_request" { default = "500m" }
 variable "tmi_tf_wh_memory_request" { default = "1Gi" }
 variable "tmi_tf_wh_cpu_limit" { default = "2" }
 variable "tmi_tf_wh_memory_limit" { default = "4Gi" }
+
+variable "tmi_tf_wh_extra_env_vars" {
+  description = "Additional environment variables for tmi-tf-wh"
+  type        = map(string)
+  default     = {}
+}
 ```
 
 #### `modules/kubernetes/oci/k8s_resources.tf` — new resources
@@ -161,7 +183,7 @@ resource "oci_queue_queue" "tmi_tf_wh" {
   count                            = var.tmi_tf_wh_enabled ? 1 : 0
   compartment_id                   = var.compartment_id
   display_name                     = "${var.name_prefix}-tf-wh-queue"
-  visibility_in_seconds            = 900
+  visibility_in_seconds            = 3600  # Must be >= JOB_TIMEOUT to prevent duplicate processing
   retention_in_seconds             = 86400
   dead_letter_queue_delivery_count = 3
 }
@@ -183,9 +205,10 @@ statements = concat(
 
 **Pass-through to kubernetes module:**
 ```hcl
-tmi_tf_wh_enabled    = var.tmi_tf_wh_enabled
-tmi_tf_wh_image_url  = var.tmi_tf_wh_image_url
-tmi_tf_wh_queue_ocid = var.tmi_tf_wh_enabled ? oci_queue_queue.tmi_tf_wh[0].id : ""
+tmi_tf_wh_enabled        = var.tmi_tf_wh_enabled
+tmi_tf_wh_image_url      = var.tmi_tf_wh_image_url
+tmi_tf_wh_queue_ocid     = var.tmi_tf_wh_enabled ? oci_queue_queue.tmi_tf_wh[0].id : ""
+tmi_tf_wh_extra_env_vars = var.tmi_tf_wh_extra_env_vars
 ```
 
 #### `environments/oci-public/variables.tf` — new variables
@@ -202,6 +225,12 @@ variable "tmi_tf_wh_image_url" {
   type        = string
   default     = null
 }
+
+variable "tmi_tf_wh_extra_env_vars" {
+  description = "Additional environment variables for tmi-tf-wh"
+  type        = map(string)
+  default     = {}
+}
 ```
 
 #### `environments/oci-public/terraform.tfvars.example` — new section
@@ -216,7 +245,7 @@ variable "tmi_tf_wh_image_url" {
 
 #### `environments/oci-private/` — identical changes
 
-Same additions to `main.tf`, `variables.tf`, and `terraform.tfvars.example` as oci-public.
+Same additions to `main.tf`, `variables.tf`, and `terraform.tfvars.example` as oci-public, except the OCIR container repository uses `is_public = false` (matching the oci-private pattern for restricted access).
 
 ## Build Process
 
