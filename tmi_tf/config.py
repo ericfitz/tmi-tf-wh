@@ -53,6 +53,19 @@ class Config:
         self.llm_provider: str = os.getenv("LLM_PROVIDER", "anthropic")
         self.llm_model: Optional[str] = os.getenv("LLM_MODEL")
 
+        # Map generic LLM_API_KEY to provider-specific env var
+        llm_api_key = os.getenv("LLM_API_KEY")
+        if llm_api_key:
+            key_map = {
+                "anthropic": "ANTHROPIC_API_KEY",
+                "openai": "OPENAI_API_KEY",
+                "xai": "XAI_API_KEY",
+                "gemini": "GEMINI_API_KEY",
+            }
+            target = key_map.get(self.llm_provider)
+            if target:
+                os.environ[target] = llm_api_key
+
         # Anthropic (Claude) API Configuration
         self.anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY") or None
 
@@ -91,6 +104,19 @@ class Config:
         self.cache_dir = Path.home() / ".tmi-tf"
         self.cache_dir.mkdir(exist_ok=True)
         self.token_cache_file = self.cache_dir / "token.json"
+
+        # Server configuration
+        self.max_concurrent_jobs: int = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
+        self.job_timeout: int = int(os.getenv("JOB_TIMEOUT", "3600"))
+        self.max_message_age_hours: int = int(os.getenv("MAX_MESSAGE_AGE_HOURS", "24"))
+        self.server_port: int = int(os.getenv("SERVER_PORT", "8080"))
+        self.webhook_secret: Optional[str] = os.getenv("WEBHOOK_SECRET") or None
+        self.webhook_subscription_id: Optional[str] = (
+            os.getenv("WEBHOOK_SUBSCRIPTION_ID") or None
+        )
+        self.queue_ocid: Optional[str] = os.getenv("QUEUE_OCID") or None
+        self.vault_ocid: Optional[str] = os.getenv("VAULT_OCID") or None
+        self.tmi_client_path: Optional[str] = os.getenv("TMI_CLIENT_PATH") or None
 
     def get_llm_model(self) -> str:
         """Get the LLM model with proper provider prefix for LiteLLM.
@@ -131,10 +157,9 @@ class Config:
         elif self.llm_provider == "oci":
             if not self.oci_compartment_id:
                 raise ValueError("OCI_COMPARTMENT_ID required when LLM_PROVIDER=oci")
-            oci_config_path = Path.home() / ".oci" / "config"
-            if not oci_config_path.exists():
+            if not self._oci_credentials_available():
                 logger.warning(
-                    f"OCI config file not found at {oci_config_path}. "
+                    "OCI credentials not found via ~/.oci/config or IMDS. "
                     "LiteLLM will fail unless OCI credentials are available."
                 )
         else:
@@ -142,6 +167,29 @@ class Config:
                 f"Invalid LLM_PROVIDER: {self.llm_provider}. "
                 f"Must be 'anthropic', 'openai', 'xai', 'gemini', or 'oci'"
             )
+
+    @staticmethod
+    def _oci_credentials_available() -> bool:
+        """Check if OCI credentials are available via ~/.oci/config or IMDS.
+
+        Returns True if either the OCI config file exists or the instance metadata
+        service (IMDS) is reachable (indicating we're running on OCI compute).
+        """
+        import urllib.request
+
+        oci_config_path = Path.home() / ".oci" / "config"
+        if oci_config_path.exists():
+            return True
+        # Check IMDS (OCI instance metadata service)
+        try:
+            req = urllib.request.Request(
+                "http://169.254.169.254/opc/v2/instance/",
+                headers={"Authorization": "Bearer Oracle"},
+            )
+            with urllib.request.urlopen(req, timeout=2):
+                return True
+        except Exception:
+            return False
 
     def get_oci_completion_kwargs(self) -> dict:
         """Return kwargs to pass to litellm.completion() for OCI provider.
