@@ -20,6 +20,8 @@ dependencies = [
     "litellm>=1.80.11",
     "nh3>=0.3.3",
     "oci>=2.168.2",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [project.scripts]
