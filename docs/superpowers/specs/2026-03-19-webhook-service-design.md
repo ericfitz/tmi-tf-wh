@@ -82,12 +82,14 @@ Regardless of event type:
 1. Load balancer terminates TLS, forwards HTTP to instance
 2. FastAPI receives POST `/webhook`
 3. Log full request headers and payload at INFO level
-4. Read raw body, verify HMAC signature (`X-Webhook-Signature` header, SHA256, using `WEBHOOK_SECRET`). Reject with 401 if invalid.
-5. Parse JSON payload
-6. If `type` is `webhook.challenge`: respond with `{"challenge": "<value>"}` and return
-7. Extract `threat_model_id`, `resource_id` (optional), `event_type`, `callback_url` (addon only), `invocation_id` (addon only)
-8. Publish job message to OCI Queue
-9. Return `200 {"status": "accepted"}`
+4. If `WEBHOOK_SUBSCRIPTION_ID` is configured: validate `X-Webhook-Subscription-Id` header matches (case-insensitive string compare). Reject with 403 if mismatch.
+5. Read raw body, verify HMAC signature (`X-Webhook-Signature` header, SHA256, using `WEBHOOK_SECRET`). Reject with 401 if invalid.
+6. Parse JSON payload
+7. If `type` is `webhook.challenge`: respond with `{"challenge": "<value>"}` and return
+8. Extract job ID: use `X-Invocation-Id` header if present, otherwise `X-Webhook-Delivery-Id`. Reject with 403 if neither is present.
+9. Extract `threat_model_id`, `resource_id` (optional), `event_type`, `callback_url` (addon only), `invocation_id` (addon only)
+10. Publish job message to OCI Queue (includes job ID, timestamp, and all extracted fields)
+11. Return `200 {"status": "accepted", "job_id": "<job_id>"}`
 
 ### HMAC Verification
 
@@ -114,19 +116,21 @@ Signature is in the `X-Webhook-Signature` header, format `sha256=<hex_digest>`.
 - Polls OCI Queue for messages
 - **Configurable max concurrency**: `MAX_CONCURRENT_JOBS`, default 3
 - Each job gets an isolated temp directory (`/tmp/tmi-tf-<job-id>/`), cleaned up on completion
+- Each job is wrapped in a timeout (`JOB_TIMEOUT`, default 600s). On timeout, the job is cancelled and treated as a failure.
 
 ### Job Lifecycle
 
 1. Worker dequeues message from OCI Queue
-2. Create temp directory `/tmp/tmi-tf-<job-id>/`
-3. If addon invocation: send callback `in_progress` to `callback_url`
-4. Authenticate with TMI via client_credentials
-5. Fetch threat model
-6. Update TMI status note: "Analysis starting..."
-7. Determine repos to analyze:
+2. Check message age against `MAX_MESSAGE_AGE_HOURS`. If the message is older than the cutoff, log a warning, delete the message from the queue, and skip to the next message. No status updates attempted — the request is too stale for them to be useful.
+3. Create temp directory `/tmp/tmi-tf-<job-id>/`
+4. If addon invocation: send callback `in_progress` to `callback_url`
+5. Authenticate with TMI via client_credentials
+6. Fetch threat model
+7. Update TMI status note: "Analysis starting..."
+8. Determine repos to analyze:
    - If `resource_id` present: fetch and analyze only that repo
    - Otherwise: fetch and analyze all repos (up to `MAX_REPOS`)
-8. For each repo:
+9. For each repo:
    a. Sparse clone to job temp dir (`.tf` and `.tfvars` files only)
    b. Detect Terraform environments
    c. Analyze all environments found — behavioral change from CLI which prompts for one. In server mode, every detected environment is analyzed and included in the reports.
@@ -134,18 +138,33 @@ Signature is in the `X-Webhook-Signature` header, format `sha256=<hex_digest>`.
    e. Phase 2: Infrastructure analysis
    f. Phase 3: Security analysis (STRIDE)
    g. Update status note with progress
-9. Generate reports → create/update TMI notes
-10. Generate DFD → create/update TMI diagram
-11. Create threat objects
-12. Update status note: "Complete"
-13. If addon invocation: send callback `completed`
-14. Delete queue message
-15. Clean up temp directory
+10. Generate reports → create/update TMI notes
+11. Generate DFD → create/update TMI diagram
+12. Create threat objects
+13. Update status note: "Complete"
+14. If addon invocation: send callback `completed`
+15. Delete queue message
+16. Clean up temp directory
+
+### Job Timeout
+
+The worker wraps each job in a `JOB_TIMEOUT` deadline. If the timeout fires:
+
+1. Cancel the running analysis (best-effort)
+2. Delete the queue message immediately — do not allow the message to become visible again for reprocessing, since a timed-out job is unlikely to succeed on retry
+3. Clean up temp directory
+4. Fire-and-forget status updates (non-blocking, with short individual timeouts):
+   - Update TMI status note with timeout error (best-effort, do not block on failure)
+   - Send addon callback `failed` if applicable (best-effort, do not block on failure)
+
+The timeout failure path must not block on TMI API availability. If status updates fail, log the failure and proceed with cleanup. The job must be fully cleaned up and the worker slot released regardless of whether status reporting succeeds.
 
 ### Error Handling
 
 | Failure | Behavior |
 |---------|----------|
+| Subscription ID mismatch | 403, not enqueued |
+| Missing job ID headers | 403, not enqueued (neither `X-Invocation-Id` nor `X-Webhook-Delivery-Id` present) |
 | HMAC verification fails | 401, not enqueued |
 | Invalid payload | 400, not enqueued |
 | Queue publish fails | 500, TMI retries delivery |
@@ -153,6 +172,8 @@ Signature is in the `X-Webhook-Signature` header, format `sha256=<hex_digest>`.
 | TMI auth fails during job | Job fails, message returns to queue after visibility timeout, retried up to 3x then DLQ |
 | LLM API error | retry.py handles transient errors; persistent failure → job fails → DLQ |
 | Git clone fails | Job fails for that repo, continues with remaining repos |
+| Message older than MAX_MESSAGE_AGE_HOURS | Message deleted immediately, no processing, no status updates, logged as warning |
+| Job exceeds JOB_TIMEOUT | Job cancelled, queue message deleted (no retry), best-effort status updates, worker slot released |
 | Worker crashes mid-job | Queue message becomes visible after timeout → reprocessed |
 | Service process crashes | systemd restarts, workers resume polling, unfinished jobs reprocessed |
 
@@ -178,7 +199,7 @@ Three channels, always active where applicable:
 | `webhook_handler.py` | HMAC signature verification, challenge response, payload parsing into Job objects. |
 | `queue_client.py` | Wraps OCI Queue SDK. Publish, consume, delete messages, extend visibility. |
 | `worker.py` | Async worker pool. Polls queue, manages concurrency semaphore, dispatches to analyzer. |
-| `job.py` | Job dataclass: threat_model_id, repo_id, event_type, callback_url, invocation_id, temp_dir. |
+| `job.py` | Job dataclass: job_id (from `X-Invocation-Id` or `X-Webhook-Delivery-Id`), threat_model_id, repo_id, event_type, callback_url, invocation_id, enqueued_at, temp_dir. Job ID used for temp directory naming (`/tmp/tmi-tf-<job-id>/`), structured log correlation, and the `/status` endpoint. |
 | `vault_client.py` | Fetches secrets from OCI Vault at startup via instance principal (IMDS) or ~/.oci/config (dev). |
 | `addon_callback.py` | Sends status updates to TMI callback URL with HMAC signature. |
 | `analyzer.py` | Extracted analysis pipeline from cli.py. Shared by CLI and webhook worker. |
@@ -241,6 +262,9 @@ async def process_job(job: Job):
 | `SERVER_PORT` | 8080 | Uvicorn listen port |
 | `QUEUE_OCID` | (required in server mode) | OCI Queue OCID |
 | `VAULT_OCID` | (required in server mode) | OCI Vault OCID |
+| `WEBHOOK_SUBSCRIPTION_ID` | (optional) | Expected webhook subscription ID (UUIDv4). If set, validates `X-Webhook-Subscription-Id` header matches (case-insensitive). Rejects with 403 if mismatch. |
+| `JOB_TIMEOUT` | 3600 | Max seconds for a job to complete. Job is failed and removed from queue if exceeded. |
+| `MAX_MESSAGE_AGE_HOURS` | 24 | Max age of a queue message in hours. Messages older than this are discarded without processing. |
 | `CLONE_TIMEOUT` | 300 | Git clone timeout in seconds |
 
 ### Secrets (OCI Vault)
