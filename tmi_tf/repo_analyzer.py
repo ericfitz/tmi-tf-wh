@@ -210,13 +210,19 @@ class RepositoryAnalyzer:
         return all_files
 
     @contextmanager
-    def clone_repository_sparse(self, repo_url: str, repo_name: str):
+    def clone_repository_sparse(
+        self, repo_url: str, repo_name: str, base_temp_dir: Optional[Path] = None
+    ):
         """
         Clone repository with sparse checkout for Terraform and documentation files.
 
         Args:
             repo_url: Repository URL
             repo_name: Repository name (for logging)
+            base_temp_dir: Optional base directory for the clone. When provided,
+                the clone is created as a subdirectory named ``clone-{repo_name}``
+                under this path. When omitted, a temporary directory is created
+                in the system temp dir.
 
         Yields:
             TerraformRepository object or None if no Terraform files found
@@ -224,7 +230,11 @@ class RepositoryAnalyzer:
         Raises:
             Exception: If clone fails
         """
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{repo_name}-")).resolve()
+        if base_temp_dir:
+            temp_dir = (base_temp_dir / f"clone-{repo_name}").resolve()
+            temp_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{repo_name}-")).resolve()
         logger.info(f"Cloning {repo_name} to {temp_dir}")
 
         try:
