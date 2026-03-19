@@ -193,10 +193,97 @@ class TestOCIValidation:
                 assert result is True
 
     def test_oci_credentials_available_returns_false_when_neither(self):
-        """_oci_credentials_available returns False when neither file nor IMDS available."""
+        """_oci_credentials_available returns False when file, instance principal, and IMDS all fail."""
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch(
+                "oci.auth.signers.InstancePrincipalsSecurityTokenSigner",
+                side_effect=Exception("not on OCI"),
+            ):
+                with patch(
+                    "urllib.request.urlopen",
+                    side_effect=Exception("connection refused"),
+                ):
+                    result = Config._oci_credentials_available()
+                    assert result is False
+
+    def test_oci_credentials_available_checks_instance_principal(self):
+        """_oci_credentials_available returns True when instance principal signer works."""
         with patch("pathlib.Path.exists", return_value=False):
             with patch(
                 "urllib.request.urlopen", side_effect=Exception("connection refused")
             ):
-                result = Config._oci_credentials_available()
-                assert result is False
+                mock_signer = MagicMock()
+                with patch(
+                    "oci.auth.signers.InstancePrincipalsSecurityTokenSigner",
+                    return_value=mock_signer,
+                ):
+                    result = Config._oci_credentials_available()
+                    assert result is True
+
+
+class TestOCICompletionKwargs:
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "oci",
+            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
+        },
+        clear=False,
+    )
+    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
+    def test_returns_empty_for_non_oci_provider(self, mock_creds):
+        config = Config()
+        config.llm_provider = "anthropic"
+        result = config.get_oci_completion_kwargs()
+        assert result == {}
+
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "oci",
+            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
+        },
+        clear=False,
+    )
+    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
+    def test_uses_instance_principal_when_no_config_file(self, mock_creds):
+        config = Config()
+        mock_signer = MagicMock()
+        mock_signer.region = "us-phoenix-1"
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch(
+                "oci.auth.signers.InstancePrincipalsSecurityTokenSigner",
+                return_value=mock_signer,
+            ):
+                result = config.get_oci_completion_kwargs()
+                assert result["oci_region"] == "us-phoenix-1"
+                assert result["oci_compartment_id"] == "ocid1.compartment.oc1..test"
+                assert result["oci_signer"] is mock_signer
+
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "oci",
+            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
+        },
+        clear=False,
+    )
+    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
+    def test_falls_back_to_config_file(self, mock_creds):
+        config = Config()
+        mock_oci_config = {
+            "region": "us-ashburn-1",
+            "user": "ocid1.user.oc1..test",
+            "fingerprint": "aa:bb:cc",
+            "tenancy": "ocid1.tenancy.oc1..test",
+            "key_file": "/path/to/key.pem",
+        }
+        with patch("pathlib.Path.exists", return_value=True):
+            with patch("oci.config.from_file", return_value=mock_oci_config):
+                result = config.get_oci_completion_kwargs()
+                assert result["oci_region"] == "us-ashburn-1"
+                assert result["oci_user"] == "ocid1.user.oc1..test"
+                assert result["oci_fingerprint"] == "aa:bb:cc"
+                assert result["oci_tenancy"] == "ocid1.tenancy.oc1..test"
+                assert result["oci_key_file"] == "/path/to/key.pem"
+                assert result["oci_compartment_id"] == "ocid1.compartment.oc1..test"

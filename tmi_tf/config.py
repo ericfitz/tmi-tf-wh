@@ -159,7 +159,7 @@ class Config:
                 raise ValueError("OCI_COMPARTMENT_ID required when LLM_PROVIDER=oci")
             if not self._oci_credentials_available():
                 logger.warning(
-                    "OCI credentials not found via ~/.oci/config or IMDS. "
+                    "OCI credentials not found via ~/.oci/config, instance principal, or IMDS. "
                     "LiteLLM will fail unless OCI credentials are available."
                 )
         else:
@@ -170,16 +170,28 @@ class Config:
 
     @staticmethod
     def _oci_credentials_available() -> bool:
-        """Check if OCI credentials are available via ~/.oci/config or IMDS.
+        """Check if OCI credentials are available.
 
-        Returns True if either the OCI config file exists or the instance metadata
-        service (IMDS) is reachable (indicating we're running on OCI compute).
+        Checks in order: ~/.oci/config file, instance principal signer
+        (works with OKE workload identity), IMDS metadata service.
+        Returns True if any credential source is available.
         """
         import urllib.request
 
+        # Check for OCI config file
         oci_config_path = Path.home() / ".oci" / "config"
         if oci_config_path.exists():
             return True
+
+        # Check instance principal (OKE workload identity)
+        try:
+            from oci.auth.signers import InstancePrincipalsSecurityTokenSigner  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+            InstancePrincipalsSecurityTokenSigner()
+            return True
+        except Exception:
+            pass
+
         # Check IMDS (OCI instance metadata service)
         try:
             req = urllib.request.Request(
@@ -196,22 +208,41 @@ class Config:
 
         For non-OCI providers, returns an empty dict so callers can always
         unpack this into their completion() calls.
+
+        Tries instance principal (OKE workload identity) first, then
+        falls back to ~/.oci/config — matching vault_client._get_oci_signer().
         """
         if self.llm_provider != "oci":
             return {}
-        from oci.config import from_file as oci_from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
-        oci_config = oci_from_file(
-            str(Path.home() / ".oci" / "config"), self.oci_config_profile
-        )
-        return {
-            "oci_region": oci_config.get("region", "us-ashburn-1"),
-            "oci_user": oci_config["user"],
-            "oci_fingerprint": oci_config["fingerprint"],
-            "oci_tenancy": oci_config["tenancy"],
-            "oci_key_file": oci_config["key_file"],
-            "oci_compartment_id": self.oci_compartment_id,
-        }
+        oci_config_path = Path.home() / ".oci" / "config"
+        if oci_config_path.exists():
+            from oci.config import from_file as oci_from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+            oci_config = oci_from_file(str(oci_config_path), self.oci_config_profile)
+            return {
+                "oci_region": oci_config.get("region", "us-ashburn-1"),
+                "oci_user": oci_config["user"],
+                "oci_fingerprint": oci_config["fingerprint"],
+                "oci_tenancy": oci_config["tenancy"],
+                "oci_key_file": oci_config["key_file"],
+                "oci_compartment_id": self.oci_compartment_id,
+            }
+
+        # Instance principal (OKE workload identity)
+        try:
+            from oci.auth.signers import InstancePrincipalsSecurityTokenSigner  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+            signer = InstancePrincipalsSecurityTokenSigner()
+            region = getattr(signer, "region", None) or "us-ashburn-1"
+            return {
+                "oci_region": region,
+                "oci_compartment_id": self.oci_compartment_id,
+                "oci_signer": signer,
+            }
+        except Exception as e:
+            logger.error("No OCI credentials available for LLM calls: %s", e)
+            return {}
 
     def __repr__(self) -> str:
         """Return string representation of config (without secrets)."""
