@@ -1,0 +1,82 @@
+# Multi-stage Oracle Linux tmi-tf-wh build
+# Builds a Python FastAPI webhook analyzer for OKE deployment
+#
+# Build: docker buildx build --platform linux/arm64 -t <tag> .
+# Run:   docker run -p 8080:8080 <tag>
+
+# Stage 1: Build environment
+FROM container-registry.oracle.com/os/oraclelinux:9 AS builder
+
+LABEL stage="builder"
+
+# Install Python, pip, git, and build dependencies
+RUN dnf -y update && \
+    dnf -y install \
+        python3 \
+        python3-pip \
+        python3-devel \
+        gcc \
+        git \
+        ca-certificates && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+
+# Clone TMI Python client
+ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
+ARG TMI_CLIENT_REF=main
+RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
+
+WORKDIR /app
+
+# Upgrade pip to ensure PEP 517 build support (hatchling backend)
+RUN pip3 install --no-cache-dir --upgrade pip
+
+# Copy full source (pyproject.toml + tmi_tf package)
+COPY pyproject.toml ./
+COPY tmi_tf/ tmi_tf/
+
+# Install the app and all dependencies
+RUN pip3 install --no-cache-dir --prefix=/install .
+
+# Stage 2: Runtime image
+FROM container-registry.oracle.com/os/oraclelinux:9-slim
+
+LABEL maintainer="TMI Security Team"
+LABEL org.opencontainers.image.title="tmi-tf-wh"
+LABEL org.opencontainers.image.description="TMI Terraform Webhook Analyzer"
+
+ARG BUILD_DATE
+ARG GIT_COMMIT
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+
+# Install runtime dependencies
+RUN microdnf -y update && \
+    microdnf -y install \
+        python3 \
+        git \
+        ca-certificates && \
+    microdnf clean all && \
+    rm -rf /var/cache/yum
+
+# Create non-root user with writable home directory
+RUN groupadd -r tmi-tf && \
+    useradd -r -g tmi-tf -m -d /home/tmi-tf -s /sbin/nologin tmi-tf
+
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy TMI Python client
+COPY --from=builder /opt/tmi-clients/python-client-generated /opt/tmi-client
+
+# Set environment
+ENV HOME=/home/tmi-tf
+ENV TMI_CLIENT_PATH=/opt/tmi-client
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+USER tmi-tf:tmi-tf
+WORKDIR /home/tmi-tf
+
+ENTRYPOINT ["python3", "-m", "uvicorn", "tmi_tf.server:app", "--host", "0.0.0.0", "--port", "8080"]
