@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional, TypeVar, Union
 
-import nh3  # type: ignore[import-untyped]
+import nh3  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
 
 # Add tmi-client to path
 import os as _os

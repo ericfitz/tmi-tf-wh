@@ -7,8 +7,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, Request  # ty:ignore[unresolved-import]
+from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import get_config
 from tmi_tf.job import Job

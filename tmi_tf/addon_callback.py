@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 
-import requests
+import requests  # ty:ignore[unresolved-import]
 
 logger = logging.getLogger(__name__)
 

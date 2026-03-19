@@ -18,7 +18,7 @@ VAULT_SECRET_MAP = {
 def _get_oci_signer():  # type: ignore[return]
     """Return an OCI signer, preferring instance principal over config file."""
     try:
-        from oci.auth.signers import InstancePrincipalsSecurityTokenSigner  # pyright: ignore[reportMissingImports]
+        from oci.auth.signers import InstancePrincipalsSecurityTokenSigner  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
         signer = InstancePrincipalsSecurityTokenSigner()
         logger.debug("Using OCI instance principal signer")
@@ -29,8 +29,8 @@ def _get_oci_signer():  # type: ignore[return]
             e,
         )
 
-    from oci.config import from_file  # pyright: ignore[reportMissingImports]
-    from oci.signer import Signer  # pyright: ignore[reportMissingImports]
+    from oci.config import from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    from oci.signer import Signer  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
     config = from_file()
     signer = Signer(
@@ -46,7 +46,7 @@ def _get_oci_signer():  # type: ignore[return]
 
 def _get_secrets_client():  # type: ignore[return]
     """Create and return an OCI SecretsClient using the appropriate signer."""
-    from oci.secrets import SecretsClient  # pyright: ignore[reportMissingImports]
+    from oci.secrets import SecretsClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
     signer = _get_oci_signer()
     return SecretsClient(config={}, signer=signer)

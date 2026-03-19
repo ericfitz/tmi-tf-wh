@@ -24,7 +24,7 @@ class QueueClient:
     def _get_client(self):  # type: ignore[return]
         """Lazy-initialize and return the OCI QueueClient."""
         if self._client is None:
-            from oci.queue import QueueClient as OCIQueueClient  # pyright: ignore[reportMissingImports]
+            from oci.queue import QueueClient as OCIQueueClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
             from tmi_tf.vault_client import _get_oci_signer
 
@@ -34,7 +34,7 @@ class QueueClient:
 
     def publish(self, message: dict) -> None:
         """Serialize message to JSON and publish it to the queue."""
-        from oci.queue.models import PutMessagesDetails, PutMessagesDetailsEntry  # pyright: ignore[reportMissingImports]
+        from oci.queue.models import PutMessagesDetails, PutMessagesDetailsEntry  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
         client = self._get_client()
         body = json.dumps(message)
