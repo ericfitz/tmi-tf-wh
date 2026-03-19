@@ -121,10 +121,10 @@ class LLMAnalyzer:
 
     # Default models for each provider
     DEFAULT_MODELS = {
-        "anthropic": "claude-opus-4-5-20251101",
-        "openai": "gpt-5.2",
-        "xai": "xai/grok-4-1-fast-non-reasoning",
-        "gemini": "gemini/gemini-2.0-flash",
+        "anthropic": "claude-opus-4-6",
+        "openai": "gpt-5.4",
+        "xai": "xai/grok-4-1-fast-reasoning",
+        "gemini": "gemini/gemini-3.1-pro-preview",
         "oci": "oci/xai.grok-4",
     }
 

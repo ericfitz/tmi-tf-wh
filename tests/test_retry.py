@@ -26,7 +26,7 @@ class TestRetryTransientLlmCall:
 
     def test_retries_on_service_unavailable(self):
         exc = litellm.ServiceUnavailableError(
-            message="503", llm_provider="gemini", model="gemini/gemini-2.0-flash"
+            message="503", llm_provider="gemini", model="gemini/gemini-3.1-pro-preview"
         )
         call = MagicMock(side_effect=[exc, "result"])
         with patch("tmi_tf.retry.time.sleep"):
@@ -36,7 +36,7 @@ class TestRetryTransientLlmCall:
 
     def test_retries_on_rate_limit(self):
         exc = litellm.RateLimitError(
-            message="429", llm_provider="anthropic", model="anthropic/claude-opus-4-5"
+            message="429", llm_provider="anthropic", model="anthropic/claude-opus-4-6"
         )
         call = MagicMock(side_effect=[exc, "result"])
         with patch("tmi_tf.retry.time.sleep"):
@@ -86,7 +86,7 @@ class TestRetryTransientLlmCall:
 
     def test_raises_after_retry_exhausted(self):
         exc = litellm.ServiceUnavailableError(
-            message="503", llm_provider="gemini", model="gemini/gemini-2.0-flash"
+            message="503", llm_provider="gemini", model="gemini/gemini-3.1-pro-preview"
         )
         call = MagicMock(side_effect=[exc, exc])
         with patch("tmi_tf.retry.time.sleep"):

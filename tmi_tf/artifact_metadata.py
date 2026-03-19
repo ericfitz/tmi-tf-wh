@@ -72,7 +72,7 @@ def create_artifact_metadata(
 
     Args:
         provider: LLM provider name (e.g., 'anthropic', 'openai')
-        model: LLM model name (e.g., 'claude-opus-4-5-20251101')
+        model: LLM model name (e.g., 'claude-opus-4-6')
         input_tokens: Number of input tokens used
         output_tokens: Number of output tokens generated
         cost_estimate_usd: Estimated cost in USD

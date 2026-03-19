@@ -74,7 +74,7 @@ def _make_analysis() -> TerraformAnalysis:
         elapsed_time=10.0,
         input_tokens=1000,
         output_tokens=500,
-        model="anthropic/claude-opus-4-5",
+        model="anthropic/claude-opus-4-6",
         provider="anthropic",
         total_cost=0.05,
     )
