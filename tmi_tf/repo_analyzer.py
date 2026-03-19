@@ -224,7 +224,7 @@ class RepositoryAnalyzer:
         Raises:
             Exception: If clone fails
         """
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{repo_name}-"))
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{repo_name}-")).resolve()
         logger.info(f"Cloning {repo_name} to {temp_dir}")
 
         try:
