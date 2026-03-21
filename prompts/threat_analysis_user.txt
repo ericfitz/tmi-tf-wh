@@ -1,0 +1,19 @@
+## Threat To Analyze
+
+**Name:** {threat_name}
+
+**Description:** {threat_description}
+
+**Affected Components:** {affected_components}
+
+## Infrastructure Context
+
+### Inventory
+{inventory_json}
+
+### Infrastructure Analysis
+{infrastructure_json}
+
+---
+
+Analyze the above security threat in the context of the infrastructure. Produce STRIDE classification, a CVSS 4.0 vector string, CWE identifiers, a mitigation recommendation, and a category. Return ONLY the JSON object.
