@@ -3,10 +3,11 @@
 This module provides a phased analyzer that supports multiple LLM providers
 (Anthropic, OpenAI, x.ai, Google Gemini, etc.) through the LiteLLM library.
 
-Analysis runs in 3 sequential phases:
-  Phase 1: Inventory Extraction → inventory JSON
-  Phase 2: Infrastructure Analysis → infrastructure JSON
-  Phase 3: Security Analysis → security findings JSON
+Analysis runs in sequential phases:
+  Phase 1:  Inventory Extraction → inventory JSON
+  Phase 2:  Infrastructure Analysis → infrastructure JSON
+  Phase 3a: Threat Identification → list of threats (name, description, affected components)
+  Phase 3b: Per-Threat Analysis → STRIDE, CVSS 4.0, CWE, mitigation per threat (called N times)
 """
 
 import json
@@ -21,6 +22,7 @@ import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-
 from tmi_tf.retry import retry_transient_llm_call
 
 from tmi_tf.config import save_llm_response
+from tmi_tf.cvss_scorer import score_cvss4_vector
 from tmi_tf.repo_analyzer import TerraformRepository
 
 logger = logging.getLogger(__name__)
@@ -168,13 +170,21 @@ class LLMAnalyzer:
         )
 
     def _load_phase_prompts(self):
-        """Load prompt pairs for all 3 analysis phases."""
+        """Load prompt pairs for all analysis phases."""
         self.inventory_system = self._load_prompt("inventory_system.txt")
         self.inventory_user_template = self._load_prompt("inventory_user.txt")
         self.infra_system = self._load_prompt("infrastructure_analysis_system.txt")
         self.infra_user_template = self._load_prompt("infrastructure_analysis_user.txt")
-        self.security_system = self._load_prompt("security_analysis_system.txt")
-        self.security_user_template = self._load_prompt("security_analysis_user.txt")
+        # Phase 3a: Threat identification
+        self.threat_id_system = self._load_prompt("threat_identification_system.txt")
+        self.threat_id_user_template = self._load_prompt(
+            "threat_identification_user.txt"
+        )
+        # Phase 3b: Per-threat analysis (STRIDE, CVSS 4.0, CWE, mitigation)
+        self.threat_analysis_system = self._load_prompt("threat_analysis_system.txt")
+        self.threat_analysis_user_template = self._load_prompt(
+            "threat_analysis_user.txt"
+        )
 
     def _normalize_model_name(self, model: str) -> str:
         """
@@ -326,12 +336,12 @@ class LLMAnalyzer:
             if status_callback:
                 status_callback("Phase 2 (Infrastructure) complete")
 
-            # Phase 3: Security Analysis
+            # Phase 3a: Threat Identification
             if status_callback:
-                status_callback("Phase 3 (Security) started")
-            logger.info(f"Phase 3: Security analysis for {terraform_repo.name}")
+                status_callback("Phase 3a (Threat Identification) started")
+            logger.info(f"Phase 3a: Identifying threats for {terraform_repo.name}")
             infrastructure_json_str = json.dumps(infrastructure, indent=2)
-            security_user = self.security_user_template.format(
+            threat_id_user = self.threat_id_user_template.format(
                 repo_name=terraform_repo.name,
                 repo_url=terraform_repo.url,
                 inventory_json=inventory_json_str,
@@ -339,17 +349,125 @@ class LLMAnalyzer:
                 terraform_contents=terraform_text,
             )
 
-            security_findings, sec_tokens_in, sec_tokens_out, sec_cost = (
+            raw_threats, tid_tokens_in, tid_tokens_out, tid_cost = (
                 self._call_llm_json_array(
-                    system_prompt=self.security_system,
-                    user_prompt=security_user,
-                    phase_name="security",
+                    system_prompt=self.threat_id_system,
+                    user_prompt=threat_id_user,
+                    phase_name="threat_identification",
                 )
             )
-            total_input_tokens += sec_tokens_in
-            total_output_tokens += sec_tokens_out
-            total_cost += sec_cost
 
+            sec_tokens_in = tid_tokens_in
+            sec_tokens_out = tid_tokens_out
+            sec_cost = tid_cost
+            total_input_tokens += tid_tokens_in
+            total_output_tokens += tid_tokens_out
+            total_cost += tid_cost
+
+            logger.info(f"Phase 3a complete: identified {len(raw_threats)} threats")
+            if status_callback:
+                status_callback(
+                    f"Phase 3a complete: {len(raw_threats)} threats identified"
+                )
+
+            # Phase 3b: Per-Threat Analysis (sequential, one LLM call per threat)
+            if status_callback:
+                status_callback("Phase 3b (Per-Threat Analysis) started")
+            security_findings: List[Dict[str, Any]] = []
+
+            for i, raw_threat in enumerate(raw_threats, 1):
+                threat_name = raw_threat.get("name", "Unnamed Threat")
+                logger.info(
+                    f"Phase 3b: Analyzing threat {i}/{len(raw_threats)}: {threat_name}"
+                )
+                if status_callback:
+                    status_callback(
+                        f"Phase 3b: Analyzing threat {i}/{len(raw_threats)}"
+                    )
+
+                try:
+                    affected = ", ".join(raw_threat.get("affected_components", []))
+                    threat_analysis_user = self.threat_analysis_user_template.format(
+                        threat_name=threat_name,
+                        threat_description=raw_threat.get("description", ""),
+                        affected_components=affected,
+                        inventory_json=inventory_json_str,
+                        infrastructure_json=infrastructure_json_str,
+                    )
+
+                    analysis_result, ta_tokens_in, ta_tokens_out, ta_cost = (
+                        self._call_llm_json(
+                            system_prompt=self.threat_analysis_system,
+                            user_prompt=threat_analysis_user,
+                            phase_name=f"threat_analysis_{i}",
+                            max_tokens=4000,
+                            timeout=120.0,
+                        )
+                    )
+
+                    sec_tokens_in += ta_tokens_in
+                    sec_tokens_out += ta_tokens_out
+                    sec_cost += ta_cost
+                    total_input_tokens += ta_tokens_in
+                    total_output_tokens += ta_tokens_out
+                    total_cost += ta_cost
+
+                    if not analysis_result:
+                        logger.warning(
+                            f"Phase 3b: Failed to parse analysis for threat "
+                            f"'{threat_name}', skipping"
+                        )
+                        continue
+
+                    # Validate and score CVSS vector
+                    cvss_vector = analysis_result.get("cvss_vector", "")
+                    cvss_list: List[Dict[str, Any]] = []
+                    score: float | None = None
+                    severity = analysis_result.get("severity", "Medium")
+
+                    if cvss_vector:
+                        cvss_score, cvss_severity, cvss_error = score_cvss4_vector(
+                            cvss_vector
+                        )
+                        if cvss_error:
+                            logger.warning(
+                                f"Phase 3b: Invalid CVSS vector for "
+                                f"'{threat_name}': {cvss_vector} — {cvss_error}"
+                            )
+                        else:
+                            score = cvss_score
+                            severity = cvss_severity  # type: ignore[assignment]
+                            cvss_list = [{"vector": cvss_vector, "score": cvss_score}]
+
+                    # Merge Phase 3a + Phase 3b into final finding
+                    finding: Dict[str, Any] = {
+                        "name": threat_name,
+                        "description": raw_threat.get("description", ""),
+                        "affected_components": raw_threat.get(
+                            "affected_components", []
+                        ),
+                        "threat_type": analysis_result.get(
+                            "threat_type", "Unclassified"
+                        ),
+                        "severity": severity,
+                        "score": score,
+                        "cvss": cvss_list,
+                        "cwe_id": analysis_result.get("cwe_id", []),
+                        "mitigation": analysis_result.get("mitigation", ""),
+                        "category": analysis_result.get("category", ""),
+                    }
+                    security_findings.append(finding)
+
+                except Exception as e:
+                    logger.error(
+                        f"Phase 3b: Failed to analyze threat '{threat_name}': {e}"
+                    )
+                    continue
+
+            logger.info(
+                f"Phase 3b complete: {len(security_findings)} threats analyzed "
+                f"out of {len(raw_threats)} identified"
+            )
             if status_callback:
                 status_callback("Phase 3 (Security) complete")
 
