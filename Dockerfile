@@ -9,17 +9,18 @@ FROM container-registry.oracle.com/os/oraclelinux:9 AS builder
 
 LABEL stage="builder"
 
-# Install Python, pip, git, and build dependencies
+# Install Python 3.12, pip, git, and build dependencies
 RUN dnf -y update && \
     dnf -y install \
-        python3 \
-        python3-pip \
-        python3-devel \
+        python3.12 \
+        python3.12-pip \
+        python3.12-devel \
         gcc \
         git \
         ca-certificates && \
     dnf clean all && \
-    rm -rf /var/cache/dnf
+    rm -rf /var/cache/dnf && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3
 
 # Clone TMI Python client
 ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
@@ -29,14 +30,14 @@ RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-c
 WORKDIR /app
 
 # Upgrade pip to ensure PEP 517 build support (hatchling backend)
-RUN pip3 install --no-cache-dir --upgrade pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip
 
 # Copy full source (pyproject.toml + tmi_tf package)
 COPY pyproject.toml ./
 COPY tmi_tf/ tmi_tf/
 
 # Install the app and all dependencies
-RUN pip3 install --no-cache-dir --prefix=/install .
+RUN python3 -m pip install --no-cache-dir --prefix=/install .
 
 # Stage 2: Runtime image
 FROM container-registry.oracle.com/os/oraclelinux:9-slim
@@ -50,14 +51,15 @@ ARG GIT_COMMIT
 LABEL org.opencontainers.image.created="${BUILD_DATE}"
 LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
 
-# Install runtime dependencies
+# Install runtime dependencies (Python 3.12)
 RUN microdnf -y update && \
     microdnf -y install \
-        python3 \
+        python3.12 \
         git \
         ca-certificates && \
     microdnf clean all && \
-    rm -rf /var/cache/yum
+    rm -rf /var/cache/yum && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3
 
 # Create non-root user with writable home directory
 RUN groupadd -r tmi-tf && \
