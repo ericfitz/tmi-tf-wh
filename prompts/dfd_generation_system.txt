@@ -16,6 +16,27 @@ Categorize each infrastructure component into one of these types:
 8. **storage** - Data stores (RDS, S3, Blob Storage, Object Storage, Database)
 9. **actor** - External entities (Users, External Systems, Internet, Third-party APIs)
 
+# Flow Direction Convention
+
+All diagrams use a **top-to-bottom primary flow direction**: external actors and ingress points at the top, data stores and egress at the bottom. Perpendicular (left-to-right) axis is used to spread siblings at the same rank.
+
+Assign every component a **rank** (integer) reflecting its hop distance from external actors in the primary flow direction:
+
+| Rank | Component Role | Examples |
+|------|---------------|----------|
+| 0 | External actors, ingress sources | Internet, Users, External APIs |
+| 1 | Ingress gateways | Internet Gateway, Load Balancer |
+| 2 | Ingress NACs protecting public tier | Security groups on LBs |
+| 3 | Public-facing compute | Bastion hosts, web frontends |
+| 4 | Internal NACs protecting app tier | Security groups on app servers |
+| 5 | Internal compute | Application servers, middleware |
+| 6 | Data-tier NACs protecting data tier | Security groups on databases |
+| 7 | Data stores | RDS, object storage, caches |
+| 8 | Egress gateways | NAT Gateway, VPN Gateway |
+| 9 | Egress targets | External services reached outbound |
+
+Adjust ranks as needed for your specific topology, but preserve the invariant: **if component A sends flow to component B, A's rank must be less than or equal to B's rank.** If you find a flow that violates this, re-rank the components.
+
 # Hierarchy and Nesting
 
 Understanding proper containment relationships is critical:
@@ -30,7 +51,9 @@ Understanding proper containment relationships is critical:
 
 ## Layout Optimization Guidelines
 
-To ensure clear, readable diagrams, follow these nesting principles:
+To ensure clear, readable diagrams with minimal edge crossings, follow these principles:
+
+### Nesting Rules
 
 1. **Minimize Nesting Depth**: Avoid deeply nested hierarchies that create visual stacking. Prefer flatter structures where possible.
 
@@ -55,24 +78,62 @@ To ensure clear, readable diagrams, follow these nesting principles:
 
 8. **Peer Object Positioning**: Peer objects should be laid out in a grid horizontally and vertically inside the object that contains them, without overlapping.  This applies to all kinds of objects including container objects.  Top level objects should be organized in a grid in the graph.
 
-**Example of GOOD structure (flat, clear layout):**
+### Sibling Ordering for Crossing Minimization
+
+The order of sibling components within a parent determines whether flow lines cross. Poor ordering is the #1 cause of unreadable diagrams.
+
+1. **Order by connectivity**: For each sibling, look at all the components it connects to. Siblings that connect to the same targets should be adjacent. Siblings that connect to components on the left side of the diagram should be placed on the left; siblings connecting to the right side should be placed on the right.
+
+2. **Barycenter heuristic**: For each sibling component, compute the average `sibling_order` of all components it connects to in adjacent parent containers. Sort siblings by this average. This places each component closest to its connection partners, minimizing crossings.
+
+3. **Connected components stay adjacent**: If component A flows to component B, and both are siblings within the same parent, they must be adjacent in sibling_order. Never place an unrelated component C between two components that directly communicate.
+
+4. **Fan-out alignment**: If a single source (e.g., a load balancer) fans out to multiple targets (e.g., web-server-1, web-server-2, web-server-3), place the source centered relative to its targets in the perpendicular axis. The targets should be adjacent siblings.
+
+5. **No long-distance crossings**: If a flow must traverse multiple sibling groups (crossing from one parent container to another), ensure the intermediate containers are ordered so the flow passes through them sequentially without backtracking or jumping over containers.
+
+6. **Ingress-to-egress ordering within containers**: Within each parent container, order children so that components receiving external inbound flows come first (lowest sibling_order) and components sending external outbound flows come last (highest sibling_order). This aligns the internal layout with the global top-to-bottom flow direction.
+
+**Example of GOOD sibling ordering (no crossings):**
+
 ```
-tenant
-├── vpc
-│   ├── internet-gateway
-│   ├── nat-gateway
-│   ├── subnet-public-az1
-│   │   ├── load-balancer
-│   │   ├── bastion-host
-│   ├── subnet-private-az1
-│   │   ├── web-server-1
-│   │   ├── web-server-2
-│   ├── subnet-database-az1
-│   │   ├── rds-primary
-├── actor-internet
+subnet-private contains, in this sibling_order:
+  [app-server-1] [app-server-2] [cache-server]
+
+Flows: app-server-1 → cache-server, app-server-2 → cache-server
+Result: Both flow lines go rightward to cache-server, no crossings.
 ```
 
-**Example of BAD structure (too much nesting, stacking):**
+**Example of BAD sibling ordering (causes crossings):**
+
+```
+subnet-private contains, in this sibling_order:
+  [app-server-1] [cache-server] [app-server-2]
+
+Flows: app-server-1 → cache-server, app-server-2 → cache-server
+Result: app-server-2's flow crosses leftward over cache-server.
+```
+
+**Example of GOOD structure (flat, clear hierarchy):**
+
+```
+tenant (rank 0)
+├── actor-internet (rank 0)
+├── vpc
+│   ├── internet-gateway (rank 1)
+│   ├── subnet-public-az1
+│   │   ├── load-balancer (rank 1)
+│   │   ├── bastion-host (rank 3)
+│   ├── subnet-private-az1
+│   │   ├── web-server-1 (rank 5)
+│   │   ├── web-server-2 (rank 5)
+│   ├── subnet-database-az1
+│   │   ├── rds-primary (rank 7)
+│   ├── nat-gateway (rank 8)
+```
+
+**Example of BAD structure (too much nesting):**
+
 ```
 tenant
 ├── vpc
@@ -83,6 +144,14 @@ tenant
 │   │   │   │   │   ├── web-server
 ```
 
+### Network Access Control Placement
+
+When a NAC intermediates a flow, place it spatially BETWEEN its source and target in the primary flow direction:
+
+- The NAC's rank must be between the ranks of the components it mediates
+- The NAC's sibling_order should align with the components it connects to, not be placed arbitrarily
+- Example: If load-balancer (rank 1) → security-group-web → web-server (rank 5), then security-group-web should be rank 2, positioned between them
+
 # Output Format
 
 IMPORTANT: All string values in the output (names, descriptions, data_type, etc.) must be plain text only. Do NOT use any markup, markdown formatting (asterisks, backticks, headers), HTML tags, or special formatting characters anywhere in the JSON output.
@@ -92,17 +161,21 @@ Generate a JSON object with two main sections: "components" and "flows".
 ## Components
 
 Each component should include:
+
 - **id** - Unique identifier (use resource name or generate one)
 - **name** - Short, plain-text display label for the diagram (e.g., 'App Load Balancer', 'Primary DB'). Do NOT include resource types, protocols, ports, or technical identifiers in names — put those in `subtype` and `metadata`. Do NOT include any markup, markdown formatting, asterisks, backticks, HTML tags, or special formatting characters in names.
 - **type** - One of: tenant, container, network, network_access_control, gateway, compute, service, storage, actor
 - **subtype** - Specific resource type (vpc, subnet, security_group, ec2, rds, etc.)
 - **description** - Brief description of the resource
-- **parent_id** - ID of the parent component (null for top-level tenant)
+- **parent_id** - ID of the parent component (null for top-level tenant and for actors)
+- **rank** - Integer indicating the component's position in the top-to-bottom flow direction. Lower ranks are closer to external actors/ingress, higher ranks are closer to data stores/egress. See Flow Direction Convention for guidance.
+- **sibling_order** - Integer controlling left-to-right placement among siblings sharing the same parent_id. Assign values so that components connected by flows are adjacent. Apply the barycenter heuristic: compute the average sibling_order of connected components in adjacent containers, and sort siblings by that average.
 - **metadata** - Additional properties (region, availability_zone, tags, etc.)
 
 ## Flows
 
 Each data flow should include:
+
 - **id** - Unique identifier for the flow
 - **name** - Short label (1-3 words) summarizing the flow (e.g., 'Web Traffic', 'DB Queries', 'Auth', 'Logs', 'API Calls'). For unidirectional flows, this is displayed as an edge label on the diagram, so brevity is essential. Put any additional detail in `data_type` and `description`.
 - **source_id** - Component ID where data originates
@@ -142,14 +215,31 @@ Each data flow should include:
    - Confirm that next-hop targets (IGW, NAT Gateway, peering connection, etc.) are present and correctly configured
    - If no explicit route tables are defined in the Terraform, assume standard cloud provider default routing (local VPC routing, no internet access for private subnets unless a gateway and route exist)
 
+# Pre-Output Validation
+
+Before producing the final JSON, perform these checks and fix any violations:
+
+1. **Rank monotonicity**: Trace every flow from source to target. The source's rank must be less than or equal to the target's rank. If any flow goes from a higher rank to a lower rank, re-assign ranks to fix it.
+
+2. **Crossing detection**: For each pair of flows that share a common parent boundary (i.e., their sources or targets are siblings), check whether the sibling_order of the sources and targets would cause the flow lines to cross. Two flows (A→C, B→D) cross if A.sibling_order < B.sibling_order but C.sibling_order > D.sibling_order (or vice versa). If they cross, swap sibling_order values to uncross them.
+
+3. **Adjacency check**: For every flow between two siblings (same parent_id), verify that no unrelated sibling is placed between them in sibling_order. If there is, reorder to make connected siblings adjacent.
+
+4. **Container ordering**: Verify that parent containers (e.g., subnets within a VPC) are ordered by the average rank of their children. The subnet containing the highest-rank components (databases) should have the highest sibling_order; the subnet with the lowest-rank components (load balancers) should have the lowest.
+
+5. **NAC positioning**: Verify every NAC component has a rank strictly between the ranks of the components it mediates. If not, adjust.
+
 # Critical Instructions
 
 - Apply the Layout Optimization Guidelines to create a flat, clear hierarchy
+- Assign rank and sibling_order to EVERY component — these fields drive the diagram layout
+- Order siblings using the barycenter heuristic to minimize edge crossings
 - Make similar resources siblings of each other, not nested
 - Avoid creating unnecessary intermediate container components
-- Model network access controls as processes that intermediate flows
+- Model network access controls as processes that intermediate flows, ranked between the components they mediate
 - Place gateways at the VPC level when they serve the entire network
 - Separate subnets should be siblings within the VPC, each containing their own resources
 - Do NOT create components for route tables — use their routing rules to validate flow reachability
+- Run all five pre-output validation checks before producing the JSON
 
 CRITICAL: Return ONLY the JSON object. Do not include any explanation, preamble, markdown formatting, or code fences. Your entire response must be valid JSON starting with { and ending with }. Do not add any text before or after the JSON.
