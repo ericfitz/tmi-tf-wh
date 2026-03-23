@@ -378,3 +378,52 @@ class TestSanitization:
         )
         assert 'user_data = "[embedded script removed]"' in result
         assert "#!/bin/bash" not in result
+
+
+@pytest.mark.usefixtures("_mock_terraform")
+class TestFullPipeline:
+    """Test the full validate_and_sanitize pipeline."""
+
+    def _make_file(self, tmp_path: Path, name: str, content: str) -> Path:
+        p = tmp_path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(content))
+        return p
+
+    def test_valid_file_with_scripts_is_sanitized(self, tmp_path):
+        f = self._make_file(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              ami       = "abc"
+              user_data = "#!/bin/bash"
+
+              provisioner "remote-exec" {
+                inline = ["echo hello"]
+              }
+            }
+        """,
+        )
+        result = validate_and_sanitize([f], tmp_path)
+        assert f in result.valid_files
+        content = f.read_text()
+        assert "[embedded script removed]" in content
+        assert "[provisioner script removed]" in content
+        assert len(result.sanitization_log) > 0
+
+    def test_tfvars_skips_sanitization(self, tmp_path):
+        f = self._make_file(tmp_path, "terraform.tfvars", 'region = "us-east-1"\n')
+        result = validate_and_sanitize([f], tmp_path)
+        assert f in result.valid_files
+        assert f.read_text() == 'region = "us-east-1"\n'
+
+    def test_mixed_valid_and_invalid_raises(self, tmp_path):
+        good = self._make_file(
+            tmp_path, "good.tf", 'resource "x" "y" {\n  ami = "abc"\n}\n'
+        )
+        bad = self._make_file(tmp_path, "empty.tf", "")
+        with pytest.raises(TerraformValidationError) as exc_info:
+            validate_and_sanitize([good, bad], tmp_path)
+        assert len(exc_info.value.rejected_files) == 1
+        assert exc_info.value.rejected_files[0].path == Path("empty.tf")

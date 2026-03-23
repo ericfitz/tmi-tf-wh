@@ -322,9 +322,14 @@ def validate_and_sanitize(
         else:
             passed_step2.append(f)
 
-    # Step 3: Sanitization (placeholder — implemented in Task 4)
+    # Step 3: Sanitization (.tf files only)
+    sanitization_log: List[str] = []
+    for f in passed_step2:
+        if f.suffix == ".tf":
+            messages = _sanitize_file(f)
+            sanitization_log.extend(messages)
 
     if rejected:
         raise TerraformValidationError(rejected)
 
-    return ValidationResult(valid_files=passed_step2)
+    return ValidationResult(valid_files=passed_step2, sanitization_log=sanitization_log)
