@@ -1,7 +1,8 @@
 """Tests for Terraform file validation and sanitization."""
 
+import shutil
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 from unittest.mock import patch
 
 import pytest
@@ -125,3 +126,51 @@ class TestFileFiltering:
         with pytest.raises(TerraformValidationError) as exc_info:
             validate_and_sanitize([f1, f2], tmp_path)
         assert len(exc_info.value.rejected_files) == 2
+
+
+terraform_installed = pytest.mark.skipif(
+    not shutil.which("terraform"),
+    reason="terraform binary not installed",
+)
+
+
+class TestSyntaxValidation:
+    """Test Step 2: terraform fmt syntax validation."""
+
+    def _make_file(self, tmp_path: Path, name: str, content: str) -> Path:
+        p = tmp_path / name
+        p.write_text(content)
+        return p
+
+    @terraform_installed
+    def test_rejects_invalid_hcl(self, tmp_path):
+        f = self._make_file(
+            tmp_path, "bad.tf", 'resource "aws_instance" "web" {\n  ami = \n}\n'
+        )
+        with pytest.raises(TerraformValidationError):
+            validate_and_sanitize([f], tmp_path)
+
+    @terraform_installed
+    def test_accepts_valid_hcl(self, tmp_path):
+        f = self._make_file(
+            tmp_path,
+            "good.tf",
+            'resource "aws_instance" "web" {\n  ami = "abc-123"\n}\n',
+        )
+        result = validate_and_sanitize([f], tmp_path)
+        assert f in result.valid_files
+
+    def test_terraform_binary_not_found(self, tmp_path):
+        f = self._make_file(tmp_path, "main.tf", 'resource "x" "y" {}\n')
+        with patch("tmi_tf.tf_validator.shutil.which", return_value=None):
+            with pytest.raises(RuntimeError, match="terraform binary not found"):
+                validate_and_sanitize([f], tmp_path)
+
+    def test_terraform_fmt_timeout(self, tmp_path):
+        f = self._make_file(tmp_path, "slow.tf", 'resource "x" "y" {}\n')
+        with patch(
+            "tmi_tf.tf_validator.subprocess.run",
+            side_effect=TimeoutExpired("terraform", 30),
+        ):
+            with pytest.raises(TerraformValidationError, match="timed out"):
+                validate_and_sanitize([f], tmp_path)

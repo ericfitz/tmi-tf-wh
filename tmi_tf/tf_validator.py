@@ -10,7 +10,7 @@ Three-step pipeline:
 import logging
 import re
 import shutil
-import subprocess  # noqa: F401 — used in Steps 2/3 (Task 3/4) and patched in tests
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -93,6 +93,26 @@ def _filter_file(file_path: Path, clone_path: Path) -> Optional[str]:
     return None
 
 
+def _validate_syntax(file_path: Path) -> Optional[str]:
+    """Run Step 2 syntax validation on a single file via terraform fmt.
+
+    Returns a rejection reason string, or None if the file passes.
+    """
+    try:
+        subprocess.run(
+            ["terraform", "fmt", str(file_path)],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        return None
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode(errors="replace").strip() if exc.stderr else ""
+        return f"terraform fmt failed: {stderr}" if stderr else "terraform fmt failed"
+    except subprocess.TimeoutExpired:
+        return "terraform fmt timed out"
+
+
 def validate_and_sanitize(
     terraform_files: List[Path], clone_path: Path
 ) -> ValidationResult:
@@ -125,11 +145,23 @@ def validate_and_sanitize(
         else:
             passed_step1.append(f)
 
-    # Step 2: Syntax validation (placeholder — implemented in Task 3)
+    # Step 2: Syntax validation
+    passed_step2: List[Path] = []
+    for f in passed_step1:
+        reason = _validate_syntax(f)
+        if reason:
+            try:
+                rel = f.relative_to(clone_path)
+            except ValueError:
+                rel = f
+            rejected.append(RejectedFile(path=rel, reason=reason))
+            logger.warning(f"Rejected {rel}: {reason}")
+        else:
+            passed_step2.append(f)
 
     # Step 3: Sanitization (placeholder — implemented in Task 4)
 
     if rejected:
         raise TerraformValidationError(rejected)
 
-    return ValidationResult(valid_files=passed_step1)
+    return ValidationResult(valid_files=passed_step2)
