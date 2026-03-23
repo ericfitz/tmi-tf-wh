@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-tmi-tf = "tmi_tf.cli:main"
+tmi-tf = "tmi_tf.cli:cli"
 
 [build-system]
 requires = ["hatchling"]
