@@ -20,6 +20,7 @@ from tmi_tf.github_client import GitHubClient
 from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
+from tmi_tf.tf_validator import validate_and_sanitize
 from tmi_tf.threat_processor import ThreatProcessor
 from tmi_tf.tmi_client_wrapper import TMIClient
 
@@ -66,6 +67,14 @@ def _analyze_single_environment(
     tf_repo.terraform_files = RepositoryAnalyzer.resolve_modules(
         selected, tf_repo.clone_path
     )
+
+    # Validate and sanitize resolved files before LLM analysis
+    validation_result = validate_and_sanitize(
+        tf_repo.terraform_files, tf_repo.clone_path
+    )
+    tf_repo.terraform_files = validation_result.valid_files
+    for msg in validation_result.sanitization_log:
+        logger.info(msg)
 
     def _status_cb(msg: str) -> None:
         tmi_client.update_status_note(threat_model_id, msg)
@@ -198,6 +207,14 @@ def run_analysis(
                                 threat_model_id,
                                 f"No environments detected in {repo_name}, analyzing all files",
                             )
+
+                            # Validate and sanitize before LLM analysis
+                            validation_result = validate_and_sanitize(
+                                tf_repo.terraform_files, tf_repo.clone_path
+                            )
+                            tf_repo.terraform_files = validation_result.valid_files
+                            for msg in validation_result.sanitization_log:
+                                logger.info(msg)
 
                             def _status_cb(msg: str) -> None:
                                 tmi_client.update_status_note(threat_model_id, msg)
