@@ -1,6 +1,7 @@
 """Tests for Terraform file validation and sanitization."""
 
 import shutil
+import textwrap
 from pathlib import Path
 from subprocess import CompletedProcess, TimeoutExpired
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from tmi_tf.tf_validator import (
     RejectedFile,
     TerraformValidationError,
     ValidationResult,
+    _sanitize_file,
     validate_and_sanitize,
 )
 
@@ -174,3 +176,205 @@ class TestSyntaxValidation:
         ):
             with pytest.raises(TerraformValidationError, match="timed out"):
                 validate_and_sanitize([f], tmp_path)
+
+
+class TestSanitization:
+    """Test Step 3: content sanitization state machine."""
+
+    def _make_file(self, tmp_path: Path, name: str, content: str) -> Path:
+        p = tmp_path / name
+        p.write_text(textwrap.dedent(content))
+        return p
+
+    def _sanitized(self, tmp_path: Path, name: str, content: str) -> str:
+        """Write file, sanitize it, return sanitized content."""
+        f = self._make_file(tmp_path, name, content)
+        _sanitize_file(f)
+        return f.read_text()
+
+    def test_no_scripts_unchanged(self, tmp_path):
+        content = 'resource "aws_instance" "web" {\n  ami = "abc"\n}\n'
+        result = self._sanitized(tmp_path, "main.tf", content)
+        assert result == content
+
+    def test_simple_user_data_string(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              ami       = "abc"
+              user_data = "#!/bin/bash\\napt-get update"
+            }
+        """,
+        )
+        assert 'user_data = "[embedded script removed]"' in result
+        assert "#!/bin/bash" not in result
+        assert 'ami       = "abc"' in result
+
+    def test_user_data_heredoc(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              user_data = <<-EOF
+                #!/bin/bash
+                apt-get update
+                apt-get install -y nginx
+              EOF
+            }
+        """,
+        )
+        assert 'user_data = "[embedded script removed]"' in result
+        assert "#!/bin/bash" not in result
+        assert "apt-get" not in result
+
+    def test_user_data_function_call(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              user_data = base64encode(templatefile("${path.module}/init.sh", {
+                env = var.environment
+              }))
+              tags = { Name = "web" }
+            }
+        """,
+        )
+        assert 'user_data = "[embedded script removed]"' in result
+        assert "base64encode" not in result
+        assert "templatefile" not in result
+        assert 'tags = { Name = "web" }' in result
+
+    def test_provisioner_block(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              ami = "abc"
+              provisioner "remote-exec" {
+                inline = [
+                  "sudo apt-get update",
+                  "sudo systemctl start nginx",
+                ]
+              }
+              tags = { Name = "web" }
+            }
+        """,
+        )
+        assert 'provisioner "remote-exec" {' in result
+        assert "# [provisioner script removed]" in result
+        assert "apt-get" not in result
+        assert 'tags = { Name = "web" }' in result
+
+    def test_connection_block(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              provisioner "remote-exec" {
+                connection {
+                  type     = "ssh"
+                  user     = "ubuntu"
+                  private_key = file("~/.ssh/id_rsa")
+                }
+                inline = ["echo hello"]
+              }
+            }
+        """,
+        )
+        assert "connection {" in result
+        assert "# [connection details removed]" in result
+        assert "private_key" not in result
+
+    def test_user_data_not_matched_as_substring(self, tmp_path):
+        content = 'resource "x" "y" {\n  base64_user_data = "keep this"\n}\n'
+        result = self._sanitized(tmp_path, "main.tf", content)
+        assert 'base64_user_data = "keep this"' in result
+
+    def test_commented_user_data_hash_not_stripped(self, tmp_path):
+        content = '# user_data = "this is a comment"\nresource "x" "y" {}\n'
+        result = self._sanitized(tmp_path, "main.tf", content)
+        assert '# user_data = "this is a comment"' in result
+
+    def test_commented_user_data_slashes_not_stripped(self, tmp_path):
+        content = '// user_data = "this is a comment"\nresource "x" "y" {}\n'
+        result = self._sanitized(tmp_path, "main.tf", content)
+        assert '// user_data = "this is a comment"' in result
+
+    def test_connection_not_matched_in_resource_type(self, tmp_path):
+        content = 'resource "aws_dx_connection" "main" {\n  bandwidth = "1Gbps"\n}\n'
+        result = self._sanitized(tmp_path, "main.tf", content)
+        assert 'resource "aws_dx_connection" "main" {' in result
+        assert 'bandwidth = "1Gbps"' in result
+
+    def test_braces_in_comments_known_limitation(self, tmp_path):
+        """Known limitation: unmatched braces in comments may affect depth tracking."""
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              provisioner "local-exec" {
+                # Note: this } brace is unmatched
+                command = "echo hello"
+              }
+            }
+        """,
+        )
+        assert 'provisioner "local-exec" {' in result
+        assert "# [provisioner script removed]" in result
+
+    def test_multiple_constructs_in_one_file(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              ami       = "abc"
+              user_data = "#!/bin/bash"
+              provisioner "local-exec" {
+                command = "echo done"
+              }
+            }
+        """,
+        )
+        assert 'user_data = "[embedded script removed]"' in result
+        assert "# [provisioner script removed]" in result
+        assert "#!/bin/bash" not in result
+        assert "echo done" not in result
+
+    def test_preserves_indentation(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+                user_data = "#!/bin/bash"
+            }
+        """,
+        )
+        for line in result.splitlines():
+            if "user_data" in line:
+                assert line.startswith("    ")
+                break
+
+    def test_heredoc_with_indented_marker(self, tmp_path):
+        result = self._sanitized(
+            tmp_path,
+            "main.tf",
+            """\
+            resource "aws_instance" "web" {
+              user_data = <<-"SCRIPT"
+                #!/bin/bash
+                echo hello
+              SCRIPT
+            }
+        """,
+        )
+        assert 'user_data = "[embedded script removed]"' in result
+        assert "#!/bin/bash" not in result
