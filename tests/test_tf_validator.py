@@ -1,12 +1,12 @@
 """Tests for Terraform file validation and sanitization."""
 
-import shutil
+import shutil  # noqa: I001
 import textwrap
 from pathlib import Path
 from subprocess import CompletedProcess, TimeoutExpired
 from unittest.mock import patch
 
-import pytest
+import pytest  # type: ignore
 
 from tmi_tf.tf_validator import (
     RejectedFile,
@@ -164,18 +164,22 @@ class TestSyntaxValidation:
 
     def test_terraform_binary_not_found(self, tmp_path):
         f = self._make_file(tmp_path, "main.tf", 'resource "x" "y" {}\n')
-        with patch("tmi_tf.tf_validator.shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="terraform binary not found"):
-                validate_and_sanitize([f], tmp_path)
+        with (
+            patch("tmi_tf.tf_validator.shutil.which", return_value=None),
+            pytest.raises(RuntimeError, match="terraform binary not found"),
+        ):
+            validate_and_sanitize([f], tmp_path)
 
     def test_terraform_fmt_timeout(self, tmp_path):
         f = self._make_file(tmp_path, "slow.tf", 'resource "x" "y" {}\n')
-        with patch(
-            "tmi_tf.tf_validator.subprocess.run",
-            side_effect=TimeoutExpired("terraform", 30),
+        with (
+            patch(
+                "tmi_tf.tf_validator.subprocess.run",
+                side_effect=TimeoutExpired("terraform", 30),
+            ),
+            pytest.raises(TerraformValidationError, match="timed out"),
         ):
-            with pytest.raises(TerraformValidationError, match="timed out"):
-                validate_and_sanitize([f], tmp_path)
+            validate_and_sanitize([f], tmp_path)
 
 
 class TestSanitization:
