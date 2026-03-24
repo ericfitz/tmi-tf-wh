@@ -1,6 +1,6 @@
 """Tests for Terraform file validation and sanitization."""
 
-import shutil  # noqa: I001
+import shutil
 import textwrap
 from pathlib import Path
 from subprocess import CompletedProcess, TimeoutExpired
