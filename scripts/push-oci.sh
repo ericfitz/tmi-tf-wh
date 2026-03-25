@@ -53,6 +53,9 @@ NC='\033[0m' # No Color
 # OCI CLI profile
 OCI_PROFILE="${OCI_CLI_PROFILE:-tmi}"
 
+# Default compartment to search for repos
+OCI_COMPARTMENT_ID="${OCI_COMPARTMENT_ID:-tmi}"
+
 # Logging functions - all output to stderr to avoid polluting command substitution
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1" >&2
