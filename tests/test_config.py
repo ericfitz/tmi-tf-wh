@@ -221,6 +221,44 @@ class TestOCIValidation:
                     assert result is True
 
 
+class TestServiceEndpointConfig:
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "anthropic",
+            "ANTHROPIC_API_KEY": "test",
+            "QUEUE_ENDPOINT": "https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com",
+            "VAULT_ENDPOINT": "https://vaults.us-ashburn-1.oci.oraclecloud.com",
+            "SECRETS_ENDPOINT": "https://secrets.vaults.us-ashburn-1.oci.oraclecloud.com",
+        },
+        clear=False,
+    )
+    def test_service_endpoints_loaded(self):
+        config = Config()
+        assert (
+            config.queue_endpoint
+            == "https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com"
+        )
+        assert (
+            config.vault_endpoint == "https://vaults.us-ashburn-1.oci.oraclecloud.com"
+        )
+        assert (
+            config.secrets_endpoint
+            == "https://secrets.vaults.us-ashburn-1.oci.oraclecloud.com"
+        )
+
+    @patch.dict(
+        os.environ,
+        {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+        clear=False,
+    )
+    def test_service_endpoints_default_none(self):
+        config = Config()
+        assert config.queue_endpoint is None
+        assert config.vault_endpoint is None
+        assert config.secrets_endpoint is None
+
+
 class TestOCICompletionKwargs:
     @patch.dict(
         os.environ,

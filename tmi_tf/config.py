@@ -118,6 +118,11 @@ class Config:
         self.vault_ocid: Optional[str] = os.getenv("VAULT_OCID") or None
         self.tmi_client_path: Optional[str] = os.getenv("TMI_CLIENT_PATH") or None
 
+        # OCI service endpoints (required for in-cluster OKE access)
+        self.queue_endpoint: Optional[str] = os.getenv("QUEUE_ENDPOINT") or None
+        self.vault_endpoint: Optional[str] = os.getenv("VAULT_ENDPOINT") or None
+        self.secrets_endpoint: Optional[str] = os.getenv("SECRETS_ENDPOINT") or None
+
     def get_llm_model(self) -> str:
         """Get the LLM model with proper provider prefix for LiteLLM.
 
