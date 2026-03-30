@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import List
 
@@ -29,7 +30,11 @@ class QueueClient:
             from tmi_tf.vault_client import _get_oci_signer
 
             signer = _get_oci_signer()
-            self._client = OCIQueueClient(config={}, signer=signer)
+            kwargs: dict = {"config": {}, "signer": signer}
+            endpoint = os.getenv("QUEUE_ENDPOINT")
+            if endpoint:
+                kwargs["service_endpoint"] = endpoint
+            self._client = OCIQueueClient(**kwargs)
         return self._client
 
     def publish(self, message: dict) -> None:

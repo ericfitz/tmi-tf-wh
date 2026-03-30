@@ -1,6 +1,7 @@
 """Tests for OCI Queue client."""
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 from tmi_tf.queue_client import QueueClient
@@ -34,3 +35,42 @@ class TestQueueClient:
         qc = QueueClient(queue_ocid="ocid1.queue.oc1..test")
         qc.delete("receipt-1")
         mock_client.delete_message.assert_called_once()
+
+
+class TestQueueServiceEndpoint:
+    @patch("tmi_tf.vault_client._get_oci_signer")
+    @patch("oci.queue.QueueClient", create=True)
+    def test_get_client_uses_service_endpoint(
+        self, mock_oci_cls: MagicMock, mock_signer: MagicMock
+    ) -> None:
+        """When QUEUE_ENDPOINT is set, _get_client passes service_endpoint to OCI SDK."""
+        mock_signer.return_value = MagicMock()
+        with patch.dict(
+            os.environ,
+            {
+                "QUEUE_ENDPOINT": "https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com"
+            },
+        ):
+            qc = QueueClient(queue_ocid="ocid1.queue.oc1..test")
+            qc._get_client()
+            mock_oci_cls.assert_called_once_with(
+                config={},
+                signer=mock_signer.return_value,
+                service_endpoint="https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com",
+            )
+
+    @patch("tmi_tf.vault_client._get_oci_signer")
+    @patch("oci.queue.QueueClient", create=True)
+    def test_get_client_no_endpoint_when_unset(
+        self, mock_oci_cls: MagicMock, mock_signer: MagicMock
+    ) -> None:
+        """When QUEUE_ENDPOINT is not set, _get_client does not pass service_endpoint."""
+        mock_signer.return_value = MagicMock()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("QUEUE_ENDPOINT", None)
+            qc = QueueClient(queue_ocid="ocid1.queue.oc1..test")
+            qc._get_client()
+            mock_oci_cls.assert_called_once_with(
+                config={},
+                signer=mock_signer.return_value,
+            )
