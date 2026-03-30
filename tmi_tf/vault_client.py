@@ -52,6 +52,14 @@ def _get_secrets_client():  # type: ignore[return]
     return SecretsClient(config={}, signer=signer)
 
 
+def _get_vaults_client():  # type: ignore[return]
+    """Create and return an OCI VaultsClient using the appropriate signer."""
+    from oci.vault import VaultsClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+    signer = _get_oci_signer()
+    return VaultsClient(config={}, signer=signer)
+
+
 def load_secrets_from_vault(vault_ocid: str, compartment_ocid: str) -> None:
     """Load secrets from OCI Vault and set them as environment variables.
 
@@ -59,14 +67,15 @@ def load_secrets_from_vault(vault_ocid: str, compartment_ocid: str) -> None:
     VAULT_SECRET_MAP, base64-decodes the content, and sets the corresponding
     environment variable. Errors for individual secrets are logged but not raised.
     """
+    vaults_client = _get_vaults_client()
     secrets_client = _get_secrets_client()
 
     try:
-        list_response = secrets_client.list_secrets(
+        list_response = vaults_client.list_secrets(
             compartment_id=compartment_ocid,
             vault_id=vault_ocid,
         )
-        vault_secrets = list_response.data
+        vault_secrets = list_response.data  # pyright: ignore[reportOptionalMemberAccess]
     except Exception as e:
         logger.error("Failed to list secrets from vault %s: %s", vault_ocid, e)
         return
@@ -79,7 +88,7 @@ def load_secrets_from_vault(vault_ocid: str, compartment_ocid: str) -> None:
 
         try:
             bundle_response = secrets_client.get_secret_bundle(secret.id)
-            content_b64: str = bundle_response.data.data.secret_bundle_content.content
+            content_b64: str = bundle_response.data.data.secret_bundle_content.content  # pyright: ignore[reportOptionalMemberAccess]
             value = base64.b64decode(content_b64).decode("utf-8")
             os.environ[env_var] = value
             logger.info("Loaded secret %s -> %s", secret_name, env_var)
