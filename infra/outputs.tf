@@ -35,7 +35,7 @@ output "webhook_url" {
 
 output "load_balancer_ip" {
   description = "IP of the K8s LoadBalancer service"
-  value       = kubernetes_service.tmi_tf_wh.status[0].load_balancer[0].ingress[0].ip
+  value       = kubernetes_service_v1.tmi_tf_wh.status[0].load_balancer[0].ingress[0].ip
 }
 
 output "queue_endpoint" {

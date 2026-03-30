@@ -22,7 +22,7 @@ resource "oci_apigateway_deployment" "this" {
 
       backend {
         type = "HTTP_BACKEND"
-        url  = "http://${kubernetes_service.tmi_tf_wh.status[0].load_balancer[0].ingress[0].ip}:8080/webhook"
+        url  = "http://${kubernetes_service_v1.tmi_tf_wh.status[0].load_balancer[0].ingress[0].ip}:8080/webhook"
 
         connect_timeout_in_seconds = 10
         read_timeout_in_seconds    = 30
@@ -36,7 +36,7 @@ resource "oci_apigateway_deployment" "this" {
 
       backend {
         type = "HTTP_BACKEND"
-        url  = "http://${kubernetes_service.tmi_tf_wh.status[0].load_balancer[0].ingress[0].ip}:8080/health"
+        url  = "http://${kubernetes_service_v1.tmi_tf_wh.status[0].load_balancer[0].ingress[0].ip}:8080/health"
 
         connect_timeout_in_seconds = 5
         read_timeout_in_seconds    = 10

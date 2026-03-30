@@ -1,4 +1,4 @@
-resource "kubernetes_namespace" "tmi_tf" {
+resource "kubernetes_namespace_v1" "tmi_tf" {
   metadata {
     name = var.k8s_namespace
   }
@@ -7,10 +7,10 @@ resource "kubernetes_namespace" "tmi_tf" {
 }
 
 # ServiceAccount with OKE workload identity annotation
-resource "kubernetes_service_account" "tmi_tf_wh" {
+resource "kubernetes_service_account_v1" "tmi_tf_wh" {
   metadata {
     name      = "tmi-tf-wh"
-    namespace = kubernetes_namespace.tmi_tf.metadata[0].name
+    namespace = kubernetes_namespace_v1.tmi_tf.metadata[0].name
   }
 }
 
@@ -21,10 +21,10 @@ locals {
   secrets_endpoint = "https://secrets.vaults.${var.region}.oci.oraclecloud.com"
 }
 
-resource "kubernetes_deployment" "tmi_tf_wh" {
+resource "kubernetes_deployment_v1" "tmi_tf_wh" {
   metadata {
     name      = "tmi-tf-wh"
-    namespace = kubernetes_namespace.tmi_tf.metadata[0].name
+    namespace = kubernetes_namespace_v1.tmi_tf.metadata[0].name
 
     labels = {
       app = "tmi-tf-wh"
@@ -48,7 +48,7 @@ resource "kubernetes_deployment" "tmi_tf_wh" {
       }
 
       spec {
-        service_account_name = kubernetes_service_account.tmi_tf_wh.metadata[0].name
+        service_account_name = kubernetes_service_account_v1.tmi_tf_wh.metadata[0].name
 
         container {
           name  = "tmi-tf-wh"
@@ -161,10 +161,10 @@ resource "kubernetes_deployment" "tmi_tf_wh" {
   }
 }
 
-resource "kubernetes_service" "tmi_tf_wh" {
+resource "kubernetes_service_v1" "tmi_tf_wh" {
   metadata {
     name      = "tmi-tf-wh"
-    namespace = kubernetes_namespace.tmi_tf.metadata[0].name
+    namespace = kubernetes_namespace_v1.tmi_tf.metadata[0].name
 
     annotations = {
       "oci.oraclecloud.com/load-balancer-type" = "lb"
