@@ -95,3 +95,70 @@ class TestLoadSecrets:
         assert VAULT_SECRET_MAP["tmi-client-secret"] == "TMI_CLIENT_SECRET"
         assert VAULT_SECRET_MAP["llm-api-key"] == "LLM_API_KEY"
         assert VAULT_SECRET_MAP["github-token"] == "GITHUB_TOKEN"
+
+
+class TestServiceEndpoints:
+    @patch("tmi_tf.vault_client._get_oci_signer")
+    def test_vaults_client_uses_service_endpoint(self, mock_signer):
+        mock_signer.return_value = MagicMock()
+        with patch.dict(
+            os.environ,
+            {"VAULT_ENDPOINT": "https://vaults.us-ashburn-1.oci.oraclecloud.com"},
+        ):
+            with patch("oci.vault.VaultsClient", create=True) as mock_cls:
+                from tmi_tf.vault_client import _get_vaults_client
+
+                _get_vaults_client()
+                mock_cls.assert_called_once_with(
+                    config={},
+                    signer=mock_signer.return_value,
+                    service_endpoint="https://vaults.us-ashburn-1.oci.oraclecloud.com",
+                )
+
+    @patch("tmi_tf.vault_client._get_oci_signer")
+    def test_vaults_client_no_endpoint_when_unset(self, mock_signer):
+        mock_signer.return_value = MagicMock()
+        with patch.dict(os.environ, {}, clear=False):
+            # Ensure VAULT_ENDPOINT is not set
+            os.environ.pop("VAULT_ENDPOINT", None)
+            with patch("oci.vault.VaultsClient", create=True) as mock_cls:
+                from tmi_tf.vault_client import _get_vaults_client
+
+                _get_vaults_client()
+                mock_cls.assert_called_once_with(
+                    config={},
+                    signer=mock_signer.return_value,
+                )
+
+    @patch("tmi_tf.vault_client._get_oci_signer")
+    def test_secrets_client_uses_service_endpoint(self, mock_signer):
+        mock_signer.return_value = MagicMock()
+        with patch.dict(
+            os.environ,
+            {
+                "SECRETS_ENDPOINT": "https://secrets.vaults.us-ashburn-1.oci.oraclecloud.com"
+            },
+        ):
+            with patch("oci.secrets.SecretsClient", create=True) as mock_cls:
+                from tmi_tf.vault_client import _get_secrets_client
+
+                _get_secrets_client()
+                mock_cls.assert_called_once_with(
+                    config={},
+                    signer=mock_signer.return_value,
+                    service_endpoint="https://secrets.vaults.us-ashburn-1.oci.oraclecloud.com",
+                )
+
+    @patch("tmi_tf.vault_client._get_oci_signer")
+    def test_secrets_client_no_endpoint_when_unset(self, mock_signer):
+        mock_signer.return_value = MagicMock()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SECRETS_ENDPOINT", None)
+            with patch("oci.secrets.SecretsClient", create=True) as mock_cls:
+                from tmi_tf.vault_client import _get_secrets_client
+
+                _get_secrets_client()
+                mock_cls.assert_called_once_with(
+                    config={},
+                    signer=mock_signer.return_value,
+                )

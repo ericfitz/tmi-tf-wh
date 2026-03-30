@@ -49,7 +49,11 @@ def _get_secrets_client():  # type: ignore[return]
     from oci.secrets import SecretsClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
     signer = _get_oci_signer()
-    return SecretsClient(config={}, signer=signer)
+    kwargs: dict = {"config": {}, "signer": signer}
+    endpoint = os.getenv("SECRETS_ENDPOINT")
+    if endpoint:
+        kwargs["service_endpoint"] = endpoint
+    return SecretsClient(**kwargs)
 
 
 def _get_vaults_client():  # type: ignore[return]
@@ -57,7 +61,11 @@ def _get_vaults_client():  # type: ignore[return]
     from oci.vault import VaultsClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
     signer = _get_oci_signer()
-    return VaultsClient(config={}, signer=signer)
+    kwargs: dict = {"config": {}, "signer": signer}
+    endpoint = os.getenv("VAULT_ENDPOINT")
+    if endpoint:
+        kwargs["service_endpoint"] = endpoint
+    return VaultsClient(**kwargs)
 
 
 def load_secrets_from_vault(vault_ocid: str, compartment_ocid: str) -> None:
