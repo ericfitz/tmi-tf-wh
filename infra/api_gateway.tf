@@ -2,7 +2,7 @@ resource "oci_apigateway_gateway" "this" {
   compartment_id = var.compartment_ocid
   display_name   = "${var.cluster_name}-gateway"
   endpoint_type  = "PUBLIC"
-  subnet_id      = var.subnet_id_api_gateway
+  subnet_id      = oci_core_subnet.api_gateway.id
 
   freeform_tags = {
     "app" = "tmi-tf-wh"

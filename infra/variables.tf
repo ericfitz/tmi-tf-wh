@@ -20,27 +20,31 @@ variable "vcn_id" {
   type        = string
 }
 
-variable "subnet_id_oke_api" {
-  description = "OCID of the subnet for the OKE API endpoint (regional, private or public)"
-  type        = string
-}
-
-variable "subnet_id_oke_nodes" {
-  description = "OCID of the private subnet for OKE worker nodes"
-  type        = string
-}
-
-variable "subnet_id_oke_lb" {
-  description = "OCID of the public subnet for the K8s LoadBalancer service"
-  type        = string
-}
-
-variable "subnet_id_api_gateway" {
-  description = "OCID of the public subnet for the API Gateway"
-  type        = string
-}
-
 # --- Optional with defaults ---
+
+variable "subnet_cidr_oke_api" {
+  description = "CIDR block for the OKE API endpoint subnet"
+  type        = string
+  default     = "10.0.10.0/24"
+}
+
+variable "subnet_cidr_oke_nodes" {
+  description = "CIDR block for the OKE worker nodes subnet"
+  type        = string
+  default     = "10.0.20.0/24"
+}
+
+variable "subnet_cidr_oke_lb" {
+  description = "CIDR block for the OKE load balancer subnet"
+  type        = string
+  default     = "10.0.30.0/24"
+}
+
+variable "subnet_cidr_api_gateway" {
+  description = "CIDR block for the API Gateway subnet"
+  type        = string
+  default     = "10.0.40.0/24"
+}
 
 variable "cluster_name" {
   description = "Name for the OKE cluster"

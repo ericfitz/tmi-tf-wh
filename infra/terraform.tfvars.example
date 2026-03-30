@@ -1,22 +1,22 @@
 # Required — provide your own values
-tenancy_ocid          = "ocid1.tenancy.oc1..example"
-compartment_ocid      = "ocid1.compartment.oc1..example"
-region                = "us-ashburn-1"
-vcn_id                = "ocid1.vcn.oc1.iad.example"
-subnet_id_oke_api     = "ocid1.subnet.oc1.iad.example_api"
-subnet_id_oke_nodes   = "ocid1.subnet.oc1.iad.example_nodes"
-subnet_id_oke_lb      = "ocid1.subnet.oc1.iad.example_lb"
-subnet_id_api_gateway = "ocid1.subnet.oc1.iad.example_apigw"
+tenancy_ocid     = "ocid1.tenancy.oc1..example"
+compartment_ocid = "ocid1.compartment.oc1..example"
+region           = "us-ashburn-1"
+vcn_id           = "ocid1.vcn.oc1.iad.example"
 
 # Optional — uncomment to override defaults
-# cluster_name        = "tmi-tf-wh"
-# node_shape          = "VM.Standard.A1.Flex"
-# node_ocpus          = 2
-# node_memory_gb      = 12
-# node_count          = 2
-# node_image_id       = "ocid1.image.oc1.iad.example"
-# app_image_tag       = "latest"
-# k8s_namespace       = "tmi-tf"
-# llm_provider        = "oci"
-# tmi_server_url      = "https://api.tmi.dev"
-# max_concurrent_jobs = 3
+# cluster_name          = "tmi-tf-wh"
+# node_shape            = "VM.Standard.A1.Flex"
+# node_ocpus            = 2
+# node_memory_gb        = 12
+# node_count            = 2
+# node_image_id         = "ocid1.image.oc1.iad.example"
+# app_image_tag         = "latest"
+# k8s_namespace         = "tmi-tf"
+# llm_provider          = "oci"
+# tmi_server_url        = "https://api.tmi.dev"
+# max_concurrent_jobs   = 3
+# subnet_cidr_oke_api   = "10.0.10.0/24"
+# subnet_cidr_oke_nodes = "10.0.20.0/24"
+# subnet_cidr_oke_lb    = "10.0.30.0/24"
+# subnet_cidr_api_gateway = "10.0.40.0/24"

@@ -19,11 +19,11 @@ resource "oci_containerengine_cluster" "this" {
 
   endpoint_config {
     is_public_ip_enabled = true
-    subnet_id            = var.subnet_id_oke_api
+    subnet_id            = oci_core_subnet.oke_api.id
   }
 
   options {
-    service_lb_subnet_ids = [var.subnet_id_oke_lb]
+    service_lb_subnet_ids = [oci_core_subnet.oke_lb.id]
   }
 
   type = "ENHANCED_CLUSTER"
@@ -67,7 +67,7 @@ resource "oci_containerengine_node_pool" "this" {
 
     placement_configs {
       availability_domain = data.oci_identity_availability_domains.this.availability_domains[0].name
-      subnet_id           = var.subnet_id_oke_nodes
+      subnet_id           = oci_core_subnet.oke_nodes.id
     }
   }
 }
