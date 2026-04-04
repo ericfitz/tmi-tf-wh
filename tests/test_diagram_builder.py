@@ -108,7 +108,6 @@ class TestComponentTypes:
             ("gateway", "process", 10),
             ("compute", "process", 11),
             ("service", "process", 11),
-            ("network_access_control", "process", 11),
             ("storage", "store", 11),
             ("actor", "actor", 11),
         ],
@@ -127,7 +126,7 @@ class TestComponentTypes:
 
     @pytest.mark.parametrize(
         "comp_type",
-        ["gateway", "compute", "service", "network_access_control", "storage", "actor"],
+        ["gateway", "compute", "service", "storage", "actor"],
     )
     def test_leaf_nodes_have_ports(self, comp_type: str):
         components = [make_component("c1", "Test", comp_type)]
@@ -497,3 +496,44 @@ class TestLayout:
         # Inner boundary should be significantly larger than a leaf node
         assert n_cell["width"] > c1_cell["width"]
         assert n_cell["height"] > c1_cell["height"]
+
+
+class TestNetworkAccessControlRemoval:
+    """network_access_control components should be skipped with a warning."""
+
+    def test_nac_component_skipped(self):
+        """A network_access_control component should not produce a cell."""
+        components = [
+            make_component("t1", "Tenant", "tenant"),
+            make_component("nac1", "Web SG", "network_access_control", parent_id="t1"),
+            make_component("c1", "Server", "compute", parent_id="t1"),
+        ]
+        builder = DFDBuilder(components, [])
+        cells = builder.build_cells()
+
+        # NAC should not have a cell
+        assert find_cell_by_component_id(cells, "nac1") is None
+        # Other components should still have cells
+        assert find_cell_by_component_id(cells, "t1") is not None
+        assert find_cell_by_component_id(cells, "c1") is not None
+
+    def test_nac_component_skipped_no_edge_created(self):
+        """Flows referencing a skipped NAC component should be dropped."""
+        components = [
+            make_component("t1", "Tenant", "tenant"),
+            make_component("nac1", "Web SG", "network_access_control", parent_id="t1"),
+            make_component("c1", "Server", "compute", parent_id="t1"),
+            make_component("c2", "DB", "storage", parent_id="t1"),
+        ]
+        flows = [
+            make_flow("f1", "c1", "nac1", name="To SG"),
+            make_flow("f2", "nac1", "c2", name="From SG"),
+            make_flow("f3", "c1", "c2", name="Direct"),
+        ]
+        builder = DFDBuilder(components, flows)
+        cells = builder.build_cells()
+
+        edges = get_edge_cells(cells)
+        # Only the direct flow should produce an edge
+        assert len(edges) == 1
+        assert edges[0]["labels"][0]["attrs"]["text"]["text"] == "Direct"
