@@ -32,7 +32,8 @@ A Mermaid diagram string (using graph TD or graph LR) visualizing:
 - Network boundaries and security zones as subgraphs
 - Data flows with arrows and labels
 - External interfaces (users, external services, internet)
-- Key security controls represented as intermediate nodes in flows
+
+Do NOT create separate nodes for security controls (security groups, NACLs, WAFs, firewalls). Instead, append security control information to the label of the parent/containing node that the control protects. For example, a subnet with a security group should be labeled: "Web Subnet\nsecurity group: sg-web-rules". Flows should go directly between source and target components without routing through security control intermediaries.
 
 **Mermaid Syntax Rules (MUST follow exactly):**
 - Every `subgraph` MUST have a matching `end`
