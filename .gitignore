@@ -213,7 +213,7 @@ __marimo__/
 .worktrees/
 
 # Superpowers brainstorming
-.superpowers/
+.superpowers/**
 
 # Terraform
 **/.terraform/
@@ -227,3 +227,5 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 *.tfvars
+.serena/**
+
