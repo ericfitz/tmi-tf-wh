@@ -9,12 +9,24 @@ Categorize each infrastructure component into one of these types:
 1. **tenant** - Cloud account/subscription level (AWS Account, GCP Project, Azure Subscription, OCI Tenancy)
 2. **container** - Resource grouping (Azure Resource Group, OCI Compartment)
 3. **network** - Network boundaries (AWS VPC, VCN, Subnet)
-4. **network_access_control** - Network access control mechanisms (AWS Security Group, Network ACL, firewall rules/policies, firewalls, web application firewalls/cloud armor, GCP VPC service controls)
-5. **gateway** - Network gateways (Internet Gateway, NAT Gateway, VPN Gateway, Load Balancers, peering connections, VPC endpoints, private endpoints/privatelink/service connect, direct connect)
-6. **compute** - Compute resources (EC2, VM, Container Instance, Function)
-7. **service** - Logical groupings of compute units
-8. **storage** - Data stores (RDS, S3, Blob Storage, Object Storage, Database)
-9. **actor** - External entities (Users, External Systems, Internet, Third-party APIs)
+4. **gateway** - Network gateways (Internet Gateway, NAT Gateway, VPN Gateway, Load Balancers, peering connections, VPC endpoints, private endpoints/privatelink/service connect, direct connect)
+5. **compute** - Compute resources (EC2, VM, Container Instance, Function)
+6. **service** - Logical groupings of compute units
+7. **storage** - Data stores (RDS, S3, Blob Storage, Object Storage, Database)
+8. **actor** - External entities (Users, External Systems, Internet, Third-party APIs)
+
+# Security Controls Handling
+
+Do NOT create components for network access controls (AWS Security Groups, Network ACLs, firewall rules/policies, firewalls, WAFs, GCP VPC service controls). Instead:
+
+1. Identify security controls from the inventory (components with type "security_control")
+2. For each security control, determine its parent/containing object (the VPC, subnet, or boundary it protects)
+3. Add the security control as metadata on that parent boundary component using key-value pairs:
+   - {"key": "security_control", "value": "<control-name-or-id>"}
+   - {"key": "security_control_type", "value": "<subtype, e.g. security_group, nacl, waf>"}
+   - If the control has specific rules worth noting, add: {"key": "security_control_rules", "value": "<brief summary>"}
+4. If multiple security controls apply to the same parent, use numbered keys: "security_control_01", "security_control_02", etc.
+5. Generate flows directly between source and target components — do NOT route flows through security control intermediaries
 
 # Flow Direction Convention
 
@@ -26,14 +38,11 @@ Assign every component a **rank** (integer) reflecting its hop distance from ext
 |------|---------------|----------|
 | 0 | External actors, ingress sources | Internet, Users, External APIs |
 | 1 | Ingress gateways | Internet Gateway, Load Balancer |
-| 2 | Ingress NACs protecting public tier | Security groups on LBs |
-| 3 | Public-facing compute | Bastion hosts, web frontends |
-| 4 | Internal NACs protecting app tier | Security groups on app servers |
-| 5 | Internal compute | Application servers, middleware |
-| 6 | Data-tier NACs protecting data tier | Security groups on databases |
-| 7 | Data stores | RDS, object storage, caches |
-| 8 | Egress gateways | NAT Gateway, VPN Gateway |
-| 9 | Egress targets | External services reached outbound |
+| 2 | Public-facing compute | Bastion hosts, web frontends |
+| 3 | Internal compute | Application servers, middleware |
+| 4 | Data stores | RDS, object storage, caches |
+| 5 | Egress gateways | NAT Gateway, VPN Gateway |
+| 6 | Egress targets | External services reached outbound |
 
 Adjust ranks as needed for your specific topology, but preserve the invariant: **if component A sends flow to component B, A's rank must be less than or equal to B's rank.** If you find a flow that violates this, re-rank the components.
 
@@ -45,7 +54,7 @@ Understanding proper containment relationships is critical:
 - **container** (if present) contains network, gateway, compute, and storage
 - **network.vcn** contains network.subnet
 - **network.subnet** contains compute and storage resources
-- **network.security_group** applies to (but doesn't contain) compute/storage resources; it can be modeled as a process node that intermediates flows between source and destination
+- **Security controls** (security groups, NACLs, WAFs) are NOT modeled as components. Their information is stored in the metadata of the parent boundary they protect.
 - **gateway** resources sit at network boundaries
 - **actor** resources are external and not contained by anything
 
@@ -62,7 +71,7 @@ To ensure clear, readable diagrams with minimal edge crossings, follow these pri
 3. **Network Boundaries**:
    - Create **separate** components for logically distinct networks (public vs private, different availability zones)
    - Place compute/storage resources as children of their respective networks
-   - Do NOT nest subnets within security groups - security groups should be a peer object of the object they apply to, and flows should route through the network security group to the object(s) they protect
+   - Do NOT create security group components — add security control information as metadata on the parent boundary they protect
 
 4. **Logical Grouping**: Group components by their functional tier or layer:
    - Public tier: Load balancers, bastion hosts (in public subnets)
@@ -123,13 +132,13 @@ tenant (rank 0)
 │   ├── internet-gateway (rank 1)
 │   ├── subnet-public-az1
 │   │   ├── load-balancer (rank 1)
-│   │   ├── bastion-host (rank 3)
+│   │   ├── bastion-host (rank 2)
 │   ├── subnet-private-az1
-│   │   ├── web-server-1 (rank 5)
-│   │   ├── web-server-2 (rank 5)
+│   │   ├── web-server-1 (rank 3)
+│   │   ├── web-server-2 (rank 3)
 │   ├── subnet-database-az1
-│   │   ├── rds-primary (rank 7)
-│   ├── nat-gateway (rank 8)
+│   │   ├── rds-primary (rank 4)
+│   ├── nat-gateway (rank 5)
 ```
 
 **Example of BAD structure (too much nesting):**
@@ -144,14 +153,6 @@ tenant
 │   │   │   │   │   ├── web-server
 ```
 
-### Network Access Control Placement
-
-When a NAC intermediates a flow, place it spatially BETWEEN its source and target in the primary flow direction:
-
-- The NAC's rank must be between the ranks of the components it mediates
-- The NAC's sibling_order should align with the components it connects to, not be placed arbitrarily
-- Example: If load-balancer (rank 1) → security-group-web → web-server (rank 5), then security-group-web should be rank 2, positioned between them
-
 # Output Format
 
 IMPORTANT: All string values in the output (names, descriptions, data_type, etc.) must be plain text only. Do NOT use any markup, markdown formatting (asterisks, backticks, headers), HTML tags, or special formatting characters anywhere in the JSON output.
@@ -164,7 +165,7 @@ Each component should include:
 
 - **id** - Unique identifier (use resource name or generate one)
 - **name** - Short, plain-text display label for the diagram (e.g., 'App Load Balancer', 'Primary DB'). Do NOT include resource types, protocols, ports, or technical identifiers in names — put those in `subtype` and `metadata`. Do NOT include any markup, markdown formatting, asterisks, backticks, HTML tags, or special formatting characters in names.
-- **type** - One of: tenant, container, network, network_access_control, gateway, compute, service, storage, actor
+- **type** - One of: tenant, container, network, gateway, compute, service, storage, actor
 - **subtype** - Specific resource type (vpc, subnet, security_group, ec2, rds, etc.)
 - **description** - Brief description of the resource
 - **parent_id** - ID of the parent component (null for top-level tenant and for actors)
@@ -194,7 +195,7 @@ Each data flow should include:
 
 2. **Network Boundaries**: Create subnet, and VCN components as separate boundary objects even if they don't directly participate in flows.
 
-3. **Network Access Controls**: Create process objects for network access controls, and use the network access control node as a separate hop in flows that are subject to that control.  For example, if a process protected by a network access control communicates with a process that is not protected by the same NAC object, then flows should be created from the first process to the NAC object, and from the NAC object to the second process, and the same pattern applies in flows in the other direction.
+3. **Network Access Controls**: Do NOT create components for network access controls. Instead, add security control information as metadata on the parent boundary component that the control protects. Generate flows directly between source and target components without routing through security control intermediaries.
 
 4. **Load Balancers**: Treat as gateway components that receive flows from actors and send flows to compute resources.
 
@@ -227,8 +228,6 @@ Before producing the final JSON, perform these checks and fix any violations:
 
 4. **Container ordering**: Verify that parent containers (e.g., subnets within a VPC) are ordered by the average rank of their children. The subnet containing the highest-rank components (databases) should have the highest sibling_order; the subnet with the lowest-rank components (load balancers) should have the lowest.
 
-5. **NAC positioning**: Verify every NAC component has a rank strictly between the ranks of the components it mediates. If not, adjust.
-
 # Critical Instructions
 
 - Apply the Layout Optimization Guidelines to create a flat, clear hierarchy
@@ -236,10 +235,10 @@ Before producing the final JSON, perform these checks and fix any violations:
 - Order siblings using the barycenter heuristic to minimize edge crossings
 - Make similar resources siblings of each other, not nested
 - Avoid creating unnecessary intermediate container components
-- Model network access controls as processes that intermediate flows, ranked between the components they mediate
+- Do NOT create components for network access controls — add their info as metadata on the parent boundary
 - Place gateways at the VPC level when they serve the entire network
 - Separate subnets should be siblings within the VPC, each containing their own resources
 - Do NOT create components for route tables — use their routing rules to validate flow reachability
-- Run all five pre-output validation checks before producing the JSON
+- Run all four pre-output validation checks before producing the JSON
 
 CRITICAL: Return ONLY the JSON object. Do not include any explanation, preamble, markdown formatting, or code fences. Your entire response must be valid JSON starting with { and ending with }. Do not add any text before or after the JSON.
