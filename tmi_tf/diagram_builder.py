@@ -24,7 +24,6 @@ class DFDBuilder:
         "service",
         "storage",
         "actor",
-        "network_access_control",
     }
 
     # Shape mapping from component types to X6 shapes
@@ -35,7 +34,6 @@ class DFDBuilder:
         "gateway": "process",
         "compute": "process",
         "service": "process",
-        "network_access_control": "process",
         "storage": "store",
         "actor": "actor",
     }
@@ -47,7 +45,6 @@ class DFDBuilder:
         "gateway": 10,
         "compute": 11,
         "service": 11,
-        "network_access_control": 11,
         "storage": 11,
         "actor": 11,
         "edge": 20,
@@ -139,6 +136,17 @@ class DFDBuilder:
     def _create_node_cells(self):
         """Create node cells for gateway, compute, service, storage, and actor components."""
         nodes = [c for c in self.components if c["type"] in self.LEAF_TYPES]
+
+        # Safety filter: warn and skip any network_access_control components
+        # that the LLM may still emit despite prompt changes
+        skipped = [c for c in self.components if c["type"] == "network_access_control"]
+        for component in skipped:
+            logger.warning(
+                "Skipping network_access_control component '%s' (%s) — "
+                "security controls should be in parent boundary metadata",
+                component.get("name", "unknown"),
+                component["id"],
+            )
 
         for component in nodes:
             z_index = self.Z_INDEX.get(component["type"], 11)
