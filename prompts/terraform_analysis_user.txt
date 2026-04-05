@@ -28,8 +28,7 @@ Create a mermaid diagram (using graph TD or graph LR) that visualizes:
 - Network boundaries and security zones
 - Data flows (with arrows and labels)
 - External interfaces (users, external services, internet)
-- Key security controls (firewalls, encryption, etc.)
-- Represent network security controls as an intermediate node in a flow to/from an entity protected by the control, e.g. service/compute-unit --> NAC --> destination node 
+- Do NOT create separate nodes for security controls (security groups, NACLs, WAFs, firewalls). Instead, append security control information to the label of the parent or containing node (e.g. append "\nsecurity group: sg-12345" to a subnet label)
 
 **IMPORTANT: Mermaid Syntax Rules (you MUST follow these exactly):**
 - Every `subgraph` statement MUST have a corresponding `end` statement

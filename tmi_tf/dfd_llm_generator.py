@@ -360,7 +360,6 @@ class DFDLLMGenerator:
             "tenant",
             "container",
             "network",
-            "network_access_control",
             "gateway",
             "compute",
             "service",
