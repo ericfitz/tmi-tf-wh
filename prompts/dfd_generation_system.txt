@@ -172,6 +172,9 @@ Each component should include:
 - **rank** - Integer indicating the component's position in the top-to-bottom flow direction. Lower ranks are closer to external actors/ingress, higher ranks are closer to data stores/egress. See Flow Direction Convention for guidance.
 - **sibling_order** - Integer controlling left-to-right placement among siblings sharing the same parent_id. Assign values so that components connected by flows are adjacent. Apply the barycenter heuristic: compute the average sibling_order of connected components in adjacent containers, and sort siblings by that average.
 - **metadata** - Additional properties (region, availability_zone, tags, etc.)
+  - If the inventory component has a `dependencies` array, include it in metadata as a JSON-encoded string:
+    {"key": "dependencies", "value": "[{\"type\":\"cloud\",\"provider\":\"AWS\",\"service\":\"S3\"}]"}
+    Serialize the component's dependencies array as a JSON string. Include all dependency objects from the inventory component.
 
 ## Flows
 
