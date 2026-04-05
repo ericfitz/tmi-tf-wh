@@ -11,7 +11,7 @@ from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.analyzer import run_analysis
 from tmi_tf.config import Config
 from tmi_tf.job import Job
-from tmi_tf.queue_client import QueueClient, QueueMessage
+from tmi_tf.providers import QueueMessage, QueueProvider
 from tmi_tf.tmi_client_wrapper import TMIClient
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def _is_message_expired(enqueued_at_iso: str, max_age_hours: int) -> bool:
 class WorkerPool:
     """Async worker pool that polls OCI Queue and dispatches analysis jobs."""
 
-    def __init__(self, queue_client: QueueClient, config: Config) -> None:
+    def __init__(self, queue_client: QueueProvider, config: Config) -> None:
         self.queue_client = queue_client
         self.config = config
         self.max_concurrent = config.max_concurrent_jobs

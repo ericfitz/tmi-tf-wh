@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-imp
 
 from tmi_tf.config import get_config
 from tmi_tf.job import Job
-from tmi_tf.queue_client import QueueClient
+from tmi_tf.providers import QueueProvider, get_queue_provider
 from tmi_tf.webhook_handler import (
     extract_job_id,
     handle_challenge,
@@ -25,7 +25,7 @@ from tmi_tf.worker import WorkerPool
 logger = logging.getLogger(__name__)
 
 # Module-level globals, set during lifespan
-queue_client: Optional[QueueClient] = None
+queue_client: Optional[QueueProvider] = None
 worker_pool: Optional[WorkerPool] = None
 _worker_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
 
@@ -59,9 +59,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         config = get_config()
 
     # Initialize queue client
-    if config.queue_ocid:
-        queue_client = QueueClient(config.queue_ocid)
-        logger.info("Queue client initialized for %s", config.queue_ocid)
+    if config.queue_provider != "none":
+        queue_client = get_queue_provider(config)
+        logger.info("Queue provider initialized: %s", config.queue_provider)
 
     # Start worker pool
     if queue_client is not None:

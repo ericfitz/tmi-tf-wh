@@ -25,6 +25,7 @@ def _make_config(**overrides):
     cfg.max_concurrent_jobs = overrides.get("max_concurrent_jobs", 3)
     cfg.job_timeout = overrides.get("job_timeout", 3600)
     cfg.max_message_age_hours = overrides.get("max_message_age_hours", 24)
+    cfg.queue_provider = overrides.get("queue_provider", "oci")
     return cfg
 
 
