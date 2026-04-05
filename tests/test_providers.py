@@ -36,7 +36,7 @@ class TestGetSecretProvider:
         config.vault_endpoint = None
         config.secrets_endpoint = None
         provider = get_secret_provider(config)
-        from tmi_tf.providers.oci import OciSecretProvider  # pyright: ignore[reportMissingImports]
+        from tmi_tf.providers.oci import OciSecretProvider
 
         assert isinstance(provider, OciSecretProvider)
 
@@ -44,7 +44,7 @@ class TestGetSecretProvider:
         config = MagicMock()
         config.secret_provider = "none"
         provider = get_secret_provider(config)
-        from tmi_tf.providers.none import NoneSecretProvider  # pyright: ignore[reportMissingImports]
+        from tmi_tf.providers.none import NoneSecretProvider
 
         assert isinstance(provider, NoneSecretProvider)
 

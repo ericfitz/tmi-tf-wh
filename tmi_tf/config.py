@@ -225,7 +225,7 @@ class Config:
         unpack this into their completion() calls.
 
         Tries instance principal (OKE workload identity) first, then
-        falls back to ~/.oci/config — matching vault_client._get_oci_signer().
+        falls back to ~/.oci/config — matching providers.oci.get_oci_signer().
         """
         if self.llm_provider != "oci":
             return {}

@@ -27,7 +27,7 @@ class SecretProvider(Protocol):
 def get_secret_provider(config: "Config") -> SecretProvider:
     """Create a SecretProvider based on configuration."""
     if config.secret_provider == "oci":
-        from tmi_tf.providers.oci import OciSecretProvider  # pyright: ignore[reportMissingImports]
+        from tmi_tf.providers.oci import OciSecretProvider
 
         return OciSecretProvider(
             vault_ocid=config.vault_ocid or "",
@@ -36,7 +36,7 @@ def get_secret_provider(config: "Config") -> SecretProvider:
             secrets_endpoint=config.secrets_endpoint,
         )
     elif config.secret_provider == "none":
-        from tmi_tf.providers.none import NoneSecretProvider  # pyright: ignore[reportMissingImports]
+        from tmi_tf.providers.none import NoneSecretProvider
 
         return NoneSecretProvider()
     else:

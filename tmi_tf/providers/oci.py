@@ -109,8 +109,8 @@ class OciSecretProvider:
             try:
                 bundle_response = secrets_client.get_secret_bundle(secret.id)
                 content_b64: str = (
-                    bundle_response.data.data.secret_bundle_content.content
-                )  # pyright: ignore[reportOptionalMemberAccess]
+                    bundle_response.data.data.secret_bundle_content.content  # pyright: ignore[reportOptionalMemberAccess]
+                )
                 value = base64.b64decode(content_b64).decode("utf-8")
                 os.environ[env_var] = value
                 logger.info("Loaded secret %s -> %s", secret_name, env_var)
