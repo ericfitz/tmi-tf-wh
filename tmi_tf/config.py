@@ -116,7 +116,16 @@ class Config:
         )
         self.queue_ocid: Optional[str] = os.getenv("QUEUE_OCID") or None
         self.vault_ocid: Optional[str] = os.getenv("VAULT_OCID") or None
-        self.secret_provider: str = os.getenv("SECRET_PROVIDER", "none")
+
+        # Secret provider selection (inferred from VAULT_OCID if not explicit)
+        explicit_provider = os.getenv("SECRET_PROVIDER")
+        if explicit_provider:
+            self.secret_provider: str = explicit_provider
+        elif self.vault_ocid:
+            self.secret_provider = "oci"
+        else:
+            self.secret_provider = "none"
+
         self.tmi_client_path: Optional[str] = os.getenv("TMI_CLIENT_PATH") or None
 
         # OCI service endpoints (required for in-cluster OKE access)

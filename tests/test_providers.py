@@ -248,3 +248,64 @@ class TestOciSecretProvider:
                 config={},
                 signer=mock_signer.return_value,
             )
+
+
+class TestNoneSecretProvider:
+    def test_load_secrets_is_noop(self):
+        from tmi_tf.providers.none import NoneSecretProvider
+
+        provider = NoneSecretProvider()
+        # Should not raise
+        provider.load_secrets({"webhook-secret": "WEBHOOK_SECRET"})
+
+    def test_conforms_to_protocol(self):
+        from tmi_tf.providers.none import NoneSecretProvider
+
+        provider = NoneSecretProvider()
+        assert hasattr(provider, "load_secrets")
+        assert callable(provider.load_secrets)
+
+
+class TestSecretProviderConfig:
+    @patch("tmi_tf.config.load_dotenv")
+    def test_defaults_to_oci_when_vault_ocid_set(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "VAULT_OCID": "ocid1.vault.oc1..test",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.secret_provider == "oci"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_defaults_to_none_when_no_vault_ocid(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {"ANTHROPIC_API_KEY": "test-key"},
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.secret_provider == "none"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_explicit_secret_provider_overrides_inference(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "SECRET_PROVIDER": "none",
+                "VAULT_OCID": "ocid1.vault.oc1..test",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.secret_provider == "none"
