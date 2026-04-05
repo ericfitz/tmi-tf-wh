@@ -359,6 +359,32 @@ class MarkdownGenerator:
 
         return "\n\n".join(parts)
 
+    def _format_dependencies_section(self, inventory: Dict[str, Any]) -> str:
+        """Format external dependencies into markdown section with HTML table."""
+        dependencies = inventory.get("dependencies", [])
+        if not dependencies:
+            return ""
+
+        parts = ["### External Dependencies"]
+
+        rows: List[List[str]] = []
+        for dep in dependencies:
+            dep_type = _esc(dep.get("type", ""))
+            provider = _esc(dep.get("provider", ""))
+            service = _esc(dep.get("service", ""))
+            components = dep.get("dependent_components", [])
+            rows.append([dep_type, provider, service, _html_list(components)])
+
+        parts.append(
+            _html_table(
+                ["Type", "Provider", "Service", "Dependent Components"],
+                rows,
+                col_widths=["10%", "15%", "20%", "55%"],
+            )
+        )
+
+        return "\n\n".join(parts)
+
     def _format_security_section(self, security_findings: List[Dict[str, Any]]) -> str:
         """Format security findings JSON into markdown section with HTML tables."""
         if not security_findings:
@@ -609,6 +635,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 
             parts.append(self._format_relationships_section(analysis.infrastructure))
             parts.append(self._format_data_flows_section(analysis.infrastructure))
+            parts.append(self._format_dependencies_section(analysis.inventory))
             parts.append(self._format_security_section(analysis.security_findings))
 
             sections.append("\n\n".join(part for part in parts if part))
