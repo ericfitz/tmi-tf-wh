@@ -38,7 +38,7 @@ class TestQueueClient:
 
 
 class TestQueueServiceEndpoint:
-    @patch("tmi_tf.vault_client._get_oci_signer")
+    @patch("tmi_tf.providers.oci.get_oci_signer")
     @patch("oci.queue.QueueClient", create=True)
     def test_get_client_uses_service_endpoint(
         self, mock_oci_cls: MagicMock, mock_signer: MagicMock
@@ -59,7 +59,7 @@ class TestQueueServiceEndpoint:
                 service_endpoint="https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com",
             )
 
-    @patch("tmi_tf.vault_client._get_oci_signer")
+    @patch("tmi_tf.providers.oci.get_oci_signer")
     @patch("oci.queue.QueueClient", create=True)
     def test_get_client_no_endpoint_when_unset(
         self, mock_oci_cls: MagicMock, mock_signer: MagicMock

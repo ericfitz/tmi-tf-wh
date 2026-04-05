@@ -45,15 +45,14 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
     config = get_config()
 
-    # Load secrets from vault if configured
-    if config.vault_ocid:
-        from tmi_tf.vault_client import load_secrets_from_vault
+    # Load secrets via configured provider
+    from tmi_tf.providers import VAULT_SECRET_MAP, get_secret_provider
 
-        compartment_ocid = config.oci_compartment_id or ""
-        logger.info("Loading secrets from vault %s", config.vault_ocid)
-        load_secrets_from_vault(config.vault_ocid, compartment_ocid)
+    provider = get_secret_provider(config)
+    provider.load_secrets(VAULT_SECRET_MAP)
 
-        # Reset config singleton so it re-reads env vars with vault secrets
+    if config.secret_provider != "none":
+        # Reset config singleton so it re-reads env vars with provider secrets
         import tmi_tf.config
 
         tmi_tf.config._config = None

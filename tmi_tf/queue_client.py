@@ -27,9 +27,9 @@ class QueueClient:
         if self._client is None:
             from oci.queue import QueueClient as OCIQueueClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
-            from tmi_tf.vault_client import _get_oci_signer
+            from tmi_tf.providers.oci import get_oci_signer
 
-            signer = _get_oci_signer()
+            signer = get_oci_signer()
             kwargs: dict = {"config": {}, "signer": signer}
             endpoint = os.getenv("QUEUE_ENDPOINT")
             if endpoint:
