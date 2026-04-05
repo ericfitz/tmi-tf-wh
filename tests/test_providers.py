@@ -1,5 +1,6 @@
 """Tests for secret provider protocol and factory."""
 
+import json
 import os
 from dataclasses import fields
 from unittest.mock import MagicMock, patch
@@ -289,6 +290,108 @@ class TestNoneSecretProvider:
         provider = NoneSecretProvider()
         assert hasattr(provider, "load_secrets")
         assert callable(provider.load_secrets)
+
+
+class TestOciQueueProvider:
+    @patch("tmi_tf.providers.oci.OciQueueProvider._get_client")
+    def test_publish(self, mock_get: MagicMock) -> None:
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        mock_client = MagicMock()
+        mock_get.return_value = mock_client
+        provider = OciQueueProvider(
+            queue_ocid="ocid1.queue.oc1..test", queue_endpoint=None
+        )
+        provider.publish({"job_id": "j1", "threat_model_id": "tm-1"})
+        mock_client.put_messages.assert_called_once()
+
+    @patch("tmi_tf.providers.oci.OciQueueProvider._get_client")
+    def test_consume_returns_messages(self, mock_get: MagicMock) -> None:
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        mock_client = MagicMock()
+        mock_msg = MagicMock()
+        mock_msg.content = json.dumps({"job_id": "j1"})
+        mock_msg.receipt = "receipt-1"
+        mock_client.get_messages.return_value.data.messages = [mock_msg]
+        mock_get.return_value = mock_client
+        provider = OciQueueProvider(
+            queue_ocid="ocid1.queue.oc1..test", queue_endpoint=None
+        )
+        messages = provider.consume(max_messages=1)
+        assert len(messages) == 1
+        assert messages[0].body == {"job_id": "j1"}
+        assert messages[0].receipt == "receipt-1"
+
+    @patch("tmi_tf.providers.oci.OciQueueProvider._get_client")
+    def test_delete(self, mock_get: MagicMock) -> None:
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        mock_client = MagicMock()
+        mock_get.return_value = mock_client
+        provider = OciQueueProvider(
+            queue_ocid="ocid1.queue.oc1..test", queue_endpoint=None
+        )
+        provider.delete("receipt-1")
+        mock_client.delete_message.assert_called_once()
+
+    @patch("tmi_tf.providers.oci.OciQueueProvider._get_client")
+    def test_consume_skips_unparseable_messages(self, mock_get: MagicMock) -> None:
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        mock_client = MagicMock()
+        bad_msg = MagicMock()
+        bad_msg.content = "not-json"
+        bad_msg.receipt = "bad-receipt"
+        good_msg = MagicMock()
+        good_msg.content = json.dumps({"job_id": "j2"})
+        good_msg.receipt = "good-receipt"
+        mock_client.get_messages.return_value.data.messages = [bad_msg, good_msg]
+        mock_get.return_value = mock_client
+        provider = OciQueueProvider(
+            queue_ocid="ocid1.queue.oc1..test", queue_endpoint=None
+        )
+        messages = provider.consume()
+        assert len(messages) == 1
+        assert messages[0].body == {"job_id": "j2"}
+        # Bad message should have been deleted
+        mock_client.delete_message.assert_called_once()
+
+    @patch("tmi_tf.providers.oci.get_oci_signer")
+    @patch("oci.queue.QueueClient", create=True)
+    def test_get_client_uses_service_endpoint(
+        self, mock_oci_cls: MagicMock, mock_signer: MagicMock
+    ) -> None:
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        mock_signer.return_value = MagicMock()
+        provider = OciQueueProvider(
+            queue_ocid="ocid1.queue.oc1..test",
+            queue_endpoint="https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com",
+        )
+        provider._get_client()
+        mock_oci_cls.assert_called_once_with(
+            config={},
+            signer=mock_signer.return_value,
+            service_endpoint="https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com",
+        )
+
+    @patch("tmi_tf.providers.oci.get_oci_signer")
+    @patch("oci.queue.QueueClient", create=True)
+    def test_get_client_no_endpoint_when_none(
+        self, mock_oci_cls: MagicMock, mock_signer: MagicMock
+    ) -> None:
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        mock_signer.return_value = MagicMock()
+        provider = OciQueueProvider(
+            queue_ocid="ocid1.queue.oc1..test", queue_endpoint=None
+        )
+        provider._get_client()
+        mock_oci_cls.assert_called_once_with(
+            config={},
+            signer=mock_signer.return_value,
+        )
 
 
 class TestSecretProviderConfig:
