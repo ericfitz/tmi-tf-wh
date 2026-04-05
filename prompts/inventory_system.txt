@@ -9,7 +9,8 @@ Return ONLY a JSON object. Do not include any explanation, preamble, markdown fo
 The JSON must have this structure:
 {
   "components": [ ... ],
-  "services": [ ... ]
+  "services": [ ... ],
+  "dependencies": [ ... ]
 }
 
 # Component Extraction
@@ -22,6 +23,10 @@ For each Terraform resource, data source, or module, extract a component with th
 - **resource_type**: The Terraform resource type (e.g., "aws_instance", "azurerm_storage_account")
 - **configuration**: Key configuration properties from the Terraform block (instance type, CIDR, engine, etc.)
 - **purpose**: Inferred purpose based on resource type, name, tags, and context
+- **dependencies**: Array of external service dependencies for this component. Most Terraform resources have at least one dependency — the service that Terraform instructs to instantiate the resource. Each dependency is an object with:
+  - **type**: One of: "cloud" (AWS, Azure, GCP, OCI services), "saas" (GitHub, Salesforce, Google Sign-In, etc.), "on-prem" (Active Directory, locally-deployed Vault, on-prem databases, etc.)
+  - **provider**: The organization providing the service (e.g., "AWS", "Microsoft", "Google", "Hashicorp", "Salesforce")
+  - **service**: The specific service name (e.g., "S3", "EC2", "Active Directory", "Vault", "Sales Cloud")
 
 # Service Identification
 
@@ -41,5 +46,40 @@ Each service should include:
 - **associated_resources**: List of component IDs for non-compute supporting resources (load balancers, target groups, etc.)
 
 Do not force unrelated resources into services. Standalone resources should not appear in any service.
+
+# Dependency Summary
+
+After extracting all components, produce a top-level "dependencies" array that aggregates unique service dependencies across all components. Each entry includes:
+
+- **type**: "cloud", "saas", or "on-prem"
+- **provider**: The service provider name
+- **service**: The specific service name
+- **dependent_components**: Array of component IDs that depend on this service
+
+Deduplicate by (type, provider, service) — if multiple components depend on the same service, list all their IDs in dependent_components.
+
+Example:
+{
+  "dependencies": [
+    {
+      "type": "cloud",
+      "provider": "AWS",
+      "service": "S3",
+      "dependent_components": ["aws_s3_bucket.logs", "aws_s3_bucket.data"]
+    },
+    {
+      "type": "cloud",
+      "provider": "AWS",
+      "service": "EC2",
+      "dependent_components": ["aws_instance.web_server"]
+    },
+    {
+      "type": "on-prem",
+      "provider": "Hashicorp",
+      "service": "Vault",
+      "dependent_components": ["aws_instance.app_server"]
+    }
+  ]
+}
 
 CRITICAL: Return ONLY the JSON object, no other text.
