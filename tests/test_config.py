@@ -17,9 +17,10 @@ def reset_config():
 
 @pytest.fixture(autouse=True)
 def clear_config_singleton():
-    """Reset singleton before and after each test."""
+    """Reset singleton before and after each test, and prevent .env from overriding test env vars."""
     reset_config()
-    yield
+    with patch("tmi_tf.config.load_dotenv"):
+        yield
     reset_config()
 
 
