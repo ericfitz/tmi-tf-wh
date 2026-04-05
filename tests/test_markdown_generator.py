@@ -33,6 +33,14 @@ def _make_analysis() -> TerraformAnalysis:
                     "associated_resources": [],
                 },
             ],
+            "dependencies": [
+                {
+                    "type": "cloud",
+                    "provider": "AWS",
+                    "service": "EC2",
+                    "dependent_components": ["web-server"],
+                },
+            ],
         },
         infrastructure={
             "architecture_summary": "A simple web app",
@@ -458,3 +466,59 @@ class TestGenerateAnalysisReport:
         gen = MarkdownGenerator()
         report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
         assert "Analysis Job Information" in report
+
+    def test_includes_external_dependencies(self):
+        gen = MarkdownGenerator()
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "External Dependencies" in report
+        assert "AWS" in report
+        assert "EC2" in report
+
+
+class TestMarkdownGeneratorDependencies:
+    """Test external dependencies section generation."""
+
+    def test_empty_dependencies(self):
+        gen = MarkdownGenerator()
+        result = gen._format_dependencies_section({"dependencies": []})
+        assert result == ""
+
+    def test_no_dependencies_key(self):
+        gen = MarkdownGenerator()
+        result = gen._format_dependencies_section({})
+        assert result == ""
+
+    def test_dependencies_table(self):
+        gen = MarkdownGenerator()
+        inventory = {
+            "dependencies": [
+                {
+                    "type": "cloud",
+                    "provider": "AWS",
+                    "service": "S3",
+                    "dependent_components": [
+                        "aws_s3_bucket.logs",
+                        "aws_s3_bucket.data",
+                    ],
+                },
+                {
+                    "type": "saas",
+                    "provider": "Google",
+                    "service": "Sign-In",
+                    "dependent_components": ["aws_lambda.auth"],
+                },
+            ]
+        }
+        result = gen._format_dependencies_section(inventory)
+        assert "External Dependencies" in result
+        assert "<table" in result
+        assert "AWS" in result
+        assert "S3" in result
+        assert "cloud" in result
+        assert "Google" in result
+        assert "Sign-In" in result
+        assert "saas" in result
+        # Dependent components should be rendered as a list
+        assert "<ul>" in result
+        assert "<li>aws_s3_bucket.logs</li>" in result
+        assert "<li>aws_s3_bucket.data</li>" in result
