@@ -68,3 +68,18 @@ def get_secret_provider(config: "Config") -> SecretProvider:
             f"Unknown secret provider: {config.secret_provider!r}. "
             f"Must be 'oci' or 'none'."
         )
+
+
+def get_queue_provider(config: "Config") -> QueueProvider:
+    """Create a QueueProvider based on configuration."""
+    if config.queue_provider == "oci":
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        return OciQueueProvider(
+            queue_ocid=config.queue_ocid or "",
+            queue_endpoint=config.queue_endpoint,
+        )
+    else:
+        raise ValueError(
+            f"Unknown queue provider: {config.queue_provider!r}. Must be 'oci'."
+        )

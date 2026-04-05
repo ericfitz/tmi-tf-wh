@@ -12,6 +12,7 @@ from tmi_tf.providers import (  # noqa: F401
     QueueMessage,
     QueueProvider,
     SecretProvider,
+    get_queue_provider,
     get_secret_provider,
 )
 
@@ -437,3 +438,65 @@ class TestSecretProviderConfig:
 
             config = Config()
             assert config.secret_provider == "none"
+
+
+class TestGetQueueProvider:
+    def test_factory_returns_oci_provider(self):
+        config = MagicMock()
+        config.queue_provider = "oci"
+        config.queue_ocid = "ocid1.queue.oc1..test"
+        config.queue_endpoint = None
+        provider = get_queue_provider(config)
+        from tmi_tf.providers.oci import OciQueueProvider
+
+        assert isinstance(provider, OciQueueProvider)
+
+    def test_factory_raises_for_unknown_provider(self):
+        config = MagicMock()
+        config.queue_provider = "aws"
+        with pytest.raises(ValueError, match="Unknown queue provider"):
+            get_queue_provider(config)
+
+
+class TestQueueProviderConfig:
+    @patch("tmi_tf.config.load_dotenv")
+    def test_defaults_to_oci_when_queue_ocid_set(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "QUEUE_OCID": "ocid1.queue.oc1..test",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.queue_provider == "oci"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_defaults_to_none_when_no_queue_ocid(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {"ANTHROPIC_API_KEY": "test-key"},
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.queue_provider == "none"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_explicit_queue_provider_overrides_inference(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "QUEUE_PROVIDER": "oci",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.queue_provider == "oci"

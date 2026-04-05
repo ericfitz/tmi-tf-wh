@@ -126,6 +126,15 @@ class Config:
         else:
             self.secret_provider = "none"
 
+        # Queue provider selection (inferred from QUEUE_OCID if not explicit)
+        explicit_queue_provider = os.getenv("QUEUE_PROVIDER")
+        if explicit_queue_provider:
+            self.queue_provider: str = explicit_queue_provider
+        elif self.queue_ocid:
+            self.queue_provider = "oci"
+        else:
+            self.queue_provider = "none"
+
         self.tmi_client_path: Optional[str] = os.getenv("TMI_CLIENT_PATH") or None
 
         # OCI service endpoints (required for in-cluster OKE access)
