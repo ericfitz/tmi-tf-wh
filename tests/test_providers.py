@@ -1,11 +1,36 @@
 """Tests for secret provider protocol and factory."""
 
 import os
+from dataclasses import fields
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tmi_tf.providers import VAULT_SECRET_MAP, SecretProvider, get_secret_provider  # noqa: F401
+from tmi_tf.providers import (  # noqa: F401
+    VAULT_SECRET_MAP,
+    QueueMessage,
+    QueueProvider,
+    SecretProvider,
+    get_secret_provider,
+)
+
+
+class TestQueueMessage:
+    def test_is_dataclass_with_body_and_receipt(self):
+        msg = QueueMessage(body={"job_id": "j1"}, receipt="r1")
+        assert msg.body == {"job_id": "j1"}
+        assert msg.receipt == "r1"
+
+    def test_fields(self):
+        names = {f.name for f in fields(QueueMessage)}
+        assert names == {"body", "receipt"}
+
+
+class TestQueueProviderProtocol:
+    def test_protocol_has_required_methods(self):
+        assert hasattr(QueueProvider, "publish")
+        assert hasattr(QueueProvider, "consume")
+        assert hasattr(QueueProvider, "delete")
 
 
 class TestVaultSecretMap:

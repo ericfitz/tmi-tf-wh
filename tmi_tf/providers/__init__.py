@@ -1,17 +1,16 @@
-"""Provider abstraction layer for secret loading."""
+"""Provider abstraction layer for secrets and queue operations."""
 
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from tmi_tf.config import Config
 
-VAULT_SECRET_MAP = {
-    "webhook-secret": "WEBHOOK_SECRET",
-    "tmi-client-id": "TMI_CLIENT_ID",
-    "tmi-client-secret": "TMI_CLIENT_SECRET",
-    "llm-api-key": "LLM_API_KEY",
-    "github-token": "GITHUB_TOKEN",
-}
+
+@dataclass
+class QueueMessage:
+    body: dict[str, Any]
+    receipt: str
 
 
 class SecretProvider(Protocol):
@@ -22,6 +21,31 @@ class SecretProvider(Protocol):
         Errors for individual secrets are logged, not raised.
         """
         ...
+
+
+class QueueProvider(Protocol):
+    def publish(self, message: dict[str, Any]) -> None:
+        """Serialize message and publish it to the queue."""
+        ...
+
+    def consume(
+        self, max_messages: int = 1, visibility_timeout: int = 900
+    ) -> list["QueueMessage"]:
+        """Get messages from the queue and return parsed QueueMessage objects."""
+        ...
+
+    def delete(self, receipt: str) -> None:
+        """Delete a message from the queue by its receipt."""
+        ...
+
+
+VAULT_SECRET_MAP = {
+    "webhook-secret": "WEBHOOK_SECRET",
+    "tmi-client-id": "TMI_CLIENT_ID",
+    "tmi-client-secret": "TMI_CLIENT_SECRET",
+    "llm-api-key": "LLM_API_KEY",
+    "github-token": "GITHUB_TOKEN",
+}
 
 
 def get_secret_provider(config: "Config") -> SecretProvider:
