@@ -4,6 +4,7 @@ import base64
 import json
 import logging
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
@@ -200,4 +201,65 @@ class OciQueueProvider:
         client.delete_message(queue_id=self._queue_ocid, message_receipt=receipt)
         logger.debug(
             "Deleted message with receipt=%s from queue %s", receipt, self._queue_ocid
+        )
+
+
+from tmi_tf.providers.llm_base import BaseLLMProvider  # noqa: E402
+
+OCI_DEFAULT_MODEL = "oci/xai.grok-4"
+
+
+class OciLLMProvider(BaseLLMProvider):
+    """LLM provider for OCI Generative AI service."""
+
+    def __init__(self, model: str | None) -> None:
+        compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
+        if not compartment_id:
+            raise ValueError(
+                "OCI_COMPARTMENT_ID required when LLM_PROVIDER=oci. "
+                "Set it in your .env file or environment."
+            )
+
+        config_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+
+        if model:
+            resolved_model = model if "/" in model else f"oci/{model}"
+        else:
+            resolved_model = OCI_DEFAULT_MODEL
+
+        super().__init__(provider="oci", model=resolved_model)
+
+        # Build completion kwargs
+        oci_config_path = Path.home() / ".oci" / "config"
+        if oci_config_path.exists():
+            from oci.config import from_file as oci_from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+            oci_config = oci_from_file(str(oci_config_path), config_profile)
+            self._extra_kwargs = {
+                "oci_region": oci_config.get("region", "us-ashburn-1"),
+                "oci_user": oci_config["user"],
+                "oci_fingerprint": oci_config["fingerprint"],
+                "oci_tenancy": oci_config["tenancy"],
+                "oci_key_file": oci_config["key_file"],
+                "oci_compartment_id": compartment_id,
+            }
+        else:
+            try:
+                from oci.auth.signers import get_resource_principals_signer  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+
+                signer = get_resource_principals_signer()
+                region = getattr(signer, "region", None) or "us-ashburn-1"
+                self._extra_kwargs = {
+                    "oci_region": region,
+                    "oci_compartment_id": compartment_id,
+                    "oci_signer": signer,
+                }
+            except Exception as e:
+                logger.error("No OCI credentials available for LLM calls: %s", e)
+                self._extra_kwargs = {"oci_compartment_id": compartment_id}
+
+        logger.info(
+            "Initialized OCI LLM provider: model=%s, compartment=%s",
+            resolved_model,
+            compartment_id,
         )
