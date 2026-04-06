@@ -1,6 +1,9 @@
 """Tests for LLM provider implementations."""
 
+import os
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tmi_tf.providers import LLMResponse
 from tmi_tf.providers.llm_base import BaseLLMProvider
@@ -89,7 +92,9 @@ class TestBaseLLMProvider:
         assert result.text == "ok"
 
     def test_model_property(self):
-        provider = BaseLLMProvider(provider="anthropic", model="anthropic/claude-opus-4-6")
+        provider = BaseLLMProvider(
+            provider="anthropic", model="anthropic/claude-opus-4-6"
+        )
         assert provider.model == "anthropic/claude-opus-4-6"
 
     @patch("tmi_tf.providers.llm_base.litellm")
@@ -105,3 +110,58 @@ class TestBaseLLMProvider:
 
         assert result.finish_reason == "length"
         assert result.text == "truncated"
+
+
+from tmi_tf.providers.api_key import ApiKeyLLMProvider, DEFAULT_MODELS  # noqa: E402
+
+
+class TestApiKeyLLMProvider:
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}, clear=False)
+    def test_anthropic_provider_reads_env(self):
+        provider = ApiKeyLLMProvider(provider="anthropic", model=None)
+        assert provider.model == DEFAULT_MODELS["anthropic"]
+        assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-key"
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "sk-openai-key"}, clear=False)
+    def test_openai_provider_reads_env(self):
+        provider = ApiKeyLLMProvider(provider="openai", model="gpt-4o")
+        assert provider.model == "openai/gpt-4o"
+
+    @patch.dict(os.environ, {"XAI_API_KEY": "xai-key"}, clear=False)
+    def test_xai_provider_reads_env(self):
+        provider = ApiKeyLLMProvider(provider="xai", model=None)
+        assert provider.model == DEFAULT_MODELS["xai"]
+
+    @patch.dict(os.environ, {"GEMINI_API_KEY": "gem-key"}, clear=False)
+    def test_gemini_provider_reads_env(self):
+        provider = ApiKeyLLMProvider(provider="gemini", model=None)
+        assert provider.model == DEFAULT_MODELS["gemini"]
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_raises_on_missing_api_key(self):
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+            ApiKeyLLMProvider(provider="anthropic", model=None)
+
+    @patch.dict(
+        os.environ,
+        {"ANTHROPIC_API_KEY": "placeholder_anthropic_api_key"},
+        clear=False,
+    )
+    def test_raises_on_placeholder_api_key(self):
+        with pytest.raises(ValueError, match="placeholder"):
+            ApiKeyLLMProvider(provider="anthropic", model=None)
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-real-key"}, clear=False)
+    def test_model_with_prefix_kept_as_is(self):
+        provider = ApiKeyLLMProvider(provider="anthropic", model="anthropic/claude-opus-4-6")
+        assert provider.model == "anthropic/claude-opus-4-6"
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-real-key"}, clear=False)
+    def test_model_without_prefix_gets_prefix(self):
+        provider = ApiKeyLLMProvider(provider="anthropic", model="claude-opus-4-6")
+        assert provider.model == "anthropic/claude-opus-4-6"
+
+    def test_raises_on_unknown_provider(self):
+        with pytest.raises(ValueError, match="Unknown API key provider"):
+            ApiKeyLLMProvider(provider="unknown", model=None)
