@@ -2,7 +2,7 @@
 """Tests for Config class changes: LLM_API_KEY mapping, server config vars, OCI IMDS."""
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 
@@ -70,8 +70,7 @@ class TestLLMAPIKeyMapping:
         },
         clear=False,
     )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
-    def test_oci_provider_no_key_map(self, mock_creds):
+    def test_oci_provider_no_key_map(self):
         # OCI is not in the key_map, so LLM_API_KEY should not set any OCI env var
         config = Config()
         assert config.llm_provider == "oci"
@@ -146,82 +145,6 @@ class TestServerConfigVars:
         assert config.tmi_client_path is None
 
 
-class TestOCIValidation:
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "oci", "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test"},
-        clear=False,
-    )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
-    def test_oci_accepts_imds(self, mock_creds):
-        config = Config()
-        assert config.llm_provider == "oci"
-
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "oci", "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test"},
-        clear=False,
-    )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=False)
-    def test_oci_warns_when_no_credentials(self, mock_creds):
-        # Should not raise; just warns
-        config = Config()
-        assert config.llm_provider == "oci"
-
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "oci"},
-        clear=False,
-    )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
-    def test_oci_requires_compartment_id(self, mock_creds):
-        with pytest.raises(ValueError, match="OCI_COMPARTMENT_ID"):
-            Config()
-
-    def test_oci_credentials_available_checks_file(self):
-        """_oci_credentials_available returns True when ~/.oci/config exists."""
-        with patch("pathlib.Path.exists", return_value=True):
-            result = Config._oci_credentials_available()
-            assert result is True
-
-    def test_oci_credentials_available_checks_imds(self):
-        """_oci_credentials_available returns True when IMDS responds."""
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                mock_urlopen.return_value.__enter__ = lambda s: s
-                mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
-                result = Config._oci_credentials_available()
-                assert result is True
-
-    def test_oci_credentials_available_returns_false_when_neither(self):
-        """_oci_credentials_available returns False when file, instance principal, and IMDS all fail."""
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch(
-                "oci.auth.signers.InstancePrincipalsSecurityTokenSigner",
-                side_effect=Exception("not on OCI"),
-            ):
-                with patch(
-                    "urllib.request.urlopen",
-                    side_effect=Exception("connection refused"),
-                ):
-                    result = Config._oci_credentials_available()
-                    assert result is False
-
-    def test_oci_credentials_available_checks_instance_principal(self):
-        """_oci_credentials_available returns True when instance principal signer works."""
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch(
-                "urllib.request.urlopen", side_effect=Exception("connection refused")
-            ):
-                mock_signer = MagicMock()
-                with patch(
-                    "oci.auth.signers.InstancePrincipalsSecurityTokenSigner",
-                    return_value=mock_signer,
-                ):
-                    result = Config._oci_credentials_available()
-                    assert result is True
-
-
 class TestServiceEndpointConfig:
     @patch.dict(
         os.environ,
@@ -260,69 +183,3 @@ class TestServiceEndpointConfig:
         assert config.secrets_endpoint is None
 
 
-class TestOCICompletionKwargs:
-    @patch.dict(
-        os.environ,
-        {
-            "LLM_PROVIDER": "oci",
-            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
-        },
-        clear=False,
-    )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
-    def test_returns_empty_for_non_oci_provider(self, mock_creds):
-        config = Config()
-        config.llm_provider = "anthropic"
-        result = config.get_oci_completion_kwargs()
-        assert result == {}
-
-    @patch.dict(
-        os.environ,
-        {
-            "LLM_PROVIDER": "oci",
-            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
-        },
-        clear=False,
-    )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
-    def test_uses_instance_principal_when_no_config_file(self, mock_creds):
-        config = Config()
-        mock_signer = MagicMock()
-        mock_signer.region = "us-phoenix-1"
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch(
-                "oci.auth.signers.InstancePrincipalsSecurityTokenSigner",
-                return_value=mock_signer,
-            ):
-                result = config.get_oci_completion_kwargs()
-                assert result["oci_region"] == "us-phoenix-1"
-                assert result["oci_compartment_id"] == "ocid1.compartment.oc1..test"
-                assert result["oci_signer"] is mock_signer
-
-    @patch.dict(
-        os.environ,
-        {
-            "LLM_PROVIDER": "oci",
-            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
-        },
-        clear=False,
-    )
-    @patch("tmi_tf.config.Config._oci_credentials_available", return_value=True)
-    def test_falls_back_to_config_file(self, mock_creds):
-        config = Config()
-        mock_oci_config = {
-            "region": "us-ashburn-1",
-            "user": "ocid1.user.oc1..test",
-            "fingerprint": "aa:bb:cc",
-            "tenancy": "ocid1.tenancy.oc1..test",
-            "key_file": "/path/to/key.pem",
-        }
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("oci.config.from_file", return_value=mock_oci_config):
-                result = config.get_oci_completion_kwargs()
-                assert result["oci_region"] == "us-ashburn-1"
-                assert result["oci_user"] == "ocid1.user.oc1..test"
-                assert result["oci_fingerprint"] == "aa:bb:cc"
-                assert result["oci_tenancy"] == "ocid1.tenancy.oc1..test"
-                assert result["oci_key_file"] == "/path/to/key.pem"
-                assert result["oci_compartment_id"] == "ocid1.compartment.oc1..test"

@@ -316,7 +316,7 @@ def run_analysis(
         logger.info(f"\n[5/9] Successfully analyzed {len(analyses)} repositories")
 
         # Build artifact names (environment-aware)
-        model_label = config.effective_model
+        model_label = llm_analyzer.model
         ts = config.timestamp
         if selected_env_name:
             inventory_note_name = (

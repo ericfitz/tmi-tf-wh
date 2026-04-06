@@ -265,13 +265,11 @@ def config_info():
         print(f"OAuth IDP: {config.tmi_oauth_idp}")
         print(f"Max Repositories: {config.max_repos}")
         print(f"Clone Timeout: {config.clone_timeout}s")
-        print(f"LLM Model: {config.effective_model}")
+        print(f"LLM Provider: {config.llm_provider}")
+        print(f"LLM Model: {config.llm_model or '(default)'}")
         print(f"Timestamp: {config.timestamp}")
         print(
             f"GitHub Token: {'Configured' if config.github_token else 'Not configured'}"
-        )
-        print(
-            f"Anthropic API Key: {'Configured' if config.anthropic_api_key else 'Not configured'}"
         )
         print(f"Cache Directory: {config.cache_dir}")
         print()

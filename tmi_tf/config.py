@@ -17,24 +17,6 @@ logger = logging.getLogger(__name__)
 class Config:
     """Application configuration loaded from environment variables."""
 
-    # Default models for each provider (LiteLLM format)
-    DEFAULT_MODELS = {
-        "anthropic": "anthropic/claude-opus-4-6",
-        "openai": "openai/gpt-5.4",
-        "xai": "xai/grok-4-1-fast-reasoning",
-        "gemini": "gemini/gemini-3.1-pro-preview",
-        "oci": "oci/xai.grok-4",
-    }
-
-    # Provider prefixes for LiteLLM
-    PROVIDER_PREFIXES = {
-        "anthropic": "anthropic/",
-        "openai": "openai/",
-        "xai": "xai/",
-        "gemini": "gemini/",
-        "oci": "oci/",
-    }
-
     def __init__(self):
         """Initialize configuration from .env file."""
         # Load .env file from project root
@@ -66,24 +48,8 @@ class Config:
             if target:
                 os.environ[target] = llm_api_key
 
-        # Anthropic (Claude) API Configuration
-        self.anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY") or None
-
-        # OpenAI API Configuration
-        self.openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY") or None
-
-        # x.ai (Grok) API Configuration
-        self.xai_api_key: Optional[str] = os.getenv("XAI_API_KEY") or None
-
-        # Google (Gemini) API Configuration
-        self.gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY") or None
-
         # OCI Generative AI Configuration
-        self.oci_config_profile: str = os.getenv("OCI_CONFIG_PROFILE", "DEFAULT")
         self.oci_compartment_id: Optional[str] = os.getenv("OCI_COMPARTMENT_ID") or None
-
-        # Validate credentials for selected provider
-        self._validate_llm_credentials()
 
         # GitHub API Configuration
         self.github_token: Optional[str] = os.getenv("GITHUB_TOKEN") or None
@@ -92,10 +58,6 @@ class Config:
         self.max_repos: int = int(os.getenv("MAX_REPOS", "3"))
         self.clone_timeout: int = int(os.getenv("CLONE_TIMEOUT", "300"))
 
-        # Model identifier and timestamp for artifact naming (constructed in cli.py)
-        self.effective_model: str = self.llm_model or self.DEFAULT_MODELS.get(
-            self.llm_provider, "unknown"
-        )
         self.timestamp: str = datetime.now(timezone.utc).strftime(
             "%Y-%m-%d %H:%M:%S UTC"
         )
@@ -141,132 +103,6 @@ class Config:
         self.queue_endpoint: Optional[str] = os.getenv("QUEUE_ENDPOINT") or None
         self.vault_endpoint: Optional[str] = os.getenv("VAULT_ENDPOINT") or None
         self.secrets_endpoint: Optional[str] = os.getenv("SECRETS_ENDPOINT") or None
-
-    def get_llm_model(self) -> str:
-        """Get the LLM model with proper provider prefix for LiteLLM.
-
-        If LLM_MODEL is set without a prefix, prepends the provider prefix.
-        If LLM_MODEL already has a prefix (contains '/'), uses it as-is.
-        If LLM_MODEL is not set, returns the default model for the provider.
-        """
-        if self.llm_model:
-            # If model already has a provider prefix, use as-is
-            if "/" in self.llm_model:
-                return self.llm_model
-            # Otherwise prepend the provider prefix
-            prefix = self.PROVIDER_PREFIXES.get(self.llm_provider, "")
-            return f"{prefix}{self.llm_model}"
-        return self.DEFAULT_MODELS.get(self.llm_provider, "gpt-4")
-
-    def _validate_llm_credentials(self):
-        """Validate that required credentials exist for the selected LLM provider."""
-        if self.llm_provider == "anthropic":
-            if (
-                not self.anthropic_api_key
-                or self.anthropic_api_key == "placeholder_anthropic_api_key"
-            ):
-                raise ValueError(
-                    "ANTHROPIC_API_KEY not configured. "
-                    "Please set it in .env file with your actual API key."
-                )
-        elif self.llm_provider == "openai":
-            if not self.openai_api_key:
-                raise ValueError("OPENAI_API_KEY required when LLM_PROVIDER=openai")
-        elif self.llm_provider == "xai":
-            if not self.xai_api_key:
-                raise ValueError("XAI_API_KEY required when LLM_PROVIDER=xai")
-        elif self.llm_provider == "gemini":
-            if not self.gemini_api_key:
-                raise ValueError("GEMINI_API_KEY required when LLM_PROVIDER=gemini")
-        elif self.llm_provider == "oci":
-            if not self.oci_compartment_id:
-                raise ValueError("OCI_COMPARTMENT_ID required when LLM_PROVIDER=oci")
-            if not self._oci_credentials_available():
-                logger.warning(
-                    "OCI credentials not found via ~/.oci/config, instance principal, or IMDS. "
-                    "LiteLLM will fail unless OCI credentials are available."
-                )
-        else:
-            raise ValueError(
-                f"Invalid LLM_PROVIDER: {self.llm_provider}. "
-                f"Must be 'anthropic', 'openai', 'xai', 'gemini', or 'oci'"
-            )
-
-    @staticmethod
-    def _oci_credentials_available() -> bool:
-        """Check if OCI credentials are available.
-
-        Checks in order: ~/.oci/config file, instance principal signer
-        (works with OKE workload identity), IMDS metadata service.
-        Returns True if any credential source is available.
-        """
-        import urllib.request
-
-        # Check for OCI config file
-        oci_config_path = Path.home() / ".oci" / "config"
-        if oci_config_path.exists():
-            return True
-
-        # Check instance principal (OKE workload identity)
-        try:
-            from oci.auth.signers import InstancePrincipalsSecurityTokenSigner  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-
-            InstancePrincipalsSecurityTokenSigner()
-            return True
-        except Exception:
-            pass
-
-        # Check IMDS (OCI instance metadata service)
-        try:
-            req = urllib.request.Request(
-                "http://169.254.169.254/opc/v2/instance/",
-                headers={"Authorization": "Bearer Oracle"},
-            )
-            with urllib.request.urlopen(req, timeout=2):
-                return True
-        except Exception:
-            return False
-
-    def get_oci_completion_kwargs(self) -> dict:
-        """Return kwargs to pass to litellm.completion() for OCI provider.
-
-        For non-OCI providers, returns an empty dict so callers can always
-        unpack this into their completion() calls.
-
-        Tries instance principal (OKE workload identity) first, then
-        falls back to ~/.oci/config — matching providers.oci.get_oci_signer().
-        """
-        if self.llm_provider != "oci":
-            return {}
-
-        oci_config_path = Path.home() / ".oci" / "config"
-        if oci_config_path.exists():
-            from oci.config import from_file as oci_from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-
-            oci_config = oci_from_file(str(oci_config_path), self.oci_config_profile)
-            return {
-                "oci_region": oci_config.get("region", "us-ashburn-1"),
-                "oci_user": oci_config["user"],
-                "oci_fingerprint": oci_config["fingerprint"],
-                "oci_tenancy": oci_config["tenancy"],
-                "oci_key_file": oci_config["key_file"],
-                "oci_compartment_id": self.oci_compartment_id,
-            }
-
-        # Instance principal (OKE workload identity)
-        try:
-            from oci.auth.signers import InstancePrincipalsSecurityTokenSigner  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-
-            signer = InstancePrincipalsSecurityTokenSigner()
-            region = getattr(signer, "region", None) or "us-ashburn-1"
-            return {
-                "oci_region": region,
-                "oci_compartment_id": self.oci_compartment_id,
-                "oci_signer": signer,
-            }
-        except Exception as e:
-            logger.error("No OCI credentials available for LLM calls: %s", e)
-            return {}
 
     def __repr__(self) -> str:
         """Return string representation of config (without secrets)."""
