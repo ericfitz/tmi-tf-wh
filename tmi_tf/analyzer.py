@@ -493,7 +493,7 @@ def run_analysis(
                 "\n[9/9] Extracting and creating threats from security issues..."
             )
             try:
-                threat_processor = ThreatProcessor(config)
+                threat_processor = ThreatProcessor(llm_provider)
                 all_threats = []
 
                 for analysis in analyses:

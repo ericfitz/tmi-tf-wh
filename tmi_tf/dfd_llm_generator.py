@@ -77,13 +77,20 @@ class DFDLLMGenerator:
             )
 
             response = retry_transient_llm_call(
-                lambda: self.llm_provider.complete(self.system_prompt, user_prompt, max_tokens=16000, timeout=180.0),
+                lambda: self.llm_provider.complete(
+                    self.system_prompt, user_prompt, max_tokens=16000, timeout=180.0
+                ),
                 description="DFD generation",
             )
             self.input_tokens = response.input_tokens
             self.output_tokens = response.output_tokens
             self.total_cost = response.cost
-            logger.info("DFD generation: %d input tokens, %d output tokens, $%.4f", self.input_tokens, self.output_tokens, self.total_cost)
+            logger.info(
+                "DFD generation: %d input tokens, %d output tokens, $%.4f",
+                self.input_tokens,
+                self.output_tokens,
+                self.total_cost,
+            )
             if not response.text:
                 logger.error("Empty content in LLM response")
                 return None

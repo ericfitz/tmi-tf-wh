@@ -181,5 +181,3 @@ class TestServiceEndpointConfig:
         assert config.queue_endpoint is None
         assert config.vault_endpoint is None
         assert config.secrets_endpoint is None
-
-

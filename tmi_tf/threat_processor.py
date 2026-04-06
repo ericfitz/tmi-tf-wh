@@ -154,9 +154,7 @@ class ThreatProcessor:
                 return []
             threats_data = extract_json_array(response.text)
             if not threats_data:
-                logger.warning(
-                    "No JSON array found in LLM response for %s", repo_name
-                )
+                logger.warning("No JSON array found in LLM response for %s", repo_name)
                 return []
             threats = []
             for threat_data in threats_data:
