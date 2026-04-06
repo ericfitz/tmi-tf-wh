@@ -1,23 +1,14 @@
 """Threat extraction and processing from security analysis."""
 
-import json
 import logging
-import os
-import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union, cast
+from typing import List, Dict, Any, Optional, Union
 
-import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-from litellm import ModelResponse  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-
-from tmi_tf.config import Config, save_llm_response
+from tmi_tf.json_extract import extract_json_array
+from tmi_tf.providers import LLMProvider
 from tmi_tf.retry import retry_transient_llm_call
 
 logger = logging.getLogger(__name__)
-
-# Suppress LiteLLM's verbose logging
-litellm.suppress_debug_info = True  # type: ignore[assignment]
-litellm.drop_params = False  # type: ignore[assignment]
 
 
 class SecurityThreat:
@@ -75,56 +66,20 @@ class SecurityThreat:
 class ThreatProcessor:
     """Processes analysis content to extract and structure security threats."""
 
-    # LiteLLM model prefixes for each provider
-    MODEL_PREFIXES = {
-        "anthropic": "anthropic/",
-        "openai": "openai/",
-        "xai": "xai/",
-        "gemini": "gemini/",
-        "oci": "oci/",
-    }
-
-    def __init__(self, config: Config):
+    def __init__(self, llm_provider: LLMProvider):
         """
         Initialize threat processor.
 
         Args:
-            config: Application configuration
+            llm_provider: LLM provider instance
         """
-        self.config = config
-        self.provider = getattr(config, "llm_provider", "anthropic")
-        model_name = config.llm_model or Config.DEFAULT_MODELS.get(
-            self.provider, Config.DEFAULT_MODELS["anthropic"]
-        )
-        self.model = self._normalize_model_name(model_name)
-        self._configure_api_keys()
-        self.oci_kwargs = config.get_oci_completion_kwargs()
+        self.llm_provider = llm_provider
         self._load_prompts()
 
         # Token and cost tracking for threat extraction
         self.input_tokens = 0
         self.output_tokens = 0
         self.total_cost = 0.0
-
-    def _normalize_model_name(self, model: str) -> str:
-        """
-        Normalize model name to include proper LiteLLM prefix.
-
-        Args:
-            model: Model name from config
-
-        Returns:
-            Normalized model name with appropriate prefix
-        """
-        # If model already has a prefix, return as-is
-        if "/" in model:
-            return model
-
-        # Add prefix based on provider
-        prefix = self.MODEL_PREFIXES.get(self.provider, "")
-        if prefix:
-            return f"{prefix}{model}"
-        return model
 
     def _load_prompts(self):
         """Load threat extraction prompts from files."""
@@ -160,29 +115,11 @@ class ThreatProcessor:
             "Extract and structure all security threats. Respond with ONLY the JSON array."
         )
 
-    def _configure_api_keys(self):
-        """Configure API keys for LiteLLM based on the selected provider."""
-        if self.provider == "anthropic":
-            if (
-                hasattr(self.config, "anthropic_api_key")
-                and self.config.anthropic_api_key
-            ):
-                os.environ["ANTHROPIC_API_KEY"] = self.config.anthropic_api_key
-        elif self.provider == "openai":
-            if hasattr(self.config, "openai_api_key") and self.config.openai_api_key:
-                os.environ["OPENAI_API_KEY"] = self.config.openai_api_key
-        elif self.provider == "xai":
-            if hasattr(self.config, "xai_api_key") and self.config.xai_api_key:
-                os.environ["XAI_API_KEY"] = self.config.xai_api_key
-        elif self.provider == "gemini":
-            if hasattr(self.config, "gemini_api_key") and self.config.gemini_api_key:
-                os.environ["GEMINI_API_KEY"] = self.config.gemini_api_key
-
     def extract_threats_from_analysis(
         self, analysis_content: str, repo_name: str
     ) -> List[SecurityThreat]:
         """
-        Extract structured threats from analysis markdown content using Claude.
+        Extract structured threats from analysis markdown content using LLM.
 
         Args:
             analysis_content: Markdown content from Terraform analysis
@@ -192,69 +129,35 @@ class ThreatProcessor:
             List of SecurityThreat objects
         """
         logger.info(f"Extracting threats from analysis for {repo_name}")
-
-        # Build prompts from templates
         system_prompt = self.system_prompt
         user_prompt = self.user_prompt_template.format(
-            repo_name=repo_name,
-            analysis_content=analysis_content,
+            repo_name=repo_name, analysis_content=analysis_content
         )
-
         try:
-            response = cast(
-                ModelResponse,
-                retry_transient_llm_call(
-                    lambda: litellm.completion(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        max_tokens=16000,
-                        timeout=180.0,
-                        **self.oci_kwargs,
-                    ),
-                    description=f"Threat extraction for {repo_name}",
+            response = retry_transient_llm_call(
+                lambda: self.llm_provider.complete(
+                    system_prompt, user_prompt, max_tokens=16000, timeout=180.0
                 ),
+                description=f"Threat extraction for {repo_name}",
             )
-
-            # Extract token usage from response and accumulate
-            usage = getattr(response, "usage", None)
-            if usage:
-                self.input_tokens += getattr(usage, "prompt_tokens", 0) or 0
-                self.output_tokens += getattr(usage, "completion_tokens", 0) or 0
-                # Calculate cost using litellm's cost calculator
-                try:
-                    call_cost = litellm.completion_cost(completion_response=response)
-                    self.total_cost += call_cost
-                except Exception:
-                    pass
-                logger.info(
-                    f"Threat extraction for {repo_name}: "
-                    f"{getattr(usage, 'prompt_tokens', 0)} input tokens, "
-                    f"{getattr(usage, 'completion_tokens', 0)} output tokens"
+            self.input_tokens += response.input_tokens
+            self.output_tokens += response.output_tokens
+            self.total_cost += response.cost
+            logger.info(
+                "Threat extraction for %s: %d input tokens, %d output tokens",
+                repo_name,
+                response.input_tokens,
+                response.output_tokens,
+            )
+            if not response.text:
+                logger.warning("Empty response from LLM for %s", repo_name)
+                return []
+            threats_data = extract_json_array(response.text)
+            if not threats_data:
+                logger.warning(
+                    "No JSON array found in LLM response for %s", repo_name
                 )
-
-            # Extract JSON from response
-            content = response.choices[0].message.content  # type: ignore[union-attr]
-            if not content:
-                logger.warning(f"Empty response from LLM for {repo_name}")
                 return []
-            response_text = content.strip()
-
-            # Save response to file for debugging
-            response_file = save_llm_response(response_text, f"threats_{repo_name}")
-            logger.debug(f"Threat extraction response saved to {response_file}")
-
-            # Try to find JSON array in the response
-            json_match = re.search(r"\[[\s\S]*\]", response_text)
-            if not json_match:
-                logger.warning(f"No JSON array found in LLM response for {repo_name}")
-                return []
-
-            threats_data = json.loads(json_match.group(0))
-
-            # Convert to SecurityThreat objects
             threats = []
             for threat_data in threats_data:
                 threat = SecurityThreat(
@@ -270,12 +173,10 @@ class ThreatProcessor:
                     status="Open",
                 )
                 threats.append(threat)
-
-            logger.info(f"Extracted {len(threats)} threats from {repo_name}")
+            logger.info("Extracted %d threats from %s", len(threats), repo_name)
             return threats
-
         except Exception as e:
-            logger.error(f"Failed to extract threats from analysis: {e}")
+            logger.error("Failed to extract threats from analysis: %s", e)
             return []
 
     def threats_from_findings(
