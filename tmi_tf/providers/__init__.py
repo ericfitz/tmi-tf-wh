@@ -1,4 +1,4 @@
-"""Provider abstraction layer for secrets and queue operations."""
+"""Provider abstraction layer for secrets, queue, and LLM operations."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -112,4 +112,23 @@ def get_queue_provider(config: "Config") -> QueueProvider:
     else:
         raise ValueError(
             f"Unknown queue provider: {config.queue_provider!r}. Must be 'oci'."
+        )
+
+
+def get_llm_provider(config: "Config") -> LLMProvider:
+    """Create an LLMProvider based on configuration."""
+    if config.llm_provider == "oci":
+        from tmi_tf.providers.oci import OciLLMProvider
+
+        return OciLLMProvider(model=config.llm_model)
+    elif config.llm_provider in ("anthropic", "openai", "xai", "gemini"):
+        from tmi_tf.providers.api_key import ApiKeyLLMProvider
+
+        return ApiKeyLLMProvider(
+            provider=config.llm_provider, model=config.llm_model
+        )
+    else:
+        raise ValueError(
+            f"Unknown LLM provider: {config.llm_provider!r}. "
+            f"Must be 'anthropic', 'openai', 'xai', 'gemini', or 'oci'."
         )
