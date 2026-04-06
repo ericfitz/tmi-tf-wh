@@ -58,6 +58,11 @@ class LLMProvider(Protocol):
         """Fully-qualified model name with LiteLLM prefix."""
         ...
 
+    @property
+    def provider(self) -> str:
+        """Provider name (e.g. 'anthropic', 'openai', 'oci')."""
+        ...
+
     def complete(
         self,
         system_prompt: str,
@@ -124,9 +129,7 @@ def get_llm_provider(config: "Config") -> LLMProvider:
     elif config.llm_provider in ("anthropic", "openai", "xai", "gemini"):
         from tmi_tf.providers.api_key import ApiKeyLLMProvider
 
-        return ApiKeyLLMProvider(
-            provider=config.llm_provider, model=config.llm_model
-        )
+        return ApiKeyLLMProvider(provider=config.llm_provider, model=config.llm_model)
     else:
         raise ValueError(
             f"Unknown LLM provider: {config.llm_provider!r}. "

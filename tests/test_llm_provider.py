@@ -154,7 +154,9 @@ class TestApiKeyLLMProvider:
 
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-real-key"}, clear=False)
     def test_model_with_prefix_kept_as_is(self):
-        provider = ApiKeyLLMProvider(provider="anthropic", model="anthropic/claude-opus-4-6")
+        provider = ApiKeyLLMProvider(
+            provider="anthropic", model="anthropic/claude-opus-4-6"
+        )
         assert provider.model == "anthropic/claude-opus-4-6"
 
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-real-key"}, clear=False)

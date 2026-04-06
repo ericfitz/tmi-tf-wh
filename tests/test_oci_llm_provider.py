@@ -26,7 +26,10 @@ class TestOciLLMProvider:
         with patch("pathlib.Path.exists", return_value=True):
             with patch("oci.config.from_file", return_value=mock_oci_config):
                 provider = OciLLMProvider(model=None)
-                assert provider._extra_kwargs["oci_compartment_id"] == "ocid1.compartment.oc1..test"
+                assert (
+                    provider._extra_kwargs["oci_compartment_id"]
+                    == "ocid1.compartment.oc1..test"
+                )
                 assert provider._extra_kwargs["oci_region"] == "us-ashburn-1"
 
     @patch.dict(os.environ, {}, clear=False)
@@ -69,7 +72,9 @@ class TestOciLLMProvider:
             "key_file": "/path/to/key.pem",
         }
         with patch("pathlib.Path.exists", return_value=True):
-            with patch("oci.config.from_file", return_value=mock_oci_config) as mock_from_file:
+            with patch(
+                "oci.config.from_file", return_value=mock_oci_config
+            ) as mock_from_file:
                 OciLLMProvider(model=None)
                 call_args = mock_from_file.call_args
                 assert call_args[0][1] == "CUSTOM"

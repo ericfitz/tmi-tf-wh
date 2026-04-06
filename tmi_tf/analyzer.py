@@ -19,6 +19,7 @@ from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
 from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
 from tmi_tf.markdown_generator import MarkdownGenerator
+from tmi_tf.providers import get_llm_provider
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
 from tmi_tf.tf_validator import validate_and_sanitize
 from tmi_tf.threat_processor import ThreatProcessor
@@ -128,7 +129,7 @@ def run_analysis(
         logger.info("\n[1/7] Initializing clients...")
         github_client = GitHubClient(config)
         repo_analyzer = RepositoryAnalyzer(config)
-        llm_analyzer = LLMAnalyzer(config)
+        llm_analyzer = LLMAnalyzer(get_llm_provider(config))
         markdown_gen = MarkdownGenerator()
 
         tmi_client.update_status_note(threat_model_id, "Analysis started")

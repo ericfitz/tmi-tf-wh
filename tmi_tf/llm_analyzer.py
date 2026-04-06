@@ -12,24 +12,17 @@ Analysis runs in sequential phases:
 
 import json
 import logging
-import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-
+from tmi_tf.cvss_scorer import score_cvss4_vector
+from tmi_tf.json_extract import extract_json_array, extract_json_object
+from tmi_tf.providers import LLMProvider, LLMResponse
+from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
 
-from tmi_tf.config import save_llm_response
-from tmi_tf.cvss_scorer import score_cvss4_vector
-from tmi_tf.repo_analyzer import TerraformRepository
-
 logger = logging.getLogger(__name__)
-
-# Suppress LiteLLM's verbose logging
-litellm.suppress_debug_info = True  # type: ignore[assignment]
-litellm.drop_params = False  # type: ignore[assignment]
 
 
 class TerraformAnalysis:
@@ -104,7 +97,7 @@ class TerraformAnalysis:
         status = "success" if self.success else "failed"
         return f"TerraformAnalysis(repo={self.repo_name}, status={status}, model={self.model})"
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict:  # type: ignore[type-arg]
         """Convert to dictionary."""
         return {
             "inventory": self.inventory,
@@ -121,55 +114,28 @@ class TerraformAnalysis:
 class LLMAnalyzer:
     """Phased LLM analyzer for Terraform files using LiteLLM."""
 
-    # Default models for each provider
-    DEFAULT_MODELS = {
-        "anthropic": "claude-opus-4-6",
-        "openai": "gpt-5.4",
-        "xai": "xai/grok-4-1-fast-reasoning",
-        "gemini": "gemini/gemini-3.1-pro-preview",
-        "oci": "oci/xai.grok-4",
-    }
-
-    # LiteLLM model prefixes for each provider
-    MODEL_PREFIXES = {
-        "anthropic": "anthropic/",
-        "openai": "openai/",
-        "xai": "xai/",
-        "gemini": "gemini/",
-        "oci": "oci/",
-    }
-
-    def __init__(self, config):
+    def __init__(self, llm_provider: LLMProvider):
         """
         Initialize LLM analyzer.
 
         Args:
-            config: Application configuration with LLM provider settings
+            llm_provider: LLM provider instance to use for completion calls
         """
-        self.config = config
-        self.provider = getattr(config, "llm_provider", "anthropic")
-
-        # Determine the model to use
-        if hasattr(config, "llm_model") and config.llm_model:
-            self.model = self._normalize_model_name(config.llm_model)
-        else:
-            self.model = self.DEFAULT_MODELS.get(
-                self.provider, self.DEFAULT_MODELS["anthropic"]
-            )
-
-        # Set up API keys for LiteLLM based on provider
-        self._configure_api_keys()
-        self.oci_kwargs = config.get_oci_completion_kwargs()
+        self.llm_provider = llm_provider
+        self.model = llm_provider.model
+        self.provider = llm_provider.provider
 
         # Load all phase prompts
         self.prompts_dir = Path(__file__).parent.parent / "prompts"
         self._load_phase_prompts()
 
         logger.info(
-            f"LLM analyzer initialized: provider={self.provider}, model={self.model}"
+            "LLM analyzer initialized: provider=%s, model=%s",
+            self.provider,
+            self.model,
         )
 
-    def _load_phase_prompts(self):
+    def _load_phase_prompts(self) -> None:
         """Load prompt pairs for all analysis phases."""
         self.inventory_system = self._load_prompt("inventory_system.txt")
         self.inventory_user_template = self._load_prompt("inventory_user.txt")
@@ -186,46 +152,6 @@ class LLMAnalyzer:
             "threat_analysis_user.txt"
         )
 
-    def _normalize_model_name(self, model: str) -> str:
-        """
-        Normalize model name to include proper LiteLLM prefix.
-
-        Args:
-            model: Model name from config
-
-        Returns:
-            Normalized model name with appropriate prefix
-        """
-        # If model already has a prefix, return as-is
-        if "/" in model:
-            return model
-
-        # Add prefix based on provider
-        prefix = self.MODEL_PREFIXES.get(self.provider, "")
-        if prefix and not model.startswith(prefix):
-            return f"{prefix}{model}"
-        return model
-
-    def _configure_api_keys(self):
-        """Configure API keys for LiteLLM based on the selected provider."""
-        import os
-
-        if self.provider == "anthropic":
-            if (
-                hasattr(self.config, "anthropic_api_key")
-                and self.config.anthropic_api_key
-            ):
-                os.environ["ANTHROPIC_API_KEY"] = self.config.anthropic_api_key
-        elif self.provider == "openai":
-            if hasattr(self.config, "openai_api_key") and self.config.openai_api_key:
-                os.environ["OPENAI_API_KEY"] = self.config.openai_api_key
-        elif self.provider == "xai":
-            if hasattr(self.config, "xai_api_key") and self.config.xai_api_key:
-                os.environ["XAI_API_KEY"] = self.config.xai_api_key
-        elif self.provider == "gemini":
-            if hasattr(self.config, "gemini_api_key") and self.config.gemini_api_key:
-                os.environ["GEMINI_API_KEY"] = self.config.gemini_api_key
-
     def _load_prompt(self, filename: str) -> str:
         """
         Load prompt from file.
@@ -240,7 +166,7 @@ class LLMAnalyzer:
         if prompt_file.exists():
             return prompt_file.read_text(encoding="utf-8")
         else:
-            logger.warning(f"Prompt file not found: {prompt_file}")
+            logger.warning("Prompt file not found: %s", prompt_file)
             return ""
 
     def analyze_repository(
@@ -261,7 +187,7 @@ class LLMAnalyzer:
         Returns:
             TerraformAnalysis result with structured JSON from all phases
         """
-        logger.info(f"Analyzing repository: {terraform_repo.name}")
+        logger.info("Analyzing repository: %s", terraform_repo.name)
 
         total_input_tokens = 0
         total_output_tokens = 0
@@ -276,7 +202,7 @@ class LLMAnalyzer:
             # Phase 1: Inventory Extraction
             if status_callback:
                 status_callback("Phase 1 (Inventory) started")
-            logger.info(f"Phase 1: Extracting inventory for {terraform_repo.name}")
+            logger.info("Phase 1: Extracting inventory for %s", terraform_repo.name)
             inventory_user = self.inventory_user_template.format(
                 repo_name=terraform_repo.name,
                 repo_url=terraform_repo.url,
@@ -299,8 +225,9 @@ class LLMAnalyzer:
                 )
 
             logger.info(
-                f"Phase 1 complete: {len(inventory.get('components', []))} components, "
-                f"{len(inventory.get('services', []))} services"
+                "Phase 1 complete: %d components, %d services",
+                len(inventory.get("components", [])),
+                len(inventory.get("services", [])),
             )
             if status_callback:
                 status_callback("Phase 1 (Inventory) complete")
@@ -308,7 +235,7 @@ class LLMAnalyzer:
             # Phase 2: Infrastructure Analysis
             if status_callback:
                 status_callback("Phase 2 (Infrastructure) started")
-            logger.info(f"Phase 2: Analyzing infrastructure for {terraform_repo.name}")
+            logger.info("Phase 2: Analyzing infrastructure for %s", terraform_repo.name)
             inventory_json_str = json.dumps(inventory, indent=2)
             infra_user = self.infra_user_template.format(
                 repo_name=terraform_repo.name,
@@ -330,8 +257,9 @@ class LLMAnalyzer:
                 raise ValueError("Phase 2 (infrastructure) returned empty result")
 
             logger.info(
-                f"Phase 2 complete: {len(infrastructure.get('relationships', []))} relationships, "
-                f"{len(infrastructure.get('data_flows', []))} data flows"
+                "Phase 2 complete: %d relationships, %d data flows",
+                len(infrastructure.get("relationships", [])),
+                len(infrastructure.get("data_flows", [])),
             )
             if status_callback:
                 status_callback("Phase 2 (Infrastructure) complete")
@@ -339,7 +267,7 @@ class LLMAnalyzer:
             # Phase 3a: Threat Identification
             if status_callback:
                 status_callback("Phase 3a (Threat Identification) started")
-            logger.info(f"Phase 3a: Identifying threats for {terraform_repo.name}")
+            logger.info("Phase 3a: Identifying threats for %s", terraform_repo.name)
             infrastructure_json_str = json.dumps(infrastructure, indent=2)
             threat_id_user = self.threat_id_user_template.format(
                 repo_name=terraform_repo.name,
@@ -364,7 +292,7 @@ class LLMAnalyzer:
             total_output_tokens += tid_tokens_out
             total_cost += tid_cost
 
-            logger.info(f"Phase 3a complete: identified {len(raw_threats)} threats")
+            logger.info("Phase 3a complete: identified %d threats", len(raw_threats))
             if status_callback:
                 status_callback(
                     f"Phase 3a complete: {len(raw_threats)} threats identified"
@@ -378,7 +306,10 @@ class LLMAnalyzer:
             for i, raw_threat in enumerate(raw_threats, 1):
                 threat_name = raw_threat.get("name", "Unnamed Threat")
                 logger.info(
-                    f"Phase 3b: Analyzing threat {i}/{len(raw_threats)}: {threat_name}"
+                    "Phase 3b: Analyzing threat %d/%d: %s",
+                    i,
+                    len(raw_threats),
+                    threat_name,
                 )
                 if status_callback:
                     status_callback(
@@ -414,8 +345,9 @@ class LLMAnalyzer:
 
                     if not analysis_result:
                         logger.warning(
-                            f"Phase 3b: Failed to parse analysis for threat "
-                            f"'{threat_name}', skipping"
+                            "Phase 3b: Failed to parse analysis for threat "
+                            "'%s', skipping",
+                            threat_name,
                         )
                         continue
 
@@ -431,8 +363,10 @@ class LLMAnalyzer:
                         )
                         if cvss_error:
                             logger.warning(
-                                f"Phase 3b: Invalid CVSS vector for "
-                                f"'{threat_name}': {cvss_vector} — {cvss_error}"
+                                "Phase 3b: Invalid CVSS vector for '%s': %s — %s",
+                                threat_name,
+                                cvss_vector,
+                                cvss_error,
                             )
                         else:
                             score = cvss_score
@@ -460,13 +394,14 @@ class LLMAnalyzer:
 
                 except Exception as e:
                     logger.error(
-                        f"Phase 3b: Failed to analyze threat '{threat_name}': {e}"
+                        "Phase 3b: Failed to analyze threat '%s': %s", threat_name, e
                     )
                     continue
 
             logger.info(
-                f"Phase 3b complete: {len(security_findings)} threats analyzed "
-                f"out of {len(raw_threats)} identified"
+                "Phase 3b complete: %d threats analyzed out of %d identified",
+                len(security_findings),
+                len(raw_threats),
             )
             if status_callback:
                 status_callback("Phase 3 (Security) complete")
@@ -474,10 +409,14 @@ class LLMAnalyzer:
             elapsed_time = time.time() - start_time
 
             logger.info(
-                f"All phases complete for {terraform_repo.name} in {elapsed_time:.2f}s. "
-                f"Found {len(security_findings)} security findings. "
-                f"Total tokens: {total_input_tokens + total_output_tokens}, "
-                f"Cost: ${total_cost:.4f}"
+                "All phases complete for %s in %.2fs. "
+                "Found %d security findings. "
+                "Total tokens: %d, Cost: $%.4f",
+                terraform_repo.name,
+                elapsed_time,
+                len(security_findings),
+                total_input_tokens + total_output_tokens,
+                total_cost,
             )
 
             return TerraformAnalysis(
@@ -499,7 +438,7 @@ class LLMAnalyzer:
             )
 
         except Exception as e:
-            logger.error(f"Failed to analyze {terraform_repo.name}: {e}")
+            logger.error("Failed to analyze %s: %s", terraform_repo.name, e)
             elapsed_time = time.time() - start_time
             return TerraformAnalysis(
                 repo_name=terraform_repo.name,
@@ -513,6 +452,44 @@ class LLMAnalyzer:
                 total_cost=total_cost,
                 error_message=f"**Analysis Failed**: {str(e)}",
             )
+
+    def _call_llm(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        phase_name: str,
+        max_tokens: int = 16000,
+        timeout: float = 300.0,
+    ) -> LLMResponse:
+        """
+        Make a single LLM API call via the provider.
+
+        Args:
+            system_prompt: System prompt
+            user_prompt: User prompt
+            phase_name: Name of the phase (for logging)
+            max_tokens: Max output tokens
+            timeout: Request timeout in seconds
+
+        Returns:
+            LLMResponse with text, tokens, cost, and finish_reason
+        """
+        logger.info("Phase %s: Calling LLM provider", phase_name)
+        response = retry_transient_llm_call(
+            lambda: self.llm_provider.complete(
+                system_prompt, user_prompt, max_tokens, timeout
+            ),
+            description=f"Phase {phase_name}",
+        )
+        logger.info(
+            "Phase %s: %d input, %d output tokens, finish_reason=%s, $%.4f",
+            phase_name,
+            response.input_tokens,
+            response.output_tokens,
+            response.finish_reason,
+            response.cost,
+        )
+        return response
 
     def _call_llm_json(
         self,
@@ -535,21 +512,23 @@ class LLMAnalyzer:
         Returns:
             Tuple of (parsed JSON dict or None, input_tokens, output_tokens, cost)
         """
-        response_text, tokens_in, tokens_out, cost = self._call_llm(
+        response = self._call_llm(
             system_prompt, user_prompt, phase_name, max_tokens, timeout
         )
 
-        if not response_text:
-            return None, tokens_in, tokens_out, cost
+        if not response.text:
+            return None, response.input_tokens, response.output_tokens, response.cost
 
-        parsed = self._extract_json_object(response_text)
+        parsed = extract_json_object(response.text)
         if not parsed:
-            preview = response_text[:500] if response_text else "(empty)"
+            preview = response.text[:500]
             logger.error(
-                f"Phase {phase_name}: Failed to parse JSON object from response. "
-                f"Response length: {len(response_text)} chars. Preview: {preview}"
+                "Phase %s: Failed to parse JSON object. Length: %d. Preview: %s",
+                phase_name,
+                len(response.text),
+                preview,
             )
-        return parsed, tokens_in, tokens_out, cost
+        return parsed, response.input_tokens, response.output_tokens, response.cost
 
     def _call_llm_json_array(
         self,
@@ -572,191 +551,20 @@ class LLMAnalyzer:
         Returns:
             Tuple of (parsed JSON list, input_tokens, output_tokens, cost)
         """
-        response_text, tokens_in, tokens_out, cost = self._call_llm(
+        response = self._call_llm(
             system_prompt, user_prompt, phase_name, max_tokens, timeout
         )
 
-        if not response_text:
-            return [], tokens_in, tokens_out, cost
+        if not response.text:
+            return [], response.input_tokens, response.output_tokens, response.cost
 
-        parsed = self._extract_json_array(response_text)
+        parsed = extract_json_array(response.text)
         if parsed is None:
             logger.error(
-                f"Phase {phase_name}: Failed to parse JSON array from response"
+                "Phase %s: Failed to parse JSON array from response", phase_name
             )
-            return [], tokens_in, tokens_out, cost
-        return parsed, tokens_in, tokens_out, cost
-
-    def _call_llm(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        phase_name: str,
-        max_tokens: int = 16000,
-        timeout: float = 300.0,
-    ) -> tuple[Optional[str], int, int, float]:
-        """
-        Make a single LLM API call via LiteLLM.
-
-        Args:
-            system_prompt: System prompt
-            user_prompt: User prompt
-            phase_name: Name of the phase (for logging)
-            max_tokens: Max output tokens
-            timeout: Request timeout in seconds
-
-        Returns:
-            Tuple of (response text or None, input_tokens, output_tokens, cost)
-        """
-        prompt_chars = len(system_prompt) + len(user_prompt)
-        estimated_tokens = prompt_chars // 4
-        logger.info(
-            f"Phase {phase_name}: Calling {self.provider} ({self.model}), "
-            f"prompt ~{prompt_chars} chars (~{estimated_tokens} tokens est.)"
-        )
-
-        response = retry_transient_llm_call(
-            lambda: litellm.completion(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=max_tokens,
-                timeout=timeout,
-                **self.oci_kwargs,
-            ),
-            description=f"Phase {phase_name}",
-        )
-
-        # Extract token usage
-        usage = getattr(response, "usage", None)
-        tokens_in = usage.prompt_tokens if usage else 0
-        tokens_out = usage.completion_tokens if usage else 0
-
-        # Extract finish reason for diagnostics
-        choices = response.choices  # type: ignore[union-attr]
-        finish_reason = (
-            getattr(choices[0], "finish_reason", "unknown") if choices else "no_choices"
-        )
-
-        # Calculate cost
-        try:
-            cost = litellm.completion_cost(completion_response=response)
-        except Exception:
-            cost = 0.0
-
-        logger.info(
-            f"Phase {phase_name}: {tokens_in} input, {tokens_out} output tokens, "
-            f"finish_reason={finish_reason}, ${cost:.4f}"
-        )
-
-        if finish_reason == "length":
-            logger.warning(
-                f"Phase {phase_name}: Response truncated (finish_reason=length). "
-                f"max_tokens={max_tokens} may be insufficient."
-            )
-
-        # LiteLLM returns ModelResponse with choices attribute at runtime
-        content = response.choices[0].message.content  # type: ignore[union-attr]
-        if not content:
-            logger.warning(
-                f"Phase {phase_name}: Empty response from LLM. "
-                f"finish_reason={finish_reason}, tokens_out={tokens_out}, "
-                f"model={self.model}"
-            )
-            return None, tokens_in, tokens_out, cost
-
-        # Save response to file for debugging
-        response_file = save_llm_response(content, phase_name)
-        logger.info(f"Phase {phase_name}: Response saved to {response_file}")
-
-        return content.strip(), tokens_in, tokens_out, cost
-
-    def _extract_json_object(self, text: str) -> Optional[Dict[str, Any]]:
-        """
-        Extract a JSON object from LLM response text.
-
-        Handles plain JSON, JSON in code blocks, and JSON embedded in text.
-
-        Args:
-            text: Response text
-
-        Returns:
-            Parsed JSON dict or None
-        """
-        # Try parsing directly
-        try:
-            result = json.loads(text)
-            if isinstance(result, dict):
-                return result
-        except json.JSONDecodeError:
-            pass
-
-        # Try extracting from code block
-        code_block_pattern = r"```(?:json)?\s*\n(.*?)\n```"
-        matches = re.findall(code_block_pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                result = json.loads(match)
-                if isinstance(result, dict):
-                    return result
-            except json.JSONDecodeError:
-                continue
-
-        # Try finding JSON object in text
-        json_pattern = r"\{[\s\S]*\}"
-        matches = re.findall(json_pattern, text)
-        for match in matches:
-            try:
-                result = json.loads(match)
-                if isinstance(result, dict):
-                    return result
-            except json.JSONDecodeError:
-                continue
-
-        return None
-
-    def _extract_json_array(self, text: str) -> Optional[List[Dict[str, Any]]]:
-        """
-        Extract a JSON array from LLM response text.
-
-        Args:
-            text: Response text
-
-        Returns:
-            Parsed JSON list or None
-        """
-        # Try parsing directly
-        try:
-            result = json.loads(text)
-            if isinstance(result, list):
-                return result
-        except json.JSONDecodeError:
-            pass
-
-        # Try extracting from code block
-        code_block_pattern = r"```(?:json)?\s*\n(.*?)\n```"
-        matches = re.findall(code_block_pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                result = json.loads(match)
-                if isinstance(result, list):
-                    return result
-            except json.JSONDecodeError:
-                continue
-
-        # Try finding JSON array in text
-        json_match = re.search(r"\[[\s\S]*\]", text)
-        if json_match:
-            try:
-                result = json.loads(json_match.group(0))
-                if isinstance(result, list):
-                    return result
-            except json.JSONDecodeError:
-                pass
-
-        return None
+            return [], response.input_tokens, response.output_tokens, response.cost
+        return parsed, response.input_tokens, response.output_tokens, response.cost
 
     def _format_terraform_contents(self, tf_contents: dict[str, str]) -> str:
         """

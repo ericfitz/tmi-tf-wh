@@ -67,9 +67,7 @@ class BaseLLMProvider:
         # Extract finish reason
         choices = response.choices  # type: ignore[union-attr]
         finish_reason = (
-            getattr(choices[0], "finish_reason", "unknown")
-            if choices
-            else "no_choices"
+            getattr(choices[0], "finish_reason", "unknown") if choices else "no_choices"
         )
 
         # Calculate cost
