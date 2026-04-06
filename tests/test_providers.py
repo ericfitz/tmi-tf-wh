@@ -9,6 +9,8 @@ import pytest  # type: ignore # ty:ignore[unresolved-import]
 
 from tmi_tf.providers import (  # noqa: F401
     VAULT_SECRET_MAP,
+    LLMProvider,
+    LLMResponse,
     QueueMessage,
     QueueProvider,
     SecretProvider,
@@ -456,6 +458,38 @@ class TestGetQueueProvider:
         config.queue_provider = "aws"
         with pytest.raises(ValueError, match="Unknown queue provider"):
             get_queue_provider(config)
+
+
+class TestLLMResponse:
+    def test_dataclass_fields(self):
+        resp = LLMResponse(
+            text="hello",
+            input_tokens=100,
+            output_tokens=50,
+            cost=0.01,
+            finish_reason="stop",
+        )
+        assert resp.text == "hello"
+        assert resp.input_tokens == 100
+        assert resp.output_tokens == 50
+        assert resp.cost == 0.01
+        assert resp.finish_reason == "stop"
+
+    def test_none_text(self):
+        resp = LLMResponse(
+            text=None,
+            input_tokens=0,
+            output_tokens=0,
+            cost=0.0,
+            finish_reason="stop",
+        )
+        assert resp.text is None
+
+
+class TestLLMProviderProtocol:
+    def test_protocol_has_model_and_complete(self):
+        assert hasattr(LLMProvider, "model")
+        assert hasattr(LLMProvider, "complete")
 
 
 class TestQueueProviderConfig:

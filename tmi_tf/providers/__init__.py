@@ -39,6 +39,36 @@ class QueueProvider(Protocol):
         ...
 
 
+@dataclass
+class LLMResponse:
+    """Response from an LLM completion call."""
+
+    text: str | None
+    input_tokens: int
+    output_tokens: int
+    cost: float
+    finish_reason: str
+
+
+class LLMProvider(Protocol):
+    """Protocol for LLM provider implementations."""
+
+    @property
+    def model(self) -> str:
+        """Fully-qualified model name with LiteLLM prefix."""
+        ...
+
+    def complete(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int = 16000,
+        timeout: float = 300.0,
+    ) -> LLMResponse:
+        """Make a single LLM completion call."""
+        ...
+
+
 VAULT_SECRET_MAP = {
     "webhook-secret": "WEBHOOK_SECRET",
     "tmi-client-id": "TMI_CLIENT_ID",
