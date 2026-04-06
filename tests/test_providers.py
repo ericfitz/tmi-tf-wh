@@ -5,7 +5,7 @@ import os
 from dataclasses import fields
 from unittest.mock import MagicMock, patch
 
-import pytest
+import pytest  # type: ignore # ty:ignore[unresolved-import]
 
 from tmi_tf.providers import (  # noqa: F401
     VAULT_SECRET_MAP,
