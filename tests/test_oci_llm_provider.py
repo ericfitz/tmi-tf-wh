@@ -4,7 +4,7 @@
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
+import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.providers.oci import OciLLMProvider
 
