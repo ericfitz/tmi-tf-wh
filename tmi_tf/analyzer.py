@@ -129,7 +129,8 @@ def run_analysis(
         logger.info("\n[1/7] Initializing clients...")
         github_client = GitHubClient(config)
         repo_analyzer = RepositoryAnalyzer(config)
-        llm_analyzer = LLMAnalyzer(get_llm_provider(config))
+        llm_provider = get_llm_provider(config)
+        llm_analyzer = LLMAnalyzer(llm_provider)
         markdown_gen = MarkdownGenerator()
 
         tmi_client.update_status_note(threat_model_id, "Analysis started")
@@ -400,7 +401,7 @@ def run_analysis(
             tmi_client.update_status_note(threat_model_id, "Generating DFD diagram")
             logger.info("\n[8/9] Generating data flow diagram...")
             try:
-                dfd_generator = DFDLLMGenerator(config=config)
+                dfd_generator = DFDLLMGenerator(llm_provider)
 
                 combined_inventory: dict = {"components": [], "services": []}
                 combined_infrastructure: dict = {
