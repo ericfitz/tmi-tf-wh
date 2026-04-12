@@ -178,13 +178,13 @@ class TestGetLLMProvider:
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
     def test_returns_api_key_provider_for_anthropic(self):
         config = SimpleNamespace(llm_provider="anthropic", llm_model=None)
-        provider = get_llm_provider(config)  # ty:ignore[invalid-argument-type]
+        provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         assert provider.model.startswith("anthropic/")
 
     @patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False)
     def test_returns_api_key_provider_for_openai(self):
         config = SimpleNamespace(llm_provider="openai", llm_model="gpt-4o")
-        provider = get_llm_provider(config)  # ty:ignore[invalid-argument-type]
+        provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
         assert provider.model == "openai/gpt-4o"
 
     @patch.dict(
@@ -203,10 +203,10 @@ class TestGetLLMProvider:
         with patch("pathlib.Path.exists", return_value=True):
             with patch("oci.config.from_file", return_value=mock_oci_config):
                 config = SimpleNamespace(llm_provider="oci", llm_model=None)
-                provider = get_llm_provider(config)  # ty:ignore[invalid-argument-type]
+                provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
                 assert provider.model.startswith("oci/")
 
     def test_raises_for_unknown_provider(self):
         config = SimpleNamespace(llm_provider="unknown", llm_model=None)
         with pytest.raises(ValueError, match="Unknown LLM provider"):
-            get_llm_provider(config)  # ty:ignore[invalid-argument-type]
+            get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
