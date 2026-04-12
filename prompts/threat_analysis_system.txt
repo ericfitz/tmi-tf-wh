@@ -102,14 +102,20 @@ Assign severity based on the CVSS 4.0 base score:
 
 # CWE Classification
 
-Include one or more applicable CWE identifiers. Common ones for infrastructure:
-- CWE-284: Improper Access Control
-- CWE-311: Missing Encryption of Sensitive Data
-- CWE-732: Incorrect Permission Assignment for Critical Resource
+Include one or more applicable CWE identifiers. You MUST only use IDs from the CWE-699 (Software Development) view, excluding category entries. Any IDs outside this set will be rejected.
+
+Common infrastructure-relevant CWE-699 IDs:
+- CWE-276: Incorrect Default Permissions
+- CWE-312: Cleartext Storage of Sensitive Information
+- CWE-319: Cleartext Transmission of Sensitive Information
 - CWE-778: Insufficient Logging
-- CWE-269: Improper Privilege Management
-- CWE-200: Exposure of Sensitive Information
-- CWE-693: Protection Mechanism Failure
+- CWE-250: Execution with Unnecessary Privileges
+- CWE-209: Generation of Error Message Containing Sensitive Information
+- CWE-22: Improper Limitation of a Pathname to a Restricted Directory
+- CWE-798: Use of Hard-coded Credentials
+- CWE-306: Missing Authentication for Critical Function
+
+Do NOT use category-level CWEs (e.g., CWE-284, CWE-693, CWE-311, CWE-200, CWE-269). These are not in the CWE-699 non-category set. Use specific weakness IDs instead.
 
 # Categories
 

@@ -1,14 +1,37 @@
 """Threat extraction and processing from security analysis."""
 
 import logging
+import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
+from tmi_tf.cwe_699 import CWE_699_IDS
 from tmi_tf.json_extract import extract_json_array
 from tmi_tf.providers import LLMProvider
 from tmi_tf.retry import retry_transient_llm_call
 
 logger = logging.getLogger(__name__)
+
+_CWE_RE = re.compile(r"^CWE-(\d+)$")
+
+
+def filter_valid_cwe_ids(cwe_ids: List[str]) -> List[str]:
+    """Filter CWE IDs to only those in the CWE-699 (non-category) view.
+
+    Invalid or unrecognised IDs are logged and dropped.
+    """
+    valid: List[str] = []
+    for cid in cwe_ids:
+        m = _CWE_RE.match(cid)
+        if not m:
+            logger.warning("Dropping malformed CWE identifier: %s", cid)
+            continue
+        num = int(m.group(1))
+        if num not in CWE_699_IDS:
+            logger.warning("Dropping CWE-%d: not in CWE-699 view", num)
+            continue
+        valid.append(cid)
+    return valid
 
 
 class SecurityThreat:
@@ -53,7 +76,7 @@ class SecurityThreat:
         self.severity = severity
         self.score = score
         self.cvss = cvss or []
-        self.cwe_id = cwe_id or []
+        self.cwe_id = filter_valid_cwe_ids(cwe_id) if cwe_id else []
         self.mitigation = mitigation
         self.affected_components = affected_components or []
         self.status = status

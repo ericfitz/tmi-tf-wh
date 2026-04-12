@@ -22,7 +22,7 @@ For each security issue or concern mentioned in the analysis:
    - Low (CVSS 0.1-3.9): Difficult to exploit or minimal security impact, best-practice deviations
 
 5. Estimate a CVSS 3.1 base score (0.0-10.0) and provide the CVSS vector string
-6. Identify applicable CWE identifiers where possible
+6. Identify applicable CWE identifiers from the CWE-699 (Software Development) view only, excluding category entries. Do not use category-level CWEs like CWE-284 or CWE-693; use specific weakness IDs instead (e.g., CWE-276, CWE-312, CWE-798)
 7. Suggest specific, actionable mitigation strategies
 8. List the affected infrastructure components by name
 
