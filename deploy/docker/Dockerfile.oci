@@ -65,11 +65,13 @@ RUN microdnf -y update && \
 RUN groupadd -r tmi-tf && \
     useradd -r -g tmi-tf -m -d /home/tmi-tf -s /sbin/nologin tmi-tf
 
+ARG TMI_CLIENT_VERSION=v1.4.0
+
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy TMI Python client
-COPY --from=builder /opt/tmi-clients/python-client-generated /opt/tmi-client
+# Copy TMI Python client (versioned subdirectory)
+COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
 
 # Set environment
 ENV HOME=/home/tmi-tf

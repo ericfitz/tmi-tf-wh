@@ -114,9 +114,14 @@ def get_queue_provider(config: "Config") -> QueueProvider:
             queue_ocid=config.queue_ocid or "",
             queue_endpoint=config.queue_endpoint,
         )
+    elif config.queue_provider == "memory":
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        return MemoryQueueProvider()
     else:
         raise ValueError(
-            f"Unknown queue provider: {config.queue_provider!r}. Must be 'oci'."
+            f"Unknown queue provider: {config.queue_provider!r}. "
+            f"Must be 'oci' or 'memory'."
         )
 
 

@@ -1,0 +1,71 @@
+# GCP build — Google Cloud SDK (Debian) from Google Container Registry
+# Build: docker buildx build --platform linux/amd64 -f deploy/docker/Dockerfile.gcp -t <tag> .
+
+# Stage 1: Builder
+FROM gcr.io/google.com/cloudsdktool/cloud-sdk:slim AS builder
+
+LABEL stage="builder"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3.12 \
+        python3.12-venv \
+        python3-pip \
+        python3.12-dev \
+        build-essential \
+        git \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3
+
+ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
+ARG TMI_CLIENT_REF=main
+RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
+
+WORKDIR /app
+
+RUN python3 -m pip install --no-cache-dir --upgrade --break-system-packages pip
+
+COPY pyproject.toml ./
+COPY tmi_tf/ tmi_tf/
+
+RUN python3 -m pip install --no-cache-dir --break-system-packages --prefix=/install .
+
+# Stage 2: Runtime
+FROM gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+
+LABEL maintainer="TMI Security Team"
+LABEL org.opencontainers.image.title="tmi-tf-wh"
+LABEL org.opencontainers.image.description="TMI Terraform Webhook Analyzer (GCP)"
+
+ARG BUILD_DATE
+ARG GIT_COMMIT
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3.12 \
+        git \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3
+
+RUN groupadd -r tmi-tf && \
+    useradd -r -g tmi-tf -m -d /home/tmi-tf -s /usr/sbin/nologin tmi-tf
+
+ARG TMI_CLIENT_VERSION=v1.4.0
+
+COPY --from=builder /install /usr/local
+COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
+
+ENV HOME=/home/tmi-tf \
+    TMI_CLIENT_PATH=/opt/tmi-client \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8080
+
+USER tmi-tf:tmi-tf
+WORKDIR /home/tmi-tf
+
+ENTRYPOINT ["python3", "-m", "uvicorn", "tmi_tf.server:app", "--host", "0.0.0.0", "--port", "8080"]

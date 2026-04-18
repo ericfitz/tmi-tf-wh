@@ -459,6 +459,70 @@ class TestGetQueueProvider:
         with pytest.raises(ValueError, match="Unknown queue provider"):
             get_queue_provider(config)
 
+    def test_factory_returns_memory_provider(self):
+        config = MagicMock()
+        config.queue_provider = "memory"
+        provider = get_queue_provider(config)
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        assert isinstance(provider, MemoryQueueProvider)
+
+
+class TestMemoryQueueProvider:
+    def test_publish_then_consume_returns_message(self):
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        q = MemoryQueueProvider()
+        q.publish({"job_id": "j1", "payload": 1})
+        msgs = q.consume(max_messages=1)
+        assert len(msgs) == 1
+        assert msgs[0].body == {"job_id": "j1", "payload": 1}
+        assert msgs[0].receipt
+
+    def test_consume_empty_returns_empty_list(self):
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        assert MemoryQueueProvider().consume() == []
+
+    def test_delete_removes_from_in_flight(self):
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        q = MemoryQueueProvider()
+        q.publish({"job_id": "j1"})
+        msg = q.consume(max_messages=1)[0]
+        q.delete(msg.receipt)
+        # Not requeued after delete, even once visibility expires.
+        assert q.consume(max_messages=1, visibility_timeout=0) == []
+
+    def test_visibility_timeout_requeues_undeleted(self):
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        q = MemoryQueueProvider()
+        q.publish({"job_id": "j1"})
+        first = q.consume(max_messages=1, visibility_timeout=0)
+        assert len(first) == 1
+        # Without delete, the message should become visible again.
+        second = q.consume(max_messages=1)
+        assert len(second) == 1
+        assert second[0].body == {"job_id": "j1"}
+
+    def test_fifo_order(self):
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        q = MemoryQueueProvider()
+        q.publish({"n": 1})
+        q.publish({"n": 2})
+        q.publish({"n": 3})
+        msgs = q.consume(max_messages=3)
+        assert [m.body["n"] for m in msgs] == [1, 2, 3]
+
+    def test_publish_rejects_non_serializable(self):
+        from tmi_tf.providers.memory import MemoryQueueProvider
+
+        q = MemoryQueueProvider()
+        with pytest.raises(TypeError):
+            q.publish({"bad": object()})
+
 
 class TestLLMResponse:
     def test_dataclass_fields(self):

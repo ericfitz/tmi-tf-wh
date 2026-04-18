@@ -415,7 +415,7 @@ main() {
 
     local build_args=(
         --platform "${PLATFORM}"
-        --file "${PROJECT_ROOT}/Dockerfile"
+        --file "${PROJECT_ROOT}/deploy/docker/Dockerfile.oci"
         --tag "${full_image_name}"
         --build-arg "BUILD_DATE=${build_date}"
         --build-arg "GIT_COMMIT=${git_commit}"

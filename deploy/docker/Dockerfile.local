@@ -1,0 +1,62 @@
+# Local Docker Desktop build — Chainguard Wolfi base
+# Smaller, hardened alternative to the OKE Dockerfile. Used by docker-compose.yml.
+#
+# Build: docker compose build
+# Run:   docker compose up
+
+# Stage 1: Builder
+FROM cgr.dev/chainguard/wolfi-base:latest AS builder
+
+RUN apk add --no-cache \
+        python-3.12 \
+        py3.12-pip \
+        python-3.12-dev \
+        git \
+        gcc \
+        ca-certificates
+
+# Clone TMI Python client
+ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
+ARG TMI_CLIENT_REF=main
+RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
+
+WORKDIR /app
+
+COPY pyproject.toml ./
+COPY tmi_tf/ tmi_tf/
+
+RUN python3.12 -m pip install --no-cache-dir --upgrade pip && \
+    python3.12 -m pip install --no-cache-dir --prefix=/install .
+
+# Stage 2: Runtime
+FROM cgr.dev/chainguard/wolfi-base:latest
+
+LABEL org.opencontainers.image.title="tmi-tf-wh"
+LABEL org.opencontainers.image.description="TMI Terraform Webhook Analyzer (local)"
+
+RUN apk add --no-cache \
+        python-3.12 \
+        git \
+        ca-certificates && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python
+
+# Non-root user
+RUN addgroup -S tmi-tf && \
+    adduser -S -G tmi-tf -h /home/tmi-tf tmi-tf
+
+ARG TMI_CLIENT_VERSION=v1.4.0
+
+COPY --from=builder /install /usr/
+COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
+
+ENV HOME=/home/tmi-tf \
+    TMI_CLIENT_PATH=/opt/tmi-client \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8088
+
+USER tmi-tf
+WORKDIR /home/tmi-tf
+
+ENTRYPOINT ["python3", "-m", "uvicorn", "tmi_tf.server:app", "--host", "0.0.0.0", "--port", "8088"]
