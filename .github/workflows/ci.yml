@@ -73,6 +73,18 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
 
+      # tf_validator shells out to `terraform fmt`, and validate_and_sanitize
+      # refuses to run at all without the binary on PATH. Only 5 of the 34
+      # tf_validator tests mock it; the rest -- including the ones that assert
+      # real HCL is accepted and malformed HCL rejected -- exercise the actual
+      # binary, which is the coverage worth having for a Terraform analysis
+      # tool. terraform_wrapper is disabled so the real executable is on PATH
+      # rather than a wrapper script.
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
       - name: Install dependencies
         run: uv sync --locked
 
