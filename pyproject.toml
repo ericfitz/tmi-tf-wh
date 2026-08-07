@@ -37,6 +37,14 @@ dev = [
     "pyright>=1.1.407",
 ]
 
+[tool.ruff]
+# CI checks out the generated TMI client into ./tmi-clients (GitHub Actions
+# cannot place a checkout above the workspace). It is vendored third-party
+# generated code, not this project's source, and must never be linted,
+# type-checked, or collected as tests -- see the matching pyright exclude and
+# pytest testpaths below. The same applies to any local clone placed here.
+extend-exclude = ["tmi-clients"]
+
 [tool.ruff.lint]
 # Ruff's default rule set is a curated subset of each family, and 0.16 widened
 # it -- which is how a routine dependency bump surfaced ~400 findings here. We
@@ -58,6 +66,13 @@ ignore = [
     "BLE001",
 ]
 
+[tool.pytest.ini_options]
+# Only ever collect this project's tests. Without this, a vendored client
+# checkout under ./tmi-clients (as CI creates) contributes its own generated
+# test modules to the run.
+testpaths = ["tests"]
+
 [tool.pyright]
 # tmi_client is added to sys.path at runtime from ~/Projects/tmi-clients/
 # and cannot be resolved statically; imports are suppressed per-line
+exclude = ["**/.venv", "tmi-clients"]

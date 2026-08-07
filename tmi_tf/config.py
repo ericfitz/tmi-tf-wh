@@ -7,6 +7,7 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from dotenv import (
     load_dotenv,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
@@ -15,16 +16,35 @@ from dotenv import (
 logger = logging.getLogger(__name__)
 
 
+# Default .env location: the project root, one level above this package.
+DEFAULT_ENV_FILE: Path | None = Path(__file__).parent.parent / ".env"
+
+# Distinguishes "caller passed nothing" from "caller passed None", so that
+# Config(env_file=None) can explicitly opt out of .env loading.
+_UNSET = object()
+
+
 class Config:
     """Application configuration loaded from environment variables."""
 
-    def __init__(self):
-        """Initialize configuration from .env file."""
-        # Load .env file from project root
-        project_root = Path(__file__).parent.parent
-        env_file = project_root / ".env"
-        # Override existing environment variables with .env file values
-        load_dotenv(env_file, override=True)
+    def __init__(self, env_file: Any = _UNSET):
+        """Initialize configuration from environment variables.
+
+        Args:
+            env_file: Path to a .env file to load, or None to skip loading one
+                and read the ambient environment only. Defaults to the project
+                root .env. Tests pass None (see tests/conftest.py) so that a
+                developer's local .env cannot leak into assertions -- values
+                there are loaded with override=True and would otherwise beat
+                anything the test set up via patch.dict.
+        """
+        if env_file is _UNSET:
+            # Read at call time rather than binding as a default argument, so
+            # the module global stays monkeypatchable.
+            env_file = DEFAULT_ENV_FILE
+        if env_file is not None:
+            # Override existing environment variables with .env file values
+            load_dotenv(env_file, override=True)
 
         # TMI Server Configuration
         self.tmi_server_url: str = os.getenv("TMI_SERVER_URL", "https://api.tmi.dev")

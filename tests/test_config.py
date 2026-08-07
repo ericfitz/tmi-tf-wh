@@ -17,10 +17,17 @@ def reset_config():
 
 @pytest.fixture(autouse=True)
 def clear_config_singleton():
-    """Reset singleton before and after each test, and prevent .env from overriding test env vars."""
+    """Reset the singleton before and after each test.
+
+    This used to also patch out ``tmi_tf.config.load_dotenv`` to keep a local
+    .env from overriding test env vars. That is now handled suite-wide in
+    tests/conftest.py by disabling the default .env path, which is both more
+    thorough (it covers modules that construct Config() outside this file, the
+    actual source of the #36 leak) and less blunt -- patching the function out
+    here also prevented tests from loading an .env file on purpose.
+    """
     reset_config()
-    with patch("tmi_tf.config.load_dotenv"):
-        yield
+    yield
     reset_config()
 
 
@@ -181,3 +188,45 @@ class TestServiceEndpointConfig:
         assert config.queue_endpoint is None
         assert config.vault_endpoint is None
         assert config.secrets_endpoint is None
+
+
+class TestDotenvIsolation:
+    """Config must not read a developer's .env when a caller opts out.
+
+    Regression cover for #36. The original failure was order-dependent: other
+    test modules construct Config() and load_dotenv(override=True) mutates
+    os.environ for the rest of the process, so tests/test_config.py passed in
+    isolation and failed in a full run. tests/conftest.py now disables .env
+    loading suite-wide; these tests pin the mechanism it relies on.
+    """
+
+    def test_env_file_none_skips_dotenv_entirely(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("TMI_SERVER_URL=https://from-dotenv.example\n")
+
+        with patch.dict(
+            os.environ,
+            {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+            clear=False,
+        ):
+            os.environ.pop("TMI_SERVER_URL", None)
+            config = Config(env_file=None)
+
+        assert config.tmi_server_url == "https://api.tmi.dev"
+
+    def test_explicit_env_file_is_loaded(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("TMI_SERVER_URL=https://from-dotenv.example\n")
+
+        with patch.dict(
+            os.environ,
+            {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+            clear=False,
+        ):
+            config = Config(env_file=env_file)
+
+        assert config.tmi_server_url == "https://from-dotenv.example"
+
+    def test_conftest_disables_the_default_env_file(self):
+        """The autouse fixture in conftest.py is what keeps the suite honest."""
+        assert config_module.DEFAULT_ENV_FILE is None
