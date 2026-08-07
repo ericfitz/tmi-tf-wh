@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # One run per ref; a new push cancels the previous run for the same branch.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The generated TMI client is not published as a package -- it is checked out
+  # from a sibling repo and added to sys.path at runtime. See
+  # tmi_tf/tmi_client_wrapper.py, which resolves the newest v*/ subdirectory.
+  TMI_CLIENT_PATH: ${{ github.workspace }}/tmi-clients/python-client-generated
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out the generated TMI client
+        uses: actions/checkout@v7
+        with:
+          repository: ericfitz/tmi-clients
+          path: tmi-clients
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format
+        run: uv run ruff format --check tmi_tf/ tests/
+
+      - name: pyright
+        run: uv run pyright
+
+  test:
+    name: Tests (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Floor and current. The floor matters: pyproject allows >=3.10, and
+        # some transitive pins differ by interpreter (uvicorn[standard] resolves
+        # websockets 16.x below 3.11 and 17.x at or above it).
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check out the generated TMI client
+        uses: actions/checkout@v7
+        with:
+          repository: ericfitz/tmi-clients
+          path: tmi-clients
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: pytest
+        run: uv run pytest -q
