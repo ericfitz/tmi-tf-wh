@@ -12,21 +12,68 @@ import nh3  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
 # Add tmi-client to path
 import os as _os
 
-_tmi_client_path_str = _os.getenv("TMI_CLIENT_PATH")
-if _tmi_client_path_str:
-    tmi_client_path = Path(_tmi_client_path_str)
-else:
-    tmi_client_path = (
-        Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
+_TMI_CLIENT_DEFAULT_ROOT = (
+    Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
+)
+
+
+def _holds_client_package(path: Path) -> bool:
+    """Whether `path` is a directory containing an importable tmi_client package.
+
+    Checking for the package __init__ rather than the directory itself matters:
+    the generated client leaves behind a source-less tmi_client/ husk (stale
+    __pycache__ plus empty api/ and models/ dirs) that a bare exists() accepts.
+    """
+    return (path / "tmi_client" / "__init__.py").is_file()
+
+
+def _version_sort_key(path: Path) -> tuple:
+    """Numeric sort key for vX.Y.Z directory names, so v1.10.0 sorts above v1.6.0."""
+    return tuple(
+        int(part) if part.isdigit() else -1 for part in path.name.lstrip("v").split(".")
     )
 
-if tmi_client_path.exists():
-    sys.path.insert(0, str(tmi_client_path))
-else:
+
+def _resolve_tmi_client_path(root: Path) -> Optional[Path]:
+    """Find the directory to put on sys.path, or None if the client isn't there.
+
+    Accepts either a directory that directly holds tmi_client/, or one whose
+    versioned subdirectories do -- the generated client is published as
+    v1.3.0/, v1.6.0/, ... and the newest is used.
+    """
+    if _holds_client_package(root):
+        return root
+    versioned = [
+        candidate
+        for candidate in root.glob("v*")
+        if candidate.is_dir() and _holds_client_package(candidate)
+    ]
+    if versioned:
+        return max(versioned, key=_version_sort_key)
+    return None
+
+
+_tmi_client_path_str = _os.getenv("TMI_CLIENT_PATH")
+_tmi_client_root = (
+    Path(_tmi_client_path_str) if _tmi_client_path_str else _TMI_CLIENT_DEFAULT_ROOT
+)
+tmi_client_path = _resolve_tmi_client_path(_tmi_client_root)
+
+if tmi_client_path is None:
+    if not _tmi_client_root.exists():
+        _detail = "the directory does not exist"
+    else:
+        _detail = (
+            "it holds no importable tmi_client package, and neither do any of its "
+            "versioned v*/ subdirectories"
+        )
     raise ImportError(
-        f"TMI Python client not found at {tmi_client_path}. "
-        "Set TMI_CLIENT_PATH environment variable or ensure client is at default location."
+        f"TMI Python client not found under {_tmi_client_root}: {_detail}. "
+        "Set the TMI_CLIENT_PATH environment variable to a directory containing "
+        "tmi_client/__init__.py (or one with versioned v*/ subdirectories that do)."
     )
+
+sys.path.insert(0, str(tmi_client_path))
 
 import tmi_client  # noqa: E402  # type: ignore[import-not-found]
 from tmi_client.api_client import ApiClient  # noqa: E402  # type: ignore[import-not-found]
