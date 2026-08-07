@@ -229,3 +229,6 @@ override.tf.json
 *.tfvars
 .serena/**
 
+
+# Generated TMI client checked out here by CI (see .github/workflows/ci.yml)
+tmi-clients/
