@@ -7,7 +7,7 @@ both the CLI command and the webhook worker.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional, Protocol
+from typing import Any, Protocol
 
 from tmi_tf.artifact_metadata import (
     aggregate_analysis_metadata,
@@ -39,8 +39,8 @@ class AnalysisResult:
     """Result of the full analysis pipeline."""
 
     success: bool
-    analyses: List[TerraformAnalysis] = field(default_factory=list)
-    errors: List[str] = field(default_factory=list)
+    analyses: list[TerraformAnalysis] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     inventory_content: str = ""
     analysis_content: str = ""
 
@@ -87,12 +87,12 @@ def run_analysis(
     config: Config,
     threat_model_id: str,
     tmi_client: TMIClient,
-    repo_id: Optional[str] = None,
-    temp_dir: Optional[Path] = None,
-    callback: Optional[StatusCallback] = None,
+    repo_id: str | None = None,
+    temp_dir: Path | None = None,
+    callback: StatusCallback | None = None,
     skip_diagram: bool = False,
     skip_threats: bool = False,
-    environment: Optional[str] = None,
+    environment: str | None = None,
 ) -> AnalysisResult:
     """Run the full Terraform analysis pipeline.
 
@@ -114,7 +114,7 @@ def run_analysis(
     Returns:
         AnalysisResult with success flag, analyses, and generated content.
     """
-    errors: List[str] = []
+    errors: list[str] = []
 
     try:
         logger.info("=" * 80)
@@ -173,8 +173,8 @@ def run_analysis(
 
         # Analyze repositories
         logger.info(f"\n[4/7] Analyzing {len(repos_to_analyze)} repositories...")
-        analyses: List[TerraformAnalysis] = []
-        selected_env_name: Optional[str] = None
+        analyses: list[TerraformAnalysis] = []
+        selected_env_name: str | None = None
 
         for i, repo in enumerate(repos_to_analyze, 1):
             logger.info(
@@ -506,7 +506,7 @@ def run_analysis(
                 logger.info(f"Extracted {len(all_threats)} total threats from analyses")
 
                 if all_threats:
-                    diagram_id_for_threats: Optional[str] = None
+                    diagram_id_for_threats: str | None = None
                     if not skip_diagram:
                         try:
                             existing_diagram = tmi_client.find_diagram_by_name(
@@ -567,6 +567,6 @@ def run_analysis(
 
     except Exception as e:
         error_msg = f"Fatal error: {e}"
-        logger.error(error_msg, exc_info=True)
+        logger.exception(error_msg)
         errors.append(error_msg)
         return AnalysisResult(success=False, errors=errors)

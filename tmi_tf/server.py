@@ -5,7 +5,6 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import FastAPI, Request  # ty:ignore[unresolved-import]
 from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-import]
@@ -25,9 +24,9 @@ from tmi_tf.worker import WorkerPool
 logger = logging.getLogger(__name__)
 
 # Module-level globals, set during lifespan
-queue_client: Optional[QueueProvider] = None
-worker_pool: Optional[WorkerPool] = None
-_worker_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+queue_client: QueueProvider | None = None
+worker_pool: WorkerPool | None = None
+_worker_task: asyncio.Task | None = None  # type: ignore[type-arg]
 
 
 @asynccontextmanager

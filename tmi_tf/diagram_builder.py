@@ -5,10 +5,10 @@ This module converts structured component and flow data into AntV X6 v2 format
 cells for creating diagrams in TMI.
 """
 
+import logging
 import uuid
 from math import ceil, sqrt
-from typing import Any, Dict, List, Optional, Tuple
-import logging
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ class DFDBuilder:
     """Builds Data Flow Diagram cells from structured component and flow data."""
 
     # Component type categories for layout
-    BOUNDARY_TYPES = {"tenant", "container", "network"}
-    LEAF_TYPES = {
+    BOUNDARY_TYPES: ClassVar[set[str]] = {"tenant", "container", "network"}
+    LEAF_TYPES: ClassVar[set[str]] = {
         "gateway",
         "compute",
         "service",
@@ -27,7 +27,7 @@ class DFDBuilder:
     }
 
     # Shape mapping from component types to X6 shapes
-    SHAPE_MAP = {
+    SHAPE_MAP: ClassVar[dict[str, str]] = {
         "tenant": "security-boundary",
         "container": "security-boundary",
         "network": "security-boundary",
@@ -39,7 +39,7 @@ class DFDBuilder:
     }
 
     # Z-index ranges for different element types
-    Z_INDEX = {
+    Z_INDEX: ClassVar[dict[str, int]] = {
         "boundary_base": 1,
         "boundary_increment": 1,
         "gateway": 10,
@@ -64,9 +64,9 @@ class DFDBuilder:
 
     def __init__(
         self,
-        components: List[Dict[str, Any]],
-        flows: List[Dict[str, Any]],
-        services: Optional[List[Dict[str, Any]]] = None,
+        components: list[dict[str, Any]],
+        flows: list[dict[str, Any]],
+        services: list[dict[str, Any]] | None = None,
     ):
         """
         Initialize the DFD builder.
@@ -80,10 +80,10 @@ class DFDBuilder:
         """
         self.components = components
         self.flows = flows
-        self.cells: List[Dict[str, Any]] = []
-        self.component_cells: Dict[str, Dict[str, Any]] = {}  # id -> cell mapping
+        self.cells: list[dict[str, Any]] = []
+        self.component_cells: dict[str, dict[str, Any]] = {}  # id -> cell mapping
         # Build component_id -> service_name lookup from inventory services
-        self._service_lookup: Dict[str, str] = {}
+        self._service_lookup: dict[str, str] = {}
         if services:
             for svc in services:
                 svc_name = svc.get("name", "")
@@ -94,7 +94,7 @@ class DFDBuilder:
                 for comp_id in svc.get("associated_resources", []):
                     self._service_lookup[comp_id] = svc_name
 
-    def build_cells(self) -> List[Dict[str, Any]]:
+    def build_cells(self) -> list[dict[str, Any]]:
         """
         Build all diagram cells.
 
@@ -159,8 +159,8 @@ class DFDBuilder:
             self.component_cells[component["id"]] = cell
 
     def _create_node_cell(
-        self, component: Dict[str, Any], z_index: int
-    ) -> Dict[str, Any]:
+        self, component: dict[str, Any], z_index: int
+    ) -> dict[str, Any]:
         """
         Create a single node cell.
 
@@ -205,7 +205,7 @@ class DFDBuilder:
 
         return cell
 
-    def _build_node_metadata(self, component: Dict[str, Any]) -> List[Dict[str, str]]:
+    def _build_node_metadata(self, component: dict[str, Any]) -> list[dict[str, str]]:
         """
         Build metadata list for a node cell from component data.
 
@@ -241,7 +241,7 @@ class DFDBuilder:
 
         return metadata
 
-    def _build_edge_metadata(self, flow: Dict[str, Any]) -> List[Dict[str, str]]:
+    def _build_edge_metadata(self, flow: dict[str, Any]) -> list[dict[str, str]]:
         """
         Build metadata list for an edge cell from flow data.
 
@@ -300,8 +300,8 @@ class DFDBuilder:
                     self.cells.append(edge)
 
     def _create_edge_cell(
-        self, edge_data: Dict[str, str], flow: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, edge_data: dict[str, str], flow: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """
         Create a single edge cell.
 
@@ -340,7 +340,7 @@ class DFDBuilder:
         if target_port:
             target_dict["port"] = target_port
 
-        edge: Dict[str, Any] = {
+        edge: dict[str, Any] = {
             "id": cell_id,
             "shape": "edge",
             "source": source_dict,
@@ -365,7 +365,7 @@ class DFDBuilder:
 
         return edge
 
-    def _create_ports(self) -> Dict[str, Any]:
+    def _create_ports(self) -> dict[str, Any]:
         """
         Create port configuration for a node.
 
@@ -388,8 +388,8 @@ class DFDBuilder:
         }
 
     def _get_optimal_port(
-        self, cell: Dict[str, Any], other_cell: Dict[str, Any], is_source: bool
-    ) -> Optional[str]:
+        self, cell: dict[str, Any], other_cell: dict[str, Any], is_source: bool
+    ) -> str | None:
         """
         Get optimal port ID for a cell based on the position of another cell.
 
@@ -428,7 +428,7 @@ class DFDBuilder:
 
         return None
 
-    def _calculate_boundary_z_index(self, component: Dict[str, Any]) -> int:
+    def _calculate_boundary_z_index(self, component: dict[str, Any]) -> int:
         """
         Calculate z-index for a boundary component based on nesting depth.
 
@@ -461,13 +461,13 @@ class DFDBuilder:
 
     # ---- Layout algorithm ----
 
-    def _build_flow_adjacency(self) -> Dict[str, set]:
+    def _build_flow_adjacency(self) -> dict[str, set]:
         """Build a peer-flow adjacency map from self.flows.
 
         Returns:
             Dict mapping component_id to set of component_ids it has flows with.
         """
-        adjacency: Dict[str, set] = {}
+        adjacency: dict[str, set] = {}
         for flow in self.flows:
             src = flow["source_id"]
             tgt = flow["target_id"]
@@ -475,7 +475,7 @@ class DFDBuilder:
             adjacency.setdefault(tgt, set()).add(src)
         return adjacency
 
-    def _get_children(self, component_id: str) -> List[Dict[str, Any]]:
+    def _get_children(self, component_id: str) -> list[dict[str, Any]]:
         """Get direct children of a component."""
         return [c for c in self.components if c.get("parent_id") == component_id]
 
@@ -487,7 +487,7 @@ class DFDBuilder:
         Phase 2: Assign absolute x,y positions top-down.
         """
         adjacency = self._build_flow_adjacency()
-        placements_map: Dict[str, List[Tuple[int, int, int, int, Dict[str, Any]]]] = {}
+        placements_map: dict[str, list[tuple[int, int, int, int, dict[str, Any]]]] = {}
 
         roots = [c for c in self.components if not c.get("parent_id")]
 
@@ -515,9 +515,9 @@ class DFDBuilder:
     def _compute_component_size(
         self,
         component_id: str,
-        adjacency: Dict[str, set],
-        placements_map: Dict[str, List[Tuple[int, int, int, int, Dict[str, Any]]]],
-    ) -> Tuple[int, int]:
+        adjacency: dict[str, set],
+        placements_map: dict[str, list[tuple[int, int, int, int, dict[str, Any]]]],
+    ) -> tuple[int, int]:
         """
         Recursively compute the size of a component based on its children.
 
@@ -554,7 +554,7 @@ class DFDBuilder:
         grid_cell_h = self.DEFAULT_NODE_HEIGHT + self.NODE_SPACING
 
         # Build items list: (span_cols, span_rows, component, is_boundary)
-        items: List[Tuple[int, int, Dict[str, Any], bool]] = []
+        items: list[tuple[int, int, dict[str, Any], bool]] = []
 
         for bc in boundary_children:
             bc_cell = self.component_cells[bc["id"]]
@@ -582,11 +582,11 @@ class DFDBuilder:
 
     def _place_items_in_grid(
         self,
-        items: List[Tuple[int, int, Dict[str, Any], bool]],
-        adjacency: Dict[str, set],
+        items: list[tuple[int, int, dict[str, Any], bool]],
+        adjacency: dict[str, set],
         parent_id: str,
-    ) -> Tuple[
-        List[Tuple[int, int, int, int, Dict[str, Any]]],
+    ) -> tuple[
+        list[tuple[int, int, int, int, dict[str, Any]]],
         int,
         int,
     ]:
@@ -618,7 +618,7 @@ class DFDBuilder:
         # Account for flow gaps: each pair of flow-connected leaves needs 1 extra cell
         sibling_ids = {c["id"] for _, _, c, _ in items}
         flow_pairs_count = 0
-        seen_pairs: set[Tuple[str, str]] = set()
+        seen_pairs: set[tuple[str, str]] = set()
         for _, _, c, is_b in items:
             if is_b:
                 continue
@@ -647,12 +647,12 @@ class DFDBuilder:
         # 2D occupancy grid (True = occupied)
         occupancy = [[False] * grid_cols for _ in range(grid_rows)]
 
-        placements: List[Tuple[int, int, int, int, Dict[str, Any]]] = []
-        placed_positions: Dict[str, Tuple[int, int]] = {}  # component_id -> (col, row)
+        placements: list[tuple[int, int, int, int, dict[str, Any]]] = []
+        placed_positions: dict[str, tuple[int, int]] = {}  # component_id -> (col, row)
 
         def try_place(
             sc: int, sr: int, start_col: int = 0, start_row: int = 0
-        ) -> Optional[Tuple[int, int]]:
+        ) -> tuple[int, int] | None:
             """Find first available position for a span_cols x span_rows block."""
             for r in range(start_row, grid_rows):
                 for c_start in range(start_col if r == start_row else 0, grid_cols):
@@ -713,7 +713,7 @@ class DFDBuilder:
                 if nid in placed_positions and nid in sibling_ids
             ]
 
-            best_pos: Optional[Tuple[int, int]] = None
+            best_pos: tuple[int, int] | None = None
 
             if connected_placed:
                 # Try to place near a connected peer with 1 cell gap
@@ -759,10 +759,10 @@ class DFDBuilder:
 
     def _order_leaves_by_flow(
         self,
-        leaf_items: List[Tuple[int, int, Dict[str, Any]]],
-        adjacency: Dict[str, set],
+        leaf_items: list[tuple[int, int, dict[str, Any]]],
+        adjacency: dict[str, set],
         sibling_ids: set,
-    ) -> List[Tuple[int, int, Dict[str, Any]]]:
+    ) -> list[tuple[int, int, dict[str, Any]]]:
         """
         Order leaf items so that flow-connected nodes are placed consecutively.
 
@@ -781,7 +781,7 @@ class DFDBuilder:
             return list(leaf_items)
 
         remaining = {c["id"]: (sc, sr, c) for sc, sr, c in leaf_items}
-        ordered: List[Tuple[int, int, Dict[str, Any]]] = []
+        ordered: list[tuple[int, int, dict[str, Any]]] = []
 
         # Start with the leaf that has the most flow connections to siblings
         def sibling_flow_count(cid: str) -> int:
@@ -813,7 +813,7 @@ class DFDBuilder:
         component_id: str,
         x: int,
         y: int,
-        placements_map: Dict[str, List[Tuple[int, int, int, int, Dict[str, Any]]]],
+        placements_map: dict[str, list[tuple[int, int, int, int, dict[str, Any]]]],
     ):
         """
         Recursively assign x,y positions to a component and its children.

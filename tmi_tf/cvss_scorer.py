@@ -2,7 +2,10 @@
 
 import logging
 
-from cvss import CVSS4, CVSSError  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+from cvss import (  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    CVSS4,
+    CVSSError,
+)
 
 logger = logging.getLogger(__name__)
 

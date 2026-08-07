@@ -1,9 +1,10 @@
 """Markdown report generation from structured analysis JSON."""
 
 import logging
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import datetime, timezone
 from html import escape as html_escape
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 from tmi_tf.llm_analyzer import TerraformAnalysis
 
@@ -24,10 +25,10 @@ def _html_list(items: Sequence[str]) -> str:
 
 
 def _html_table(
-    headers: List[str],
-    rows: List[List[str]],
-    col_widths: Optional[List[str]] = None,
-    col_aligns: Optional[List[str]] = None,
+    headers: list[str],
+    rows: list[list[str]],
+    col_widths: list[str] | None = None,
+    col_aligns: list[str] | None = None,
     bold_last_row: bool = False,
 ) -> str:
     """Build an HTML table with optional colgroup widths and alignment.
@@ -72,7 +73,7 @@ def _html_table(
     return "".join(parts)
 
 
-def _config_nested_table(config: Dict[str, Any]) -> str:
+def _config_nested_table(config: dict[str, Any]) -> str:
     """Render a configuration dict as a nested table inside a cell."""
     if not config:
         return ""
@@ -93,7 +94,7 @@ class MarkdownGenerator:
         self,
         threat_model_name: str,
         threat_model_id: str,
-        analyses: List[TerraformAnalysis],
+        analyses: list[TerraformAnalysis],
     ) -> str:
         """
         Generate comprehensive markdown report from analysis results.
@@ -134,7 +135,7 @@ class MarkdownGenerator:
 
 **Threat Model**: {threat_model_name}"""
 
-    def _generate_repository_sections(self, analyses: List[TerraformAnalysis]) -> str:
+    def _generate_repository_sections(self, analyses: list[TerraformAnalysis]) -> str:
         """Generate individual repository analysis sections from structured JSON."""
         sections = []
 
@@ -183,7 +184,7 @@ class MarkdownGenerator:
 
         return "\n\n---\n\n".join(sections)
 
-    def _format_inventory_section(self, inventory: Dict[str, Any]) -> str:
+    def _format_inventory_section(self, inventory: dict[str, Any]) -> str:
         """Format inventory JSON into markdown section with HTML tables."""
         parts = ["### Infrastructure Inventory"]
 
@@ -193,7 +194,7 @@ class MarkdownGenerator:
             return "\n\n".join(parts)
 
         # Group components by type
-        by_type: Dict[str, List[Dict[str, Any]]] = {}
+        by_type: dict[str, list[dict[str, Any]]] = {}
         for comp in components:
             comp_type = comp.get("type", "other")
             if comp_type not in by_type:
@@ -220,7 +221,7 @@ class MarkdownGenerator:
 
             parts.append(f"#### {comp_type.replace('_', ' ').title()}")
 
-            rows: List[List[str]] = []
+            rows: list[list[str]] = []
             for comp in group:
                 name = _esc(comp.get("name", "Unknown"))
                 resource_type = comp.get("resource_type", "")
@@ -272,7 +273,7 @@ class MarkdownGenerator:
 
         return "\n\n".join(parts)
 
-    def _format_relationships_section(self, infrastructure: Dict[str, Any]) -> str:
+    def _format_relationships_section(self, infrastructure: dict[str, Any]) -> str:
         """Format relationships JSON into markdown section with HTML tables."""
         relationships = infrastructure.get("relationships", [])
         if not relationships:
@@ -281,7 +282,7 @@ class MarkdownGenerator:
         parts = ["### Component Relationships"]
 
         # Group by relationship type
-        by_type: Dict[str, List[Dict[str, Any]]] = {}
+        by_type: dict[str, list[dict[str, Any]]] = {}
         for rel in relationships:
             rel_type = rel.get("relationship_type", "other")
             if rel_type not in by_type:
@@ -291,7 +292,7 @@ class MarkdownGenerator:
         for rel_type, rels in by_type.items():
             parts.append(f"\n#### {rel_type.replace('_', ' ').title()}")
 
-            rows: List[List[str]] = []
+            rows: list[list[str]] = []
             for rel in rels:
                 source = _esc(rel.get("source_id", "?"))
                 target = _esc(rel.get("target_id", "?"))
@@ -308,7 +309,7 @@ class MarkdownGenerator:
 
         return "\n".join(parts)
 
-    def _format_data_flows_section(self, infrastructure: Dict[str, Any]) -> str:
+    def _format_data_flows_section(self, infrastructure: dict[str, Any]) -> str:
         """Format data flows JSON into markdown section with HTML tables."""
         flows = infrastructure.get("data_flows", [])
         if not flows:
@@ -316,7 +317,7 @@ class MarkdownGenerator:
 
         parts = ["### Data Flows"]
 
-        rows: List[List[str]] = []
+        rows: list[list[str]] = []
         for flow in flows:
             rows.append(
                 [
@@ -359,7 +360,7 @@ class MarkdownGenerator:
 
         return "\n\n".join(parts)
 
-    def _format_dependencies_section(self, inventory: Dict[str, Any]) -> str:
+    def _format_dependencies_section(self, inventory: dict[str, Any]) -> str:
         """Format external dependencies into markdown section with HTML table."""
         dependencies = inventory.get("dependencies", [])
         if not dependencies:
@@ -367,7 +368,7 @@ class MarkdownGenerator:
 
         parts = ["### External Dependencies"]
 
-        rows: List[List[str]] = []
+        rows: list[list[str]] = []
         for dep in dependencies:
             dep_type = _esc(dep.get("type", ""))
             provider = _esc(dep.get("provider", ""))
@@ -385,14 +386,14 @@ class MarkdownGenerator:
 
         return "\n\n".join(parts)
 
-    def _format_security_section(self, security_findings: List[Dict[str, Any]]) -> str:
+    def _format_security_section(self, security_findings: list[dict[str, Any]]) -> str:
         """Format security findings JSON into markdown section with HTML tables."""
         if not security_findings:
             return "### Security Observations\n\nNo security findings identified."
 
         parts = ["### Security Observations"]
 
-        rows: List[List[str]] = []
+        rows: list[list[str]] = []
         for finding in security_findings:
             name = _esc(finding.get("name", "Unknown"))
             severity = finding.get("severity", "Medium")
@@ -444,7 +445,7 @@ class MarkdownGenerator:
 
         return "\n\n".join(parts)
 
-    def _generate_consolidated_findings(self, analyses: List[TerraformAnalysis]) -> str:
+    def _generate_consolidated_findings(self, analyses: list[TerraformAnalysis]) -> str:
         """Generate consolidated findings section."""
         successful = [a for a in analyses if a.success]
 
@@ -486,10 +487,12 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
     def _generate_analysis_job_info(
         self,
         threat_model_id: str,
-        analyses: List[TerraformAnalysis],
+        analyses: list[TerraformAnalysis],
     ) -> str:
         """Generate Analysis Job Information section combining all metadata."""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # UTC, explicitly labelled: these reports are read by people in other
+        # timezones than the one that generated them.
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         successful = [a for a in analyses if a.success]
         failed = [a for a in analyses if not a.success]
 
@@ -524,7 +527,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         if successful:
             parts.append("### Per-Repository Metrics")
 
-            rows: List[List[str]] = []
+            rows: list[list[str]] = []
             for a in successful:
                 rows.append(
                     [
@@ -573,8 +576,8 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         self,
         threat_model_name: str,
         threat_model_id: str,
-        analyses: List[TerraformAnalysis],
-        environment_name: Optional[str] = None,
+        analyses: list[TerraformAnalysis],
+        environment_name: str | None = None,
     ) -> str:
         """Generate inventory-only markdown report."""
         sections = []
@@ -602,8 +605,8 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         self,
         threat_model_name: str,
         threat_model_id: str,
-        analyses: List[TerraformAnalysis],
-        environment_name: Optional[str] = None,
+        analyses: list[TerraformAnalysis],
+        environment_name: str | None = None,
     ) -> str:
         """Generate analysis markdown report (architecture, relationships, security)."""
         sections = []

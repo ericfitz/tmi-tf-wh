@@ -1,16 +1,17 @@
 """TMI API client wrapper."""
 
 import logging
-import re
-import sys
-import time
-from pathlib import Path
-from typing import Callable, List, Optional, TypeVar, Union
-
-import nh3  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
 
 # Add tmi-client to path
 import os as _os
+import re
+import sys
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import TypeVar
+
+import nh3  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
 
 _TMI_CLIENT_DEFAULT_ROOT = (
     Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
@@ -34,7 +35,7 @@ def _version_sort_key(path: Path) -> tuple:
     )
 
 
-def _resolve_tmi_client_path(root: Path) -> Optional[Path]:
+def _resolve_tmi_client_path(root: Path) -> Path | None:
     """Find the directory to put on sys.path, or None if the client isn't there.
 
     Accepts either a directory that directly holds tmi_client/, or one whose
@@ -75,10 +76,10 @@ if tmi_client_path is None:
 
 sys.path.insert(0, str(tmi_client_path))
 
-import tmi_client  # noqa: E402  # type: ignore[import-not-found]
-from tmi_client.api_client import ApiClient  # noqa: E402  # type: ignore[import-not-found]
-from tmi_client.configuration import Configuration  # noqa: E402  # type: ignore[import-not-found]
-from tmi_client.models import (  # noqa: E402  # type: ignore[import-not-found]
+import tmi_client  # type: ignore[import-not-found]
+from tmi_client.api_client import ApiClient  # type: ignore[import-not-found]
+from tmi_client.configuration import Configuration  # type: ignore[import-not-found]
+from tmi_client.models import (  # type: ignore[import-not-found]
     CreateDiagramRequest,
     DiagramListItem,
     Metadata,
@@ -88,12 +89,11 @@ from tmi_client.models import (  # noqa: E402  # type: ignore[import-not-found]
     ThreatInput,
     ThreatModel,
 )
+from tmi_client.rest import ApiException  # type: ignore[import-not-found]
 
-from tmi_client.rest import ApiException  # noqa: E402  # type: ignore[import-not-found]
-
-from tmi_tf.auth import TMIAuthenticator  # noqa: E402
-from tmi_tf.config import Config  # noqa: E402
-from tmi_tf.retry import DEFAULT_RETRY_DELAY, TRANSIENT_API_STATUSES  # noqa: E402
+from tmi_tf.auth import TMIAuthenticator
+from tmi_tf.config import Config
+from tmi_tf.retry import DEFAULT_RETRY_DELAY, TRANSIENT_API_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ def sanitize_content_for_api(content: str) -> str:
 class TMIClient:
     """Wrapper around TMI API client with authentication."""
 
-    def __init__(self, config: Config, auth_token: Optional[str] = None):
+    def __init__(self, config: Config, auth_token: str | None = None):
         """
         Initialize TMI client.
 
@@ -262,7 +262,7 @@ class TMIClient:
         self.sub_resources_api = tmi_client.ThreatModelSubResourcesApi(self.api_client)
 
         # Status note tracking
-        self._status_note_id: Optional[str] = None
+        self._status_note_id: str | None = None
         self._status_note_initialized: bool = False
         self._status_note_content: str = ""
 
@@ -347,7 +347,7 @@ class TMIClient:
             logger.error(f"Failed to get threat model: {e}")
             raise
 
-    def get_threat_model_repositories(self, threat_model_id: str) -> List[Repository]:
+    def get_threat_model_repositories(self, threat_model_id: str) -> list[Repository]:
         """
         Get all repositories for a threat model.
 
@@ -408,7 +408,7 @@ class TMIClient:
             logger.error(f"Failed to create note: {e}")
             raise
 
-    def get_threat_model_notes(self, threat_model_id: str) -> List[Note]:
+    def get_threat_model_notes(self, threat_model_id: str) -> list[Note]:
         """
         Get all notes for a threat model.
 
@@ -500,7 +500,7 @@ class TMIClient:
             logger.error(f"Failed to update note: {e}")
             raise
 
-    def find_note_by_name(self, threat_model_id: str, note_name: str) -> Optional[Note]:
+    def find_note_by_name(self, threat_model_id: str, note_name: str) -> Note | None:
         """
         Find a note by name in a threat model.
 
@@ -623,7 +623,7 @@ class TMIClient:
             raise
 
     def update_diagram_cells(
-        self, threat_model_id: str, diagram_id: str, cells: List[dict]
+        self, threat_model_id: str, diagram_id: str, cells: list[dict]
     ) -> dict:
         """
         Update diagram with cells using JSON Patch.
@@ -655,7 +655,7 @@ class TMIClient:
             logger.error(f"Failed to update diagram: {e}")
             raise
 
-    def get_threat_model_diagrams(self, threat_model_id: str) -> List[DiagramListItem]:
+    def get_threat_model_diagrams(self, threat_model_id: str) -> list[DiagramListItem]:
         """
         Get all diagrams for a threat model.
 
@@ -681,7 +681,7 @@ class TMIClient:
 
     def find_diagram_by_name(
         self, threat_model_id: str, name: str
-    ) -> Optional[DiagramListItem]:
+    ) -> DiagramListItem | None:
         """
         Find a diagram by name in a threat model.
 
@@ -699,7 +699,7 @@ class TMIClient:
         return None
 
     def create_or_update_diagram(
-        self, threat_model_id: str, name: str, cells: List[dict]
+        self, threat_model_id: str, name: str, cells: list[dict]
     ) -> dict:
         """
         Create a new diagram or update existing one with the same name.
@@ -728,17 +728,17 @@ class TMIClient:
         self,
         threat_model_id: str,
         name: str,
-        threat_type: Union[str, List[str]],
-        description: Optional[str] = None,
-        mitigation: Optional[str] = None,
-        severity: Optional[str] = None,
-        score: Optional[float] = None,
-        cvss: Optional[List[dict]] = None,
-        cwe_id: Optional[List[str]] = None,
-        status: Optional[str] = None,
-        diagram_id: Optional[str] = None,
-        cell_id: Optional[str] = None,
-        metadata: Optional[List[dict]] = None,
+        threat_type: str | list[str],
+        description: str | None = None,
+        mitigation: str | None = None,
+        severity: str | None = None,
+        score: float | None = None,
+        cvss: list[dict] | None = None,
+        cwe_id: list[str] | None = None,
+        status: str | None = None,
+        diagram_id: str | None = None,
+        cell_id: str | None = None,
+        metadata: list[dict] | None = None,
     ) -> dict:
         """
         Create a new threat in a threat model.
@@ -811,8 +811,8 @@ class TMIClient:
         self,
         threat_model_id: str,
         note_id: str,
-        metadata: List[dict],
-    ) -> List[dict]:
+        metadata: list[dict],
+    ) -> list[dict]:
         """
         Set metadata on a note.
 
@@ -844,8 +844,8 @@ class TMIClient:
         self,
         threat_model_id: str,
         diagram_id: str,
-        metadata: List[dict],
-    ) -> List[dict]:
+        metadata: list[dict],
+    ) -> list[dict]:
         """
         Set metadata on a diagram.
 

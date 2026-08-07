@@ -14,7 +14,6 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +30,14 @@ class RejectedFile:
 class ValidationResult:
     """Result of successful validation."""
 
-    valid_files: List[Path] = field(default_factory=list)
-    sanitization_log: List[str] = field(default_factory=list)
+    valid_files: list[Path] = field(default_factory=list)
+    sanitization_log: list[str] = field(default_factory=list)
 
 
 class TerraformValidationError(Exception):
     """Raised when one or more Terraform files fail validation."""
 
-    def __init__(self, rejected_files: List[RejectedFile]):
+    def __init__(self, rejected_files: list[RejectedFile]):
         self.rejected_files = rejected_files
         details = "; ".join(f"{r.path.name}: {r.reason}" for r in rejected_files)
         super().__init__(f"Terraform validation failed: {details}")
@@ -74,11 +73,17 @@ def _has_terraform_constructs(file_path: Path) -> bool:
                 if _TF_KEYWORDS.match(line):
                     return True
     except Exception:
-        pass
+        # Unreadable or undecodable file: treat as "not Terraform" rather than
+        # failing the scan, but leave a trace so it is diagnosable.
+        logger.debug(
+            "Could not read %s while scanning for Terraform constructs",
+            file_path,
+            exc_info=True,
+        )
     return False
 
 
-def _filter_file(file_path: Path, clone_path: Path) -> Optional[str]:
+def _filter_file(file_path: Path, clone_path: Path) -> str | None:
     """Run Step 1 filtering on a single file.
 
     Returns a rejection reason string, or None if the file passes.
@@ -94,7 +99,7 @@ def _filter_file(file_path: Path, clone_path: Path) -> Optional[str]:
     return None
 
 
-def _validate_syntax(file_path: Path) -> Optional[str]:
+def _validate_syntax(file_path: Path) -> str | None:
     """Run Step 2 syntax validation on a single file via terraform fmt.
 
     Returns a rejection reason string, or None if the file passes.
@@ -129,7 +134,7 @@ _HEREDOC_TERMINATOR_RE = re.compile(r"""^<<-?\s*['"]?(\w+)['"]?""")
 _COMMENT_RE = re.compile(r"^\s*(#|//)")
 
 
-def _sanitize_file(file_path: Path) -> List[str]:
+def _sanitize_file(file_path: Path) -> list[str]:
     """Step 3: Sanitize a .tf file by stripping embedded scripts and secrets.
 
     Reads the file, processes line by line using a state machine, writes
@@ -140,7 +145,7 @@ def _sanitize_file(file_path: Path) -> List[str]:
     with open(file_path, encoding="utf-8") as f:
         lines = f.readlines()
 
-    output: List[str] = []
+    output: list[str] = []
     state = _State.NORMAL
     depth = 0
     heredoc_terminator = ""
@@ -256,7 +261,7 @@ def _sanitize_file(file_path: Path) -> List[str]:
         f.writelines(output)
 
     # Build log messages
-    log_messages: List[str] = []
+    log_messages: list[str] = []
     name = file_path.name
     if user_data_count:
         s = "" if user_data_count == 1 else "s"
@@ -277,7 +282,7 @@ def _sanitize_file(file_path: Path) -> List[str]:
 
 
 def validate_and_sanitize(
-    terraform_files: List[Path], clone_path: Path
+    terraform_files: list[Path], clone_path: Path
 ) -> ValidationResult:
     """Validate and sanitize Terraform files.
 
@@ -292,8 +297,8 @@ def validate_and_sanitize(
             "terraform binary not found on PATH — required for Terraform file validation"
         )
 
-    rejected: List[RejectedFile] = []
-    passed_step1: List[Path] = []
+    rejected: list[RejectedFile] = []
+    passed_step1: list[Path] = []
 
     # Step 1: File-level filtering
     for f in terraform_files:
@@ -309,7 +314,7 @@ def validate_and_sanitize(
             passed_step1.append(f)
 
     # Step 2: Syntax validation
-    passed_step2: List[Path] = []
+    passed_step2: list[Path] = []
     for f in passed_step1:
         reason = _validate_syntax(f)
         if reason:
@@ -323,7 +328,7 @@ def validate_and_sanitize(
             passed_step2.append(f)
 
     # Step 3: Sanitization (.tf files only)
-    sanitization_log: List[str] = []
+    sanitization_log: list[str] = []
     for f in passed_step2:
         if f.suffix == ".tf":
             messages = _sanitize_file(f)

@@ -33,8 +33,29 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=9.0.0",
-    "ruff>=0.1.0",
+    "ruff>=0.16.1",
     "pyright>=1.1.407",
+]
+
+[tool.ruff.lint]
+# Ruff's default rule set is a curated subset of each family, and 0.16 widened
+# it -- which is how a routine dependency bump surfaced ~400 findings here. We
+# track those defaults deliberately rather than pinning a narrow `select`.
+#
+# Pinning by family prefix was considered and rejected: `select = ["D", "S",
+# ...]` selects each family *whole*, which reports 2053 findings in this repo
+# (E501 line length, D1xx docstring mandates, TRY003, PLR2004 magic values --
+# conventions this codebase has never followed). Re-check the delta whenever
+# ruff's minor version moves; `ruff check --statistics` shows it quickly.
+ignore = [
+    # tmi-tf is a pipeline over third-party Terraform repos and remote LLM/TMI
+    # API calls. Each stage catches broadly on purpose so one bad repo, model
+    # response, or network blip degrades that stage (log and continue, or
+    # return None) instead of killing a multi-repo run; CLI entrypoints catch
+    # to exit with a message rather than a traceback. All 37 sites follow that
+    # pattern, so BLE001 reports the architecture rather than any defect.
+    # The handlers that swallowed *silently* were fixed, not ignored.
+    "BLE001",
 ]
 
 [tool.pyright]

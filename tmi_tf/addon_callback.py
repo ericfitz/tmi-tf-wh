@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import json
 import logging
-from typing import Optional
 
 import requests  # ty:ignore[unresolved-import]
 
@@ -20,7 +19,7 @@ class AddonCallback:
     because this runs during job cleanup paths that must not block.
     """
 
-    def __init__(self, callback_url: Optional[str], secret: str) -> None:
+    def __init__(self, callback_url: str | None, secret: str) -> None:
         self.callback_url = callback_url
         self._secret = secret
 

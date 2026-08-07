@@ -13,8 +13,9 @@ Analysis runs in sequential phases:
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from tmi_tf.cvss_scorer import score_cvss4_vector
 from tmi_tf.json_extract import extract_json_array, extract_json_object
@@ -32,9 +33,9 @@ class TerraformAnalysis:
         self,
         repo_name: str,
         repo_url: str,
-        inventory: Optional[Dict[str, Any]] = None,
-        infrastructure: Optional[Dict[str, Any]] = None,
-        security_findings: Optional[List[Dict[str, Any]]] = None,
+        inventory: dict[str, Any] | None = None,
+        infrastructure: dict[str, Any] | None = None,
+        security_findings: list[dict[str, Any]] | None = None,
         success: bool = True,
         elapsed_time: float = 0.0,
         input_tokens: int = 0,
@@ -172,7 +173,7 @@ class LLMAnalyzer:
     def analyze_repository(
         self,
         terraform_repo: TerraformRepository,
-        status_callback: Optional[Callable[[str], None]] = None,
+        status_callback: Callable[[str], None] | None = None,
     ) -> TerraformAnalysis:
         """
         Analyze Terraform repository using 3-phase LLM pipeline.
@@ -301,7 +302,7 @@ class LLMAnalyzer:
             # Phase 3b: Per-Threat Analysis (sequential, one LLM call per threat)
             if status_callback:
                 status_callback("Phase 3b (Per-Threat Analysis) started")
-            security_findings: List[Dict[str, Any]] = []
+            security_findings: list[dict[str, Any]] = []
 
             for i, raw_threat in enumerate(raw_threats, 1):
                 threat_name = raw_threat.get("name", "Unnamed Threat")
@@ -353,7 +354,7 @@ class LLMAnalyzer:
 
                     # Validate and score CVSS vector
                     cvss_vector = analysis_result.get("cvss_vector", "")
-                    cvss_list: List[Dict[str, Any]] = []
+                    cvss_list: list[dict[str, Any]] = []
                     score: float | None = None
                     severity = analysis_result.get("severity", "Medium")
 
@@ -374,7 +375,7 @@ class LLMAnalyzer:
                             cvss_list = [{"vector": cvss_vector, "score": cvss_score}]
 
                     # Merge Phase 3a + Phase 3b into final finding
-                    finding: Dict[str, Any] = {
+                    finding: dict[str, Any] = {
                         "name": threat_name,
                         "description": raw_threat.get("description", ""),
                         "affected_components": raw_threat.get(
@@ -450,7 +451,7 @@ class LLMAnalyzer:
                 model=self.model,
                 provider=self.provider,
                 total_cost=total_cost,
-                error_message=f"**Analysis Failed**: {str(e)}",
+                error_message=f"**Analysis Failed**: {e!s}",
             )
 
     def _call_llm(
@@ -498,7 +499,7 @@ class LLMAnalyzer:
         phase_name: str,
         max_tokens: int = 16000,
         timeout: float = 300.0,
-    ) -> tuple[Optional[Dict[str, Any]], int, int, float]:
+    ) -> tuple[dict[str, Any] | None, int, int, float]:
         """
         Call LLM and parse JSON object response.
 
@@ -537,7 +538,7 @@ class LLMAnalyzer:
         phase_name: str,
         max_tokens: int = 16000,
         timeout: float = 300.0,
-    ) -> tuple[List[Dict[str, Any]], int, int, float]:
+    ) -> tuple[list[dict[str, Any]], int, int, float]:
         """
         Call LLM and parse JSON array response.
 

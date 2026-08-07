@@ -3,9 +3,8 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
-
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 
 from tmi_tf.retry import (
     DEFAULT_RETRY_DELAY,
@@ -89,9 +88,11 @@ class TestRetryTransientLlmCall:
             message="503", llm_provider="gemini", model="gemini/gemini-3.1-pro-preview"
         )
         call = MagicMock(side_effect=[exc, exc])
-        with patch("tmi_tf.retry.time.sleep"):
-            with pytest.raises(litellm.ServiceUnavailableError):
-                retry_transient_llm_call(call, description="test")
+        with (
+            patch("tmi_tf.retry.time.sleep"),
+            pytest.raises(litellm.ServiceUnavailableError),
+        ):
+            retry_transient_llm_call(call, description="test")
         assert call.call_count == 2
 
     def test_no_retry_on_bad_request(self):

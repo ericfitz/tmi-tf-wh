@@ -6,8 +6,6 @@ for all artifacts created by tmi-tf (notes, diagrams, threats).
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List
-
 
 # Version identifier for tmi-tf
 TMI_TF_VERSION = "0.1.0"
@@ -30,7 +28,7 @@ class ArtifactMetadata:
         if not self.creation_timestamp:
             self.creation_timestamp = get_rfc3339_timestamp()
 
-    def to_metadata_list(self) -> List[dict]:
+    def to_metadata_list(self) -> list[dict]:
         """
         Convert to list of metadata key-value dicts for TMI API.
 
@@ -92,7 +90,7 @@ def create_artifact_metadata(
 
 
 def aggregate_analysis_metadata(
-    analyses: List,
+    analyses: list,
     provider: str,
     model: str,
 ) -> ArtifactMetadata:

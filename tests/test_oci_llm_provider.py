@@ -23,14 +23,16 @@ class TestOciLLMProvider:
             "tenancy": "ocid1.tenancy.oc1..test",
             "key_file": "/path/to/key.pem",
         }
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("oci.config.from_file", return_value=mock_oci_config):
-                provider = OciLLMProvider(model=None)
-                assert (
-                    provider._extra_kwargs["oci_compartment_id"]
-                    == "ocid1.compartment.oc1..test"
-                )
-                assert provider._extra_kwargs["oci_region"] == "us-ashburn-1"
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("oci.config.from_file", return_value=mock_oci_config),
+        ):
+            provider = OciLLMProvider(model=None)
+            assert (
+                provider._extra_kwargs["oci_compartment_id"]
+                == "ocid1.compartment.oc1..test"
+            )
+            assert provider._extra_kwargs["oci_region"] == "us-ashburn-1"
 
     @patch.dict(os.environ, {}, clear=False)
     def test_raises_when_no_compartment_id(self):
@@ -46,14 +48,16 @@ class TestOciLLMProvider:
     def test_uses_instance_principal_when_no_config_file(self):
         mock_signer = MagicMock()
         mock_signer.region = "us-phoenix-1"
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch(
+        with (
+            patch("pathlib.Path.exists", return_value=False),
+            patch(
                 "oci.auth.signers.get_resource_principals_signer",
                 return_value=mock_signer,
-            ):
-                provider = OciLLMProvider(model=None)
-                assert provider._extra_kwargs["oci_signer"] is mock_signer
-                assert provider._extra_kwargs["oci_region"] == "us-phoenix-1"
+            ),
+        ):
+            provider = OciLLMProvider(model=None)
+            assert provider._extra_kwargs["oci_signer"] is mock_signer
+            assert provider._extra_kwargs["oci_region"] == "us-phoenix-1"
 
     @patch.dict(
         os.environ,
@@ -71,13 +75,15 @@ class TestOciLLMProvider:
             "tenancy": "ocid1.tenancy.oc1..test",
             "key_file": "/path/to/key.pem",
         }
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch(
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(
                 "oci.config.from_file", return_value=mock_oci_config
-            ) as mock_from_file:
-                OciLLMProvider(model=None)
-                call_args = mock_from_file.call_args
-                assert call_args[0][1] == "CUSTOM"
+            ) as mock_from_file,
+        ):
+            OciLLMProvider(model=None)
+            call_args = mock_from_file.call_args
+            assert call_args[0][1] == "CUSTOM"
 
     @patch.dict(
         os.environ,
@@ -92,10 +98,12 @@ class TestOciLLMProvider:
             "tenancy": "t",
             "key_file": "k",
         }
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("oci.config.from_file", return_value=mock_oci_config):
-                provider = OciLLMProvider(model=None)
-                assert provider.model.startswith("oci/")
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("oci.config.from_file", return_value=mock_oci_config),
+        ):
+            provider = OciLLMProvider(model=None)
+            assert provider.model.startswith("oci/")
 
     @patch.dict(
         os.environ,
@@ -110,7 +118,9 @@ class TestOciLLMProvider:
             "tenancy": "t",
             "key_file": "k",
         }
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("oci.config.from_file", return_value=mock_oci_config):
-                provider = OciLLMProvider(model="xai.grok-4")
-                assert provider.model == "oci/xai.grok-4"
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("oci.config.from_file", return_value=mock_oci_config),
+        ):
+            provider = OciLLMProvider(model="xai.grok-4")
+            assert provider.model == "oci/xai.grok-4"

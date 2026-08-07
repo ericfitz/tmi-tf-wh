@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tmi_tf.providers import QueueMessage
@@ -20,7 +20,9 @@ def get_oci_signer():  # type: ignore[return]
     principals and OKE workload identity), then falls back to ~/.oci/config.
     """
     try:
-        from oci.auth.signers import get_resource_principals_signer  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+        from oci.auth.signers import (
+            get_resource_principals_signer,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+        )
 
         signer = get_resource_principals_signer()
         logger.debug("Using OCI resource principal signer")
@@ -31,8 +33,12 @@ def get_oci_signer():  # type: ignore[return]
             e,
         )
 
-    from oci.config import from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-    from oci.signer import Signer  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    from oci.config import (
+        from_file,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    )
+    from oci.signer import (
+        Signer,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    )
 
     config = from_file()
     signer = Signer(
@@ -46,9 +52,11 @@ def get_oci_signer():  # type: ignore[return]
     return signer
 
 
-def _get_vaults_client(vault_endpoint: Optional[str] = None):  # type: ignore[return]
+def _get_vaults_client(vault_endpoint: str | None = None):  # type: ignore[return]
     """Create and return an OCI VaultsClient using the shared signer."""
-    from oci.vault import VaultsClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    from oci.vault import (
+        VaultsClient,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    )
 
     signer = get_oci_signer()
     kwargs: dict = {"config": {}, "signer": signer}
@@ -57,9 +65,11 @@ def _get_vaults_client(vault_endpoint: Optional[str] = None):  # type: ignore[re
     return VaultsClient(**kwargs)
 
 
-def _get_secrets_client(secrets_endpoint: Optional[str] = None):  # type: ignore[return]
+def _get_secrets_client(secrets_endpoint: str | None = None):  # type: ignore[return]
     """Create and return an OCI SecretsClient using the shared signer."""
-    from oci.secrets import SecretsClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    from oci.secrets import (
+        SecretsClient,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    )
 
     signer = get_oci_signer()
     kwargs: dict = {"config": {}, "signer": signer}
@@ -75,8 +85,8 @@ class OciSecretProvider:
         self,
         vault_ocid: str,
         compartment_ocid: str,
-        vault_endpoint: Optional[str] = None,
-        secrets_endpoint: Optional[str] = None,
+        vault_endpoint: str | None = None,
+        secrets_endpoint: str | None = None,
     ) -> None:
         self._vault_ocid = vault_ocid
         self._compartment_ocid = compartment_ocid
@@ -126,7 +136,7 @@ class OciSecretProvider:
 class OciQueueProvider:
     """OCI Queue SDK wrapper for publish/consume/delete operations."""
 
-    def __init__(self, queue_ocid: str, queue_endpoint: Optional[str] = None) -> None:
+    def __init__(self, queue_ocid: str, queue_endpoint: str | None = None) -> None:
         self._queue_ocid = queue_ocid
         self._queue_endpoint = queue_endpoint
         self._client = None
@@ -134,7 +144,9 @@ class OciQueueProvider:
     def _get_client(self):  # type: ignore[return]
         """Lazy-initialize and return the OCI QueueClient."""
         if self._client is None:
-            from oci.queue import QueueClient as OCIQueueClient  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+            from oci.queue import (
+                QueueClient as OCIQueueClient,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+            )
 
             signer = get_oci_signer()
             kwargs: dict = {"config": {}, "signer": signer}
@@ -145,7 +157,10 @@ class OciQueueProvider:
 
     def publish(self, message: dict[str, Any]) -> None:
         """Serialize message to JSON and publish it to the queue."""
-        from oci.queue.models import PutMessagesDetails, PutMessagesDetailsEntry  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+        from oci.queue.models import (  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+            PutMessagesDetails,
+            PutMessagesDetailsEntry,
+        )
 
         client = self._get_client()
         body = json.dumps(message)
@@ -204,7 +219,7 @@ class OciQueueProvider:
         )
 
 
-from tmi_tf.providers.llm_base import BaseLLMProvider  # noqa: E402
+from tmi_tf.providers.llm_base import BaseLLMProvider
 
 OCI_DEFAULT_MODEL = "oci/xai.grok-4"
 
@@ -232,7 +247,9 @@ class OciLLMProvider(BaseLLMProvider):
         # Build completion kwargs
         oci_config_path = Path.home() / ".oci" / "config"
         if oci_config_path.exists():
-            from oci.config import from_file as oci_from_file  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+            from oci.config import (
+                from_file as oci_from_file,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+            )
 
             oci_config = oci_from_file(str(oci_config_path), config_profile)
             self._extra_kwargs = {
@@ -245,7 +262,9 @@ class OciLLMProvider(BaseLLMProvider):
             }
         else:
             try:
-                from oci.auth.signers import get_resource_principals_signer  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+                from oci.auth.signers import (
+                    get_resource_principals_signer,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+                )
 
                 signer = get_resource_principals_signer()
                 region = getattr(signer, "region", None) or "us-ashburn-1"

@@ -2,7 +2,8 @@
 
 import logging
 import time
-from typing import Callable, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 

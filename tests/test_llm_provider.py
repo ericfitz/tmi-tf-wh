@@ -112,7 +112,7 @@ class TestBaseLLMProvider:
         assert result.text == "truncated"
 
 
-from tmi_tf.providers.api_key import ApiKeyLLMProvider, DEFAULT_MODELS  # noqa: E402
+from tmi_tf.providers.api_key import DEFAULT_MODELS, ApiKeyLLMProvider
 
 
 class TestApiKeyLLMProvider:
@@ -169,9 +169,9 @@ class TestApiKeyLLMProvider:
             ApiKeyLLMProvider(provider="unknown", model=None)
 
 
-from types import SimpleNamespace  # noqa: E402
+from types import SimpleNamespace
 
-from tmi_tf.providers import get_llm_provider  # noqa: E402
+from tmi_tf.providers import get_llm_provider
 
 
 class TestGetLLMProvider:
@@ -200,11 +200,13 @@ class TestGetLLMProvider:
             "tenancy": "t",
             "key_file": "k",
         }
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("oci.config.from_file", return_value=mock_oci_config):
-                config = SimpleNamespace(llm_provider="oci", llm_model=None)
-                provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-                assert provider.model.startswith("oci/")
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("oci.config.from_file", return_value=mock_oci_config),
+        ):
+            config = SimpleNamespace(llm_provider="oci", llm_model=None)
+            provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            assert provider.model.startswith("oci/")
 
     def test_raises_for_unknown_provider(self):
         config = SimpleNamespace(llm_provider="unknown", llm_model=None)
