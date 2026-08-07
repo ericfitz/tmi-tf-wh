@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -14,10 +13,10 @@ class Job:
     threat_model_id: str
     event_type: str
     enqueued_at: datetime
-    repo_id: Optional[str] = None
-    callback_url: Optional[str] = None
-    invocation_id: Optional[str] = None
-    temp_dir: Optional[Path] = None
+    repo_id: str | None = None
+    callback_url: str | None = None
+    invocation_id: str | None = None
+    temp_dir: Path | None = None
 
     def to_queue_message(self) -> dict:
         """Serialize to dict for OCI Queue message body."""

@@ -8,8 +8,6 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
-
 
 from tmi_tf.config import Config
 
@@ -22,7 +20,7 @@ class TerraformEnvironment:
 
     name: str
     path: Path
-    tf_files: List[Path]
+    tf_files: list[Path]
 
 
 class TerraformRepository:
@@ -33,9 +31,9 @@ class TerraformRepository:
         name: str,
         url: str,
         clone_path: Path,
-        terraform_files: List[Path],
-        environment_name: Optional[str] = None,
-        environments_found: Optional[List[str]] = None,
+        terraform_files: list[Path],
+        environment_name: str | None = None,
+        environments_found: list[str] | None = None,
     ):
         """
         Initialize Terraform repository.
@@ -92,7 +90,7 @@ class RepositoryAnalyzer:
         self.config = config
 
     @staticmethod
-    def detect_environments(clone_path: Path) -> List[TerraformEnvironment]:
+    def detect_environments(clone_path: Path) -> list[TerraformEnvironment]:
         """Detect Terraform environments (root modules) in a cloned repository.
 
         Finds directories containing main.tf or backend.tf, excluding any
@@ -152,7 +150,7 @@ class RepositoryAnalyzer:
     @staticmethod
     def resolve_modules(
         environment: TerraformEnvironment, clone_path: Path
-    ) -> List[Path]:
+    ) -> list[Path]:
         """Resolve module source references and return combined file list.
 
         Parses .tf files in the environment for module source attributes,
@@ -184,6 +182,11 @@ class RepositoryAnalyzer:
             try:
                 content = tf_file.read_text(encoding="utf-8")
             except Exception:
+                # Skip files we cannot decode; module resolution is best-effort
+                # across arbitrary third-party repos.
+                logger.debug(
+                    "Could not read %s while resolving modules", tf_file, exc_info=True
+                )
                 continue
 
             for match in source_pattern.finditer(content):
@@ -211,7 +214,7 @@ class RepositoryAnalyzer:
 
     @contextmanager
     def clone_repository_sparse(
-        self, repo_url: str, repo_name: str, base_temp_dir: Optional[Path] = None
+        self, repo_url: str, repo_name: str, base_temp_dir: Path | None = None
     ):
         """
         Clone repository with sparse checkout for Terraform and documentation files.
@@ -265,7 +268,7 @@ class RepositoryAnalyzer:
 
     def _sparse_clone(
         self, repo_url: str, clone_path: Path, repo_name: str
-    ) -> Optional[TerraformRepository]:
+    ) -> TerraformRepository | None:
         """
         Perform sparse clone to get only Terraform and documentation files.
 

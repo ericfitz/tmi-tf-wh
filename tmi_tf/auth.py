@@ -7,10 +7,9 @@ import logging
 import secrets
 import tempfile
 import webbrowser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 import requests  # ty:ignore[unresolved-import]
@@ -23,11 +22,11 @@ logger = logging.getLogger(__name__)
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
     """HTTP handler for OAuth callback."""
 
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    expires_in: Optional[int] = None
-    authorization_code: Optional[str] = None
-    error: Optional[str] = None
+    access_token: str | None = None
+    refresh_token: str | None = None
+    expires_in: int | None = None
+    authorization_code: str | None = None
+    error: str | None = None
 
     def do_GET(self):
         """Handle GET request for OAuth callback."""
@@ -73,7 +72,6 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Suppress HTTP server logs."""
-        pass
 
 
 class TokenCache:
@@ -85,7 +83,7 @@ class TokenCache:
 
     def save_token(self, token: str, expires_in: int):
         """Save token to cache file using atomic write."""
-        expires_at = datetime.now() + timedelta(seconds=expires_in)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
         cache_data = {"token": token, "expires_at": expires_at.isoformat()}
 
         # Write to temp file then rename for atomicity (os.rename is atomic on POSIX)
@@ -101,7 +99,7 @@ class TokenCache:
 
         logger.info(f"Token cached to {self.cache_file}")
 
-    def load_token(self) -> Optional[str]:
+    def load_token(self) -> str | None:
         """Load token from cache if valid."""
         if not self.cache_file.exists():
             return None
@@ -111,7 +109,13 @@ class TokenCache:
                 cache_data = json.load(f)
 
             expires_at = datetime.fromisoformat(cache_data["expires_at"])
-            if datetime.now() < expires_at:
+            if expires_at.tzinfo is None:
+                # Written by a build that stored naive local timestamps. There
+                # is no way to know which offset produced it, so rather than
+                # guess, discard the entry and re-authenticate once.
+                logger.info("Cached token has a legacy naive expiry; discarding")
+                return None
+            if datetime.now(timezone.utc) < expires_at:
                 logger.info("Using cached token")
                 return cache_data["token"]
             else:
@@ -138,8 +142,8 @@ class TMIAuthenticator:
         self.callback_port = 8888
         self.redirect_uri = f"http://localhost:{self.callback_port}/callback"
         # PKCE state
-        self.code_verifier: Optional[str] = None
-        self.code_challenge: Optional[str] = None
+        self.code_verifier: str | None = None
+        self.code_challenge: str | None = None
 
     def get_token(self, force_refresh: bool = False) -> str:
         """
@@ -278,7 +282,7 @@ class TMIAuthenticator:
         except requests.RequestException as e:
             raise RuntimeError(f"Failed to get authorization URL: {e}")
 
-    def _exchange_code_for_token(self, code: str) -> Optional[str]:
+    def _exchange_code_for_token(self, code: str) -> str | None:
         """
         Exchange authorization code for access token using PKCE.
 
@@ -323,10 +327,10 @@ class TMIAuthenticator:
                 if hasattr(e, "response") and e.response is not None:
                     logger.error(f"Response body: {e.response.text}")
             except Exception:
-                pass
+                logger.debug("Could not read response body", exc_info=True)
             return None
 
-    def _wait_for_callback(self) -> Optional[str]:
+    def _wait_for_callback(self) -> str | None:
         """
         Start local HTTP server and wait for OAuth callback.
 

@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from tmi_tf.json_extract import extract_json_object
 from tmi_tf.providers import LLMProvider
@@ -54,9 +54,9 @@ class DFDLLMGenerator:
 
     def generate_structured_components(
         self,
-        inventory: Dict[str, Any],
-        infrastructure: Dict[str, Any],
-    ) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        inventory: dict[str, Any],
+        infrastructure: dict[str, Any],
+    ) -> dict[str, list[dict[str, Any]]] | None:
         """
         Generate structured component and flow data from analysis JSON.
 
@@ -155,7 +155,7 @@ class DFDLLMGenerator:
                 else:
                     self._strip_markup(item)
 
-    def _validate_structure(self, data: Dict[str, Any]) -> bool:
+    def _validate_structure(self, data: dict[str, Any]) -> bool:
         """
         Validate the structure of generated data.
 
@@ -195,7 +195,7 @@ class DFDLLMGenerator:
 
         return True
 
-    def _validate_component(self, component: Dict[str, Any], index: int) -> bool:
+    def _validate_component(self, component: dict[str, Any], index: int) -> bool:
         """
         Validate a single component.
 
@@ -230,7 +230,7 @@ class DFDLLMGenerator:
         return True
 
     def _validate_flow(
-        self, flow: Dict[str, Any], index: int, component_ids: set
+        self, flow: dict[str, Any], index: int, component_ids: set
     ) -> bool:
         """
         Validate a single flow.

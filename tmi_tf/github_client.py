@@ -1,11 +1,16 @@
 """GitHub API client for repository metadata."""
 
 import logging
-from typing import Optional
 from urllib.parse import urlparse
 
-from github import Auth, Github, GithubException  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-from github.Repository import Repository  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+from github import (  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+    Auth,
+    Github,
+    GithubException,
+)
+from github.Repository import (
+    Repository,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+)
 
 from tmi_tf.config import Config
 
@@ -35,7 +40,7 @@ class GitHubClient:
                 "GitHub client initialized without authentication - rate limits apply"
             )
 
-    def get_repository_info(self, repo_url: str) -> Optional[Repository]:
+    def get_repository_info(self, repo_url: str) -> Repository | None:
         """
         Get repository information from GitHub API.
 
@@ -96,7 +101,7 @@ class GitHubClient:
             # and let the clone operation determine
             return True
 
-    def get_repository_size(self, repo_url: str) -> Optional[int]:
+    def get_repository_size(self, repo_url: str) -> int | None:
         """
         Get repository size in KB.
 
@@ -126,7 +131,7 @@ class GitHubClient:
             return False
 
     @staticmethod
-    def _parse_github_url(url: str) -> tuple[Optional[str], Optional[str]]:
+    def _parse_github_url(url: str) -> tuple[str | None, str | None]:
         """
         Parse GitHub URL to extract owner and repository name.
 

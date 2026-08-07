@@ -1,8 +1,7 @@
 """Tests for CLI environment selection behavior."""
 
-import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
-
 import click  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
+import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.repo_analyzer import RepositoryAnalyzer, TerraformEnvironment
 

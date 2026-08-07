@@ -3,7 +3,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import Any
 
 from tmi_tf.cwe_699 import CWE_699_IDS
 from tmi_tf.json_extract import extract_json_array
@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
 
 
-def filter_valid_cwe_ids(cwe_ids: List[str]) -> List[str]:
+def filter_valid_cwe_ids(cwe_ids: list[str]) -> list[str]:
     """Filter CWE IDs to only those in the CWE-699 (non-category) view.
 
     Invalid or unrecognised IDs are logged and dropped.
     """
-    valid: List[str] = []
+    valid: list[str] = []
     for cid in cwe_ids:
         m = _CWE_RE.match(cid)
         if not m:
@@ -41,13 +41,13 @@ class SecurityThreat:
         self,
         name: str,
         description: str,
-        threat_type: Union[str, List[str]],
+        threat_type: str | list[str],
         severity: str = "Medium",
-        score: Optional[float] = None,
-        cvss: Optional[List[Dict[str, Any]]] = None,
-        cwe_id: Optional[List[str]] = None,
-        mitigation: Optional[str] = None,
-        affected_components: Optional[List[str]] = None,
+        score: float | None = None,
+        cvss: list[dict[str, Any]] | None = None,
+        cwe_id: list[str] | None = None,
+        mitigation: str | None = None,
+        affected_components: list[str] | None = None,
         status: str = "Open",
     ):
         """
@@ -140,7 +140,7 @@ class ThreatProcessor:
 
     def extract_threats_from_analysis(
         self, analysis_content: str, repo_name: str
-    ) -> List[SecurityThreat]:
+    ) -> list[SecurityThreat]:
         """
         Extract structured threats from analysis markdown content using LLM.
 
@@ -202,9 +202,9 @@ class ThreatProcessor:
 
     def threats_from_findings(
         self,
-        findings: List[Dict[str, Any]],
+        findings: list[dict[str, Any]],
         repo_name: str,
-    ) -> List[SecurityThreat]:
+    ) -> list[SecurityThreat]:
         """
         Convert structured security findings (from Phase 3 JSON) into SecurityThreat objects.
 
@@ -238,12 +238,12 @@ class ThreatProcessor:
 
     def create_threats_in_tmi(
         self,
-        threats: List[SecurityThreat],
+        threats: list[SecurityThreat],
         threat_model_id: str,
         tmi_client,
-        diagram_id: Optional[str] = None,
-        metadata: Optional[List[Dict[str, str]]] = None,
-    ) -> List[Dict[str, Any]]:
+        diagram_id: str | None = None,
+        metadata: list[dict[str, str]] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Create threat objects in TMI threat model.
 

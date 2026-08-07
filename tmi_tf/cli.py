@@ -2,7 +2,6 @@
 
 import logging
 import sys
-from typing import Optional
 
 import click  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 def _cli_impl() -> None:
     """TMI Terraform Analysis Tool - Analyze infrastructure code for threat modeling."""
-    pass
 
 
 # Apply Click decorators and cast to Group for proper type hints
@@ -72,14 +70,14 @@ cli: click.Group = click.version_option(version="0.1.0")(click.group()(_cli_impl
 )
 def analyze(
     threat_model_id: str,
-    max_repos: Optional[int],
+    max_repos: int | None,
     dry_run: bool,
-    output: Optional[str],
+    output: str | None,
     force_auth: bool,
     verbose: bool,
     skip_diagram: bool,
     skip_threats: bool,
-    environment: Optional[str],
+    environment: str | None,
 ):
     """
     Analyze Terraform repositories for a threat model.
@@ -172,22 +170,21 @@ def analyze(
             logger.info(f"Analysis report saved to: {analysis_path}")
 
         # Dry run: print reports to stdout
-        if dry_run:
-            if not output:
-                print("\n" + "=" * 80)
-                print("INVENTORY REPORT")
-                print("=" * 80 + "\n")
-                print(result.inventory_content)
-                print("\n" + "=" * 80)
-                print("ANALYSIS REPORT")
-                print("=" * 80 + "\n")
-                print(result.analysis_content)
+        if dry_run and not output:
+            print("\n" + "=" * 80)
+            print("INVENTORY REPORT")
+            print("=" * 80 + "\n")
+            print(result.inventory_content)
+            print("\n" + "=" * 80)
+            print("ANALYSIS REPORT")
+            print("=" * 80 + "\n")
+            print(result.analysis_content)
 
     except click.Abort:
         logger.info("Analysis cancelled by user")
         sys.exit(0)
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Fatal error")
         sys.exit(1)
 
 

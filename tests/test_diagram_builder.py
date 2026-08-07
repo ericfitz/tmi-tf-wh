@@ -4,7 +4,6 @@ import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-im
 
 from tmi_tf.diagram_builder import DFDBuilder
 
-
 # --- Helpers ---
 
 

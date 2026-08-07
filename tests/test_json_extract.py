@@ -1,7 +1,7 @@
 # tests/test_json_extract.py
 """Tests for JSON extraction utility."""
 
-from tmi_tf.json_extract import extract_json_object, extract_json_array
+from tmi_tf.json_extract import extract_json_array, extract_json_object
 
 
 class TestExtractJsonObject:

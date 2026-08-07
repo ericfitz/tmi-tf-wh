@@ -2,7 +2,6 @@
 
 import hashlib
 import hmac
-from typing import Optional
 
 
 def verify_hmac_signature(raw_body: bytes, signature: str, secret: str) -> bool:
@@ -19,7 +18,7 @@ def verify_hmac_signature(raw_body: bytes, signature: str, secret: str) -> bool:
 
 
 def validate_subscription_id(
-    header_value: Optional[str], configured_value: Optional[str]
+    header_value: str | None, configured_value: str | None
 ) -> bool:
     """Validate the subscription ID from the request header against the configured value.
 
@@ -34,7 +33,7 @@ def validate_subscription_id(
     return header_value.lower() == configured_value.lower()
 
 
-def extract_job_id(invocation_id: Optional[str], delivery_id: Optional[str]) -> str:
+def extract_job_id(invocation_id: str | None, delivery_id: str | None) -> str:
     """Extract a job ID from invocation_id or delivery_id.
 
     Prefers invocation_id; falls back to delivery_id.
@@ -47,7 +46,7 @@ def extract_job_id(invocation_id: Optional[str], delivery_id: Optional[str]) -> 
     raise ValueError("Neither invocation_id nor delivery_id was provided")
 
 
-def handle_challenge(payload: dict) -> Optional[dict]:
+def handle_challenge(payload: dict) -> dict | None:
     """Handle a webhook challenge request.
 
     If the payload has type "webhook.challenge", returns {"challenge": <value>}.
