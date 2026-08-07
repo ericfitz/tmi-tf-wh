@@ -57,8 +57,17 @@ class TestDataclasses:
         assert err.rejected_files == rejected
 
 
+@pytest.mark.usefixtures("_mock_terraform")
 class TestFileFiltering:
-    """Test Step 1: file-level filtering."""
+    """Test Step 1: file-level filtering.
+
+    Applied to the whole class: none of these need a real terraform binary.
+    They assert rejections from Step 1, which happens before `terraform fmt` is
+    ever invoked -- they reached it only because validate_and_sanitize checks
+    for the binary up front. Mocking rather than skipping keeps the filtering
+    logic covered on machines without terraform installed. Step 2 is covered
+    against the real binary in TestSyntaxValidation.
+    """
 
     def _make_file(self, tmp_path: Path, name: str, content: str) -> Path:
         p = tmp_path / name
@@ -93,13 +102,11 @@ class TestFileFiltering:
         with pytest.raises(TerraformValidationError, match="no Terraform constructs"):
             validate_and_sanitize([f], tmp_path)
 
-    @pytest.mark.usefixtures("_mock_terraform")
     def test_tfvars_exempt_from_keyword_scan(self, tmp_path):
         f = self._make_file(tmp_path, "terraform.tfvars", 'region = "us-east-1"\n')
         result = validate_and_sanitize([f], tmp_path)
         assert f in result.valid_files
 
-    @pytest.mark.usefixtures("_mock_terraform")
     def test_accepts_file_with_resource(self, tmp_path):
         f = self._make_file(
             tmp_path, "main.tf", 'resource "aws_instance" "web" {\n  ami = "abc"\n}\n'
@@ -107,7 +114,6 @@ class TestFileFiltering:
         result = validate_and_sanitize([f], tmp_path)
         assert f in result.valid_files
 
-    @pytest.mark.usefixtures("_mock_terraform")
     def test_accepts_file_with_variable_only(self, tmp_path):
         f = self._make_file(
             tmp_path,
@@ -172,7 +178,14 @@ class TestSyntaxValidation:
 
     def test_terraform_fmt_timeout(self, tmp_path):
         f = self._make_file(tmp_path, "slow.tf", 'resource "x" "y" {}\n')
+        # `which` is stubbed alongside subprocess.run so the timeout path is
+        # reachable without terraform installed. The _mock_terraform fixture is
+        # deliberately not reused here: it also stubs subprocess.run, and the
+        # two patches would compete for the same target.
         with (
+            patch(
+                "tmi_tf.tf_validator.shutil.which", return_value="/usr/bin/terraform"
+            ),
             patch(
                 "tmi_tf.tf_validator.subprocess.run",
                 side_effect=TimeoutExpired("terraform", 30),
