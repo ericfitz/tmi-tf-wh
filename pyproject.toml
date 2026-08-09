@@ -26,6 +26,33 @@ dependencies = [
 [project.scripts]
 tmi-tf = "tmi_tf.cli:cli"
 
+[tool.uv]
+# oci 2.184.0 (the latest release) declares `cryptography<50.0.0`, which holds
+# the resolver at 49.0.0 -- a version carrying CVE-2026-69247 (PYSEC-2026-3552),
+# a Bleichenbacher oracle in the PKCS#7 EnvelopedData decryption helpers.
+#
+# cryptography 50.0.0 lists no backwards-incompatible changes; it deprecates
+# finite-field Diffie-Hellman and tightens DER parsing in X.509/OCSP/SCT paths.
+# oci uses cryptography only for RSA request signing and key loading, none of
+# which touch the deprecated or tightened APIs, so its cap is conservative
+# rather than a real incompatibility. pyopenssl (oci's other crypto dependency)
+# already allows <51.
+#
+# Drop this override once oci relaxes its cap -- see issue #39.
+#
+# litellm 1.96.0 (the latest release) declares `importlib-metadata<9.0`. Its
+# only use of the backport is `importlib_metadata.version("litellm")` in
+# litellm/_version.py. The sole breaking change in importlib-metadata 9.0.0 is
+# that `Distribution.metadata` raises `MetadataNotFound` instead of returning
+# `None`; `version()` is unaffected, so the cap does not reflect a real
+# incompatibility here. Nothing in this project imports the backport directly.
+#
+# Drop this override once litellm relaxes its cap -- see issue #40.
+override-dependencies = [
+    "cryptography>=50.0.0",
+    "importlib-metadata>=9.0.0",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
