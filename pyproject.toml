@@ -39,7 +39,19 @@ tmi-tf = "tmi_tf.cli:cli"
 # already allows <51.
 #
 # Drop this override once oci relaxes its cap -- see issue #39.
-override-dependencies = ["cryptography>=50.0.0"]
+#
+# litellm 1.96.0 (the latest release) declares `importlib-metadata<9.0`. Its
+# only use of the backport is `importlib_metadata.version("litellm")` in
+# litellm/_version.py. The sole breaking change in importlib-metadata 9.0.0 is
+# that `Distribution.metadata` raises `MetadataNotFound` instead of returning
+# `None`; `version()` is unaffected, so the cap does not reflect a real
+# incompatibility here. Nothing in this project imports the backport directly.
+#
+# Drop this override once litellm relaxes its cap -- see issue #40.
+override-dependencies = [
+    "cryptography>=50.0.0",
+    "importlib-metadata>=9.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
