@@ -62,6 +62,12 @@ dev = [
     "pytest>=9.0.0",
     "ruff>=0.16.1",
     "pyright>=1.1.407",
+    # starlette.testclient (which fastapi.testclient re-exports) imports
+    # `httpx2` and only falls back to httpx -- with a StarletteDeprecationWarning
+    # -- when it is absent. Nothing here uses httpx directly; it arrives as a
+    # transitive dependency of litellm and huggingface-hub, and stays. This
+    # entry is only so TestClient takes the supported path.
+    "httpx2>=2.0.0",
 ]
 
 [tool.ruff]
