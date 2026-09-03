@@ -15,7 +15,10 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "setuptools>=82.0.0",
     "urllib3>=2.7.0",
-    "litellm>=1.84.0",
+    # litellm 1.98.0+ imports typing.NotRequired (3.11+) at module import time
+    # while still declaring requires-python >=3.10, so it fails on the 3.10 CI
+    # leg. Lift the cap once litellm fixes the import or this project drops 3.10.
+    "litellm>=1.84.0,<1.98",
     "nh3>=0.3.3",
     "cvss>=3.2",
     "oci>=2.168.2",
