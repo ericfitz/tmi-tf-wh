@@ -1,0 +1,45 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "\"/Users/efitz/go/bin/xfa\" hook session-start",
+            "type": "command"
+          }
+        ],
+        "matcher": "startup|resume|clear|compact"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "\"/Users/efitz/go/bin/xfa\" hook stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "\"/Users/efitz/go/bin/xfa\" hook subagent-stop",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "\"/Users/efitz/go/bin/xfa\" hook user-prompt",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
