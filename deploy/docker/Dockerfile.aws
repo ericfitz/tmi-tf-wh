@@ -55,7 +55,7 @@ RUN dnf -y update && \
 RUN groupadd -r tmi-tf && \
     useradd -r -g tmi-tf -m -d /home/tmi-tf -s /sbin/nologin tmi-tf
 
-ARG TMI_CLIENT_VERSION=v1.4.0
+ARG TMI_CLIENT_VERSION=v1.8.3
 
 COPY --from=builder /install /usr/local
 COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client

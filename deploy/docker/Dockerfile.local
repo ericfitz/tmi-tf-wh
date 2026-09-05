@@ -45,7 +45,7 @@ RUN apk add --no-cache \
 RUN addgroup -S tmi-tf && \
     adduser -S -G tmi-tf -h /home/tmi-tf tmi-tf
 
-ARG TMI_CLIENT_VERSION=v1.4.0
+ARG TMI_CLIENT_VERSION=v1.8.3
 
 COPY --from=builder /install /usr/
 COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
