@@ -227,6 +227,7 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 *.tfvars
+infra/aws/backend.hcl
 .serena/**
 
 

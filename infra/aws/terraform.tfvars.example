@@ -1,0 +1,20 @@
+# All values have defaults; uncomment to override.
+# region              = "us-east-1"
+# aws_profile         = "tmi"
+# cluster_name        = "tmi-eks"
+# hosted_zone_name    = "tmi.dev"
+# hostname            = "webhook.tmi.dev"
+# ingress_group       = "tmi-webhooks"
+# url_prefix          = "/tf"
+# app_image_tag       = "latest"
+# llm_provider        = "anthropic"
+# llm_model           = "claude-fable-5-1"
+# tmi_server_url      = "https://api.tmi.dev"
+# max_concurrent_jobs = 3
+
+# Secrets go in secrets.auto.tfvars (git-ignored via *.tfvars):
+# webhook_secret    = "..."
+# tmi_client_id     = "..."
+# tmi_client_secret = "..."
+# llm_api_key       = "..."
+# github_token      = ""
