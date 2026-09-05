@@ -65,7 +65,7 @@ class TestWebhookEndpoint:
                 "Content-Type": "application/json",
                 "X-Webhook-Signature": sig,
                 "X-Invocation-Id": "inv-001",
-                "X-Delivery-Id": "del-001",
+                "X-Webhook-Delivery-Id": "del-001",
             },
         )
 
@@ -104,24 +104,21 @@ class TestWebhookEndpoint:
             headers={
                 "Content-Type": "application/json",
                 "X-Webhook-Signature": sig,
-                # No X-Invocation-Id or X-Delivery-Id
+                # No X-Invocation-Id or X-Webhook-Delivery-Id
             },
         )
 
         assert response.status_code == 403
 
     def test_challenge_returns_challenge_response(self, client):
+        # TMI sends challenges unsigned (no X-Webhook-Signature header)
         payload = {"type": "webhook.challenge", "challenge": "abc123"}
         body = json.dumps(payload).encode()
-        sig = _make_sig(body, "test-secret")
 
         response = client.post(
             "/webhook",
             content=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-Webhook-Signature": sig,
-            },
+            headers={"Content-Type": "application/json"},
         )
 
         assert response.status_code == 200

@@ -120,6 +120,10 @@ resource "kubernetes_deployment_v1" "this" {
             name  = "MAX_CONCURRENT_JOBS"
             value = tostring(var.max_concurrent_jobs)
           }
+          env {
+            name  = "WEBHOOK_SUBSCRIPTION_ID"
+            value = var.webhook_subscription_id
+          }
 
           liveness_probe {
             http_get {

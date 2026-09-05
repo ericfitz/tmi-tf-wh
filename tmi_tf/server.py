@@ -100,24 +100,12 @@ async def webhook(request: Request) -> Response:
     logger.info("Webhook received: headers=%s payload_size=%d", headers, len(raw_body))
 
     # Validate subscription ID if configured
-    subscription_id = request.headers.get("x-subscription-id")
+    subscription_id = request.headers.get("x-webhook-subscription-id")
     if not validate_subscription_id(subscription_id, config.webhook_subscription_id):
         logger.warning("Subscription ID mismatch: %s", subscription_id)
         return Response(
             status_code=401,
             content=json.dumps({"error": "Invalid subscription ID"}),
-            media_type="application/json",
-        )
-
-    # Verify HMAC signature
-    signature = request.headers.get("x-webhook-signature", "")
-    if not config.webhook_secret or not verify_hmac_signature(
-        raw_body, signature, config.webhook_secret
-    ):
-        logger.warning("HMAC signature verification failed")
-        return Response(
-            status_code=401,
-            content=json.dumps({"error": "Invalid signature"}),
             media_type="application/json",
         )
 
@@ -132,14 +120,27 @@ async def webhook(request: Request) -> Response:
             media_type="application/json",
         )
 
-    # Handle challenge
+    # Handle challenge before HMAC: TMI sends subscription challenges unsigned
+    # (api/webhook_challenge_worker.go). Echoing the challenge changes no state.
     challenge_response = handle_challenge(payload)
     if challenge_response is not None:
         return JSONResponse(content=challenge_response)
 
+    # Verify HMAC signature
+    signature = request.headers.get("x-webhook-signature", "")
+    if not config.webhook_secret or not verify_hmac_signature(
+        raw_body, signature, config.webhook_secret
+    ):
+        logger.warning("HMAC signature verification failed")
+        return Response(
+            status_code=401,
+            content=json.dumps({"error": "Invalid signature"}),
+            media_type="application/json",
+        )
+
     # Extract job ID
     invocation_id = request.headers.get("x-invocation-id")
-    delivery_id = request.headers.get("x-delivery-id")
+    delivery_id = request.headers.get("x-webhook-delivery-id")
     try:
         job_id = extract_job_id(invocation_id, delivery_id)
     except ValueError:
