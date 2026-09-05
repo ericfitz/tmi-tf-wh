@@ -99,6 +99,8 @@ class Config:
         )
         self.queue_ocid: str | None = os.getenv("QUEUE_OCID") or None
         self.vault_ocid: str | None = os.getenv("VAULT_OCID") or None
+        self.queue_url: str | None = os.getenv("QUEUE_URL") or None
+        self.aws_region: str | None = os.getenv("AWS_REGION") or None
 
         # Secret provider selection (inferred from VAULT_OCID if not explicit)
         explicit_provider = os.getenv("SECRET_PROVIDER")
@@ -115,6 +117,8 @@ class Config:
             self.queue_provider: str = explicit_queue_provider
         elif self.queue_ocid:
             self.queue_provider = "oci"
+        elif self.queue_url:
+            self.queue_provider = "aws"
         else:
             self.queue_provider = "none"
 

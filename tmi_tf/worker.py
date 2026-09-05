@@ -72,8 +72,12 @@ class WorkerPool:
         available = self.max_concurrent - len(self._active_jobs)
         if available <= 0:
             return
+        # Visibility must cover the whole job, else the queue redelivers it
+        # mid-run and DLQs it after maxReceiveCount.
         messages = await asyncio.to_thread(
-            self.queue_client.consume, max_messages=available
+            self.queue_client.consume,
+            max_messages=available,
+            visibility_timeout=self.config.job_timeout,
         )
         for msg in messages:
             asyncio.create_task(self._handle_message(msg))

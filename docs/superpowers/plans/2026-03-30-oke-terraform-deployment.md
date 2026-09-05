@@ -12,21 +12,21 @@
 
 ## File Structure
 
-### Terraform files (new directory `infra/`)
+### Terraform files (new directory `infra/oci/`)
 
 | File | Responsibility |
 |------|---------------|
-| `infra/versions.tf` | Required providers (oci, kubernetes) and terraform version |
-| `infra/variables.tf` | All input variables (VCN OCID, subnet OCIDs, compartment, region, etc.) |
-| `infra/oke.tf` | OKE cluster + node pool |
-| `infra/queue.tf` | OCI Queue |
-| `infra/vault.tf` | OCI Vault + master key + secret resources |
-| `infra/iam.tf` | Dynamic group + IAM policies for workload identity |
-| `infra/ocir.tf` | OCIR container repository |
-| `infra/api_gateway.tf` | API Gateway + deployment routing to LB |
-| `infra/k8s.tf` | K8s Deployment, Service, ServiceAccount, namespace |
-| `infra/outputs.tf` | Terraform outputs (cluster OCID, queue OCID, LB IP, gateway URL, etc.) |
-| `infra/terraform.tfvars.example` | Example tfvars for deployers |
+| `infra/oci/versions.tf` | Required providers (oci, kubernetes) and terraform version |
+| `infra/oci/variables.tf` | All input variables (VCN OCID, subnet OCIDs, compartment, region, etc.) |
+| `infra/oci/oke.tf` | OKE cluster + node pool |
+| `infra/oci/queue.tf` | OCI Queue |
+| `infra/oci/vault.tf` | OCI Vault + master key + secret resources |
+| `infra/oci/iam.tf` | Dynamic group + IAM policies for workload identity |
+| `infra/oci/ocir.tf` | OCIR container repository |
+| `infra/oci/api_gateway.tf` | API Gateway + deployment routing to LB |
+| `infra/oci/k8s.tf` | K8s Deployment, Service, ServiceAccount, namespace |
+| `infra/oci/outputs.tf` | Terraform outputs (cluster OCID, queue OCID, LB IP, gateway URL, etc.) |
+| `infra/oci/terraform.tfvars.example` | Example tfvars for deployers |
 
 ### Python code changes (existing files)
 
@@ -329,11 +329,11 @@ git commit -m "feat: support OCI service endpoint override for queue client"
 ### Task 4: Terraform scaffolding — versions and variables
 
 **Files:**
-- Create: `infra/versions.tf`
-- Create: `infra/variables.tf`
-- Create: `infra/terraform.tfvars.example`
+- Create: `infra/oci/versions.tf`
+- Create: `infra/oci/variables.tf`
+- Create: `infra/oci/terraform.tfvars.example`
 
-- [ ] **Step 1: Create `infra/versions.tf`**
+- [ ] **Step 1: Create `infra/oci/versions.tf`**
 
 ```hcl
 terraform {
@@ -378,7 +378,7 @@ data "oci_identity_tenancy" "this" {
 }
 ```
 
-- [ ] **Step 2: Create `infra/variables.tf`**
+- [ ] **Step 2: Create `infra/oci/variables.tf`**
 
 ```hcl
 # --- Required: deployer must set these ---
@@ -492,7 +492,7 @@ variable "max_concurrent_jobs" {
 }
 ```
 
-- [ ] **Step 3: Create `infra/terraform.tfvars.example`**
+- [ ] **Step 3: Create `infra/oci/terraform.tfvars.example`**
 
 ```hcl
 # Required — provide your own values
@@ -531,9 +531,9 @@ git commit -m "feat(infra): add terraform scaffolding — providers, variables, 
 ### Task 5: OKE Cluster and Node Pool
 
 **Files:**
-- Create: `infra/oke.tf`
+- Create: `infra/oci/oke.tf`
 
-- [ ] **Step 1: Create `infra/oke.tf`**
+- [ ] **Step 1: Create `infra/oci/oke.tf`**
 
 ```hcl
 # Fetch latest supported OKE Kubernetes version
@@ -627,9 +627,9 @@ git commit -m "feat(infra): add OKE cluster and ARM A1 Flex node pool"
 ### Task 6: OCI Queue
 
 **Files:**
-- Create: `infra/queue.tf`
+- Create: `infra/oci/queue.tf`
 
-- [ ] **Step 1: Create `infra/queue.tf`**
+- [ ] **Step 1: Create `infra/oci/queue.tf`**
 
 ```hcl
 resource "oci_queue_queue" "this" {
@@ -658,9 +658,9 @@ git commit -m "feat(infra): add OCI Queue for job dispatch"
 ### Task 7: OCI Vault with Master Key and Secrets
 
 **Files:**
-- Create: `infra/vault.tf`
+- Create: `infra/oci/vault.tf`
 
-- [ ] **Step 1: Create `infra/vault.tf`**
+- [ ] **Step 1: Create `infra/oci/vault.tf`**
 
 ```hcl
 resource "oci_kms_vault" "this" {
@@ -781,9 +781,9 @@ git commit -m "feat(infra): add OCI Vault, master key, and secret shells"
 ### Task 8: IAM — Dynamic Group and Policies
 
 **Files:**
-- Create: `infra/iam.tf`
+- Create: `infra/oci/iam.tf`
 
-- [ ] **Step 1: Create `infra/iam.tf`**
+- [ ] **Step 1: Create `infra/oci/iam.tf`**
 
 ```hcl
 # Dynamic group matching pods in the tmi-tf namespace via OKE workload identity
@@ -828,9 +828,9 @@ git commit -m "feat(infra): add dynamic group and IAM policies for OKE workload 
 ### Task 9: OCIR Container Repository
 
 **Files:**
-- Create: `infra/ocir.tf`
+- Create: `infra/oci/ocir.tf`
 
-- [ ] **Step 1: Create `infra/ocir.tf`**
+- [ ] **Step 1: Create `infra/oci/ocir.tf`**
 
 ```hcl
 resource "oci_artifacts_container_repository" "this" {
@@ -861,9 +861,9 @@ git commit -m "feat(infra): add OCIR container repository"
 ### Task 10: API Gateway
 
 **Files:**
-- Create: `infra/api_gateway.tf`
+- Create: `infra/oci/api_gateway.tf`
 
-- [ ] **Step 1: Create `infra/api_gateway.tf`**
+- [ ] **Step 1: Create `infra/oci/api_gateway.tf`**
 
 ```hcl
 resource "oci_apigateway_gateway" "this" {
@@ -927,9 +927,9 @@ git commit -m "feat(infra): add public API Gateway with webhook and health route
 ### Task 11: Kubernetes Resources — Namespace, ServiceAccount, Deployment, Service
 
 **Files:**
-- Create: `infra/k8s.tf`
+- Create: `infra/oci/k8s.tf`
 
-- [ ] **Step 1: Create `infra/k8s.tf`**
+- [ ] **Step 1: Create `infra/oci/k8s.tf`**
 
 ```hcl
 resource "kubernetes_namespace" "tmi_tf" {
@@ -1133,9 +1133,9 @@ git commit -m "feat(infra): add K8s deployment, service, service account, namesp
 ### Task 12: Terraform Outputs
 
 **Files:**
-- Create: `infra/outputs.tf`
+- Create: `infra/oci/outputs.tf`
 
-- [ ] **Step 1: Create `infra/outputs.tf`**
+- [ ] **Step 1: Create `infra/oci/outputs.tf`**
 
 ```hcl
 output "cluster_id" {

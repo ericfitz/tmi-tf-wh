@@ -455,7 +455,7 @@ class TestGetQueueProvider:
 
     def test_factory_raises_for_unknown_provider(self):
         config = MagicMock()
-        config.queue_provider = "aws"
+        config.queue_provider = "bogus"
         with pytest.raises(ValueError, match="Unknown queue provider"):
             get_queue_provider(config)
 
@@ -466,6 +466,18 @@ class TestGetQueueProvider:
         from tmi_tf.providers.memory import MemoryQueueProvider
 
         assert isinstance(provider, MemoryQueueProvider)
+
+    def test_factory_returns_aws_provider(self):
+        config = MagicMock()
+        config.queue_provider = "aws"
+        config.queue_url = "https://sqs.us-east-1.amazonaws.com/1/q"
+        config.aws_region = "us-east-1"
+        provider = get_queue_provider(config)
+        from tmi_tf.providers.aws import AwsQueueProvider
+
+        assert isinstance(provider, AwsQueueProvider)
+        assert provider._queue_url == "https://sqs.us-east-1.amazonaws.com/1/q"
+        assert provider._region == "us-east-1"
 
 
 class TestMemoryQueueProvider:
@@ -598,3 +610,51 @@ class TestQueueProviderConfig:
 
             config = Config()
             assert config.queue_provider == "oci"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_infers_aws_when_queue_url_set(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/1/q",
+                "AWS_REGION": "us-east-1",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            config = Config()
+            assert config.queue_provider == "aws"
+            assert config.queue_url == "https://sqs.us-east-1.amazonaws.com/1/q"
+            assert config.aws_region == "us-east-1"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_oci_wins_when_both_ocid_and_url_set(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "QUEUE_OCID": "ocid1.queue.oc1..test",
+                "QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/1/q",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            assert Config().queue_provider == "oci"
+
+    @patch("tmi_tf.config.load_dotenv")
+    def test_explicit_provider_overrides_url_inference(self, mock_dotenv):
+        with patch.dict(
+            os.environ,
+            {
+                "QUEUE_PROVIDER": "memory",
+                "QUEUE_URL": "https://sqs.us-east-1.amazonaws.com/1/q",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            from tmi_tf.config import Config
+
+            assert Config().queue_provider == "memory"

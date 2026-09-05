@@ -3,10 +3,11 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Request  # ty:ignore[unresolved-import]
+from fastapi import APIRouter, FastAPI, Request  # ty:ignore[unresolved-import]
 from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-import]
 
 from tmi_tf.config import get_config
@@ -83,9 +84,10 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 
 app = FastAPI(lifespan=lifespan)
+router = APIRouter()
 
 
-@app.post("/webhook")
+@router.post("/webhook")
 async def webhook(request: Request) -> Response:
     """Handle incoming webhook requests."""
     config = get_config()
@@ -181,7 +183,7 @@ async def webhook(request: Request) -> Response:
     return JSONResponse(content={"status": "accepted", "job_id": job_id})
 
 
-@app.get("/health")
+@router.get("/health")
 async def health() -> JSONResponse:
     """Health check endpoint."""
     return JSONResponse(
@@ -193,7 +195,7 @@ async def health() -> JSONResponse:
     )
 
 
-@app.get("/status")
+@router.get("/status")
 async def status() -> JSONResponse:
     """Worker pool status endpoint."""
     if worker_pool is not None:
@@ -201,3 +203,10 @@ async def status() -> JSONResponse:
     else:
         pool_status = {"active_jobs": {}, "active_count": 0, "max_concurrent": 0}
     return JSONResponse(content=pool_status)
+
+
+# Mount under an optional prefix so several webhook apps can share one
+# hostname behind a path-routing load balancer (e.g. ALB IngressGroup).
+# Must start with "/" when set, e.g. URL_PREFIX=/tf. Read from the
+# environment at import time because routes are registered at import time.
+app.include_router(router, prefix=os.environ.get("URL_PREFIX", "").rstrip("/"))
