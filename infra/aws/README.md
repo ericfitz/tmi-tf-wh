@@ -8,6 +8,8 @@ Deploys `tmi-tf-wh` into the existing TMI EKS cluster and exposes it at
 - AWS CLI with profile `tmi`; Terraform >= 1.5; Docker with buildx; kubectl.
 - The TMI cluster `tmi-eks` (us-east-1) with the AWS Load Balancer Controller
   installed, and the `tmi.dev` hosted zone in the same account.
+- A kubectl context named `tmi-eks`:
+  `aws eks update-kubeconfig --name tmi-eks --region us-east-1 --profile tmi --alias tmi-eks`
 
 ## First deploy
 
@@ -28,6 +30,9 @@ terraform apply -target=aws_ecr_repository.this   # repo must exist before the p
 terraform apply                                    # everything else
 terraform output webhook_url
 ```
+
+Optional non-secret overrides go in `terraform.tfvars` (copy
+`terraform.tfvars.example`); every non-secret variable has a default.
 
 The first full apply takes a few minutes: ACM validates the certificate via
 DNS, then the controller provisions the ALB, then the CNAME is written.
@@ -66,7 +71,8 @@ The hostname is served by one ALB shared through the IngressGroup
 1. Give it a unique path prefix (this app owns `/tf`) and have it serve its
    routes under that prefix.
 2. Create an Ingress in the app's own namespace with
-   `alb.ingress.kubernetes.io/group.name: tmi-webhooks`, `ingressClassName: alb`,
+   `alb.ingress.kubernetes.io/group.name: tmi-webhooks`, `scheme: internet-facing`,
+   `ingressClassName: alb`,
    `target-type: ip`, `listen-ports: [{"HTTPS":443}]`, the same
    `certificate-arn`, a `healthcheck-path` under its prefix, and a
    `pathType: Prefix` rule for its prefix.
@@ -81,3 +87,6 @@ terraform destroy
 ```
 
 Destroying removes the ALB only if no other Ingress remains in the group.
+The Load Balancer Controller deletes the ALB asynchronously, so the first
+`terraform destroy` can fail on the ACM certificate being "in use"; re-run
+`terraform destroy` after a minute.

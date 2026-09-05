@@ -1,5 +1,3 @@
-data "aws_caller_identity" "current" {}
-
 data "aws_eks_cluster" "this" {
   name = var.cluster_name
 }
@@ -9,7 +7,8 @@ data "aws_iam_openid_connect_provider" "eks" {
 }
 
 data "aws_route53_zone" "this" {
-  name = "${var.hosted_zone_name}."
+  name         = "${var.hosted_zone_name}."
+  private_zone = false
 }
 
 locals {
