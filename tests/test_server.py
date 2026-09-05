@@ -147,3 +147,21 @@ class TestStatusEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "active_jobs" in data
+
+
+class TestUrlPrefix:
+    def test_routes_served_under_prefix(self, monkeypatch):
+        import importlib
+
+        monkeypatch.setenv("URL_PREFIX", "/tf")
+        importlib.reload(server_module)
+        try:
+            c = TestClient(server_module.app, raise_server_exceptions=False)
+            assert c.get("/tf/health").status_code == 200
+            assert c.get("/health").status_code == 404
+        finally:
+            monkeypatch.delenv("URL_PREFIX")
+            importlib.reload(server_module)
+
+    def test_no_prefix_by_default(self, client):
+        assert client.get("/health").status_code == 200
