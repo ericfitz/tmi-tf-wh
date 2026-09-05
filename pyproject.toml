@@ -22,6 +22,7 @@ dependencies = [
     "nh3>=0.3.3",
     "cvss>=3.2",
     "oci>=2.168.2",
+    "boto3>=1.34.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
 ]
