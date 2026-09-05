@@ -108,7 +108,7 @@ Resources:
 | File | Resources |
 |------|-----------|
 | `ecr.tf` | ECR repo `tmi-tf-wh`, scan-on-push, keep last 10 images |
-| `sqs.tf` | `tmi-tf-wh-jobs` (visibility 900 s, retention 24 h, redrive after 3) + `tmi-tf-wh-jobs-dlq` |
+| `sqs.tf` | `tmi-tf-wh-jobs` (queue default visibility 900 s; the worker overrides per receive with `JOB_TIMEOUT`, retention 24 h, redrive after 3) + `tmi-tf-wh-jobs-dlq` |
 | `iam.tf` | IRSA role trusting `system:serviceaccount:tmi-tf:tmi-tf-wh`; inline policy `sqs:SendMessage/ReceiveMessage/DeleteMessage/GetQueueAttributes` on the jobs queue ARN only |
 | `dns.tf` | ACM cert for the hostname (DNS-validated in the zone) + Route53 CNAME to the ALB hostname from the Ingress status |
 | `k8s.tf` | Namespace, ServiceAccount (IRSA annotation), Secret, Deployment, ClusterIP Service, Ingress |
@@ -166,7 +166,7 @@ listener: TMI only ever calls HTTPS.
 2. ALB rule `/tf/*` forwards to the pod IP on 8080.
 3. `server.py` verifies subscription id + HMAC, answers challenges, publishes
    the job JSON to SQS, returns 202.
-4. Worker pool long-polls SQS (visibility 900 s), runs the analysis, writes
+4. Worker pool long-polls SQS (visibility = `JOB_TIMEOUT`, so a job is never redelivered mid-run), runs the analysis, writes
    notes/diagram/threats to TMI via `api.tmi.dev` (public ALB; the pod egresses
    through the NAT gateway), deletes the message.
 5. Three failed receives send the message to the DLQ.
