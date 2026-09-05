@@ -1,5 +1,5 @@
 # AWS build — Amazon Linux 2023 from AWS Public ECR
-# Build: docker buildx build --platform linux/arm64 -f deploy/docker/Dockerfile.aws -t <tag> .
+# Build: docker buildx build --platform linux/amd64 -f deploy/docker/Dockerfile.aws -t <tag> .
 
 # Stage 1: Builder
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder

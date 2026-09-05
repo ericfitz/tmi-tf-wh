@@ -6,7 +6,7 @@ Per-target Dockerfiles for `tmi-tf-wh`. All expect the repo root as the build co
 |------|------------|--------|------|
 | `Dockerfile.local` | `cgr.dev/chainguard/wolfi-base` | Docker Desktop / local dev | 8088 |
 | `Dockerfile.oci` | `container-registry.oracle.com/os/oraclelinux:9` | Oracle Container Engine (OKE) | 8080 |
-| `Dockerfile.aws` | `public.ecr.aws/amazonlinux/amazonlinux:2023` | ECS / EKS / App Runner | 8080 |
+| `Dockerfile.aws` | `public.ecr.aws/amazonlinux/amazonlinux:2023` | EKS (see infra/aws/) | 8080 |
 | `Dockerfile.azure` | `mcr.microsoft.com/azurelinux/base/core:3.0` | ACI / AKS / Container Apps | 8080 |
 | `Dockerfile.gcp` | `gcr.io/google.com/cloudsdktool/cloud-sdk:slim` | Cloud Run / GKE | 8080 |
 | `Dockerfile.heroku` | `heroku/heroku:24` | Heroku Container Registry | `$PORT` |
@@ -25,7 +25,8 @@ docker buildx build \
   -t tmi-tf-wh:<target> .
 ```
 
-The OCI push workflow is wrapped by [scripts/push-oci.sh](../../scripts/push-oci.sh).
+Push workflows: [scripts/push-oci.sh](../../scripts/push-oci.sh) (OCIR, arm64) and
+[scripts/push-aws.sh](../../scripts/push-aws.sh) (ECR, amd64 — the EKS nodes are x86_64).
 
 ## Build args
 
