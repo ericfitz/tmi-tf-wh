@@ -73,6 +73,8 @@ COPY --from=builder /install /usr/local
 # Copy TMI Python client (versioned subdirectory)
 COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
 COPY --from=hashicorp/terraform:1.15 /bin/terraform /usr/local/bin/terraform
+COPY prompts/ /opt/tmi-tf/prompts/
+ENV PROMPTS_DIR=/opt/tmi-tf/prompts
 
 # Set environment
 ENV HOME=/home/tmi-tf

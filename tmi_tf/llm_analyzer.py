@@ -14,9 +14,9 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
+from tmi_tf.config import prompts_dir
 from tmi_tf.cvss_scorer import score_cvss4_vector
 from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.providers import LLMProvider, LLMResponse
@@ -127,7 +127,7 @@ class LLMAnalyzer:
         self.provider = llm_provider.provider
 
         # Load all phase prompts
-        self.prompts_dir = Path(__file__).parent.parent / "prompts"
+        self.prompts_dir = prompts_dir()
         self._load_phase_prompts()
 
         logger.info(

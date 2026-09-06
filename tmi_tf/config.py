@@ -24,6 +24,13 @@ DEFAULT_ENV_FILE: Path | None = Path(__file__).parent.parent / ".env"
 _UNSET = object()
 
 
+def prompts_dir() -> Path:
+    """Directory holding the LLM prompt templates; override with PROMPTS_DIR (containers)."""
+    return Path(
+        os.environ.get("PROMPTS_DIR") or Path(__file__).parent.parent / "prompts"
+    )
+
+
 class Config:
     """Application configuration loaded from environment variables."""
 

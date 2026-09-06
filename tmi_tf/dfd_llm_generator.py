@@ -8,9 +8,9 @@ from Terraform analysis structured JSON.
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
+from tmi_tf.config import prompts_dir
 from tmi_tf.json_extract import extract_json_object
 from tmi_tf.providers import LLMProvider
 from tmi_tf.retry import retry_transient_llm_call
@@ -38,16 +38,16 @@ class DFDLLMGenerator:
 
     def _load_prompt_template(self):
         """Load the DFD generation prompt templates."""
-        prompts_dir = Path(__file__).parent.parent / "prompts"
-        system_path = prompts_dir / "dfd_generation_system.txt"
-        user_path = prompts_dir / "dfd_generation_user.txt"
+        pdir = prompts_dir()
+        system_path = pdir / "dfd_generation_system.txt"
+        user_path = pdir / "dfd_generation_user.txt"
 
         try:
             with open(system_path, "r", encoding="utf-8") as f:
                 self.system_prompt = f.read()
             with open(user_path, "r", encoding="utf-8") as f:
                 self.user_prompt_template = f.read()
-            logger.info("Loaded DFD generation prompt templates from %s", prompts_dir)
+            logger.info("Loaded DFD generation prompt templates from %s", pdir)
         except Exception as e:
             logger.error("Failed to load DFD generation prompt templates: %s", e)
             raise
