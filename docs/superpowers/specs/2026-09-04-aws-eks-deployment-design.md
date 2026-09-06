@@ -42,8 +42,9 @@ Recorded per the design-changes rule. Made by Eric Fitzgerald on 2026-09-04.
 | Secrets | Kubernetes `Secret`, `SECRET_PROVIDER=none` (same as `tmi-server` on this cluster) | Secrets Manager + `AwsSecretProvider` (upgrade path if rotation is needed) |
 | Public hostname | **`webhook.tmi.dev`**, shared by all future TMI webhook apps | One hostname per app |
 | Multiplexing | ALB IngressGroup; each app owns an Ingress + path prefix (see below) | A demux service in front of the apps |
-| LLM | `LLM_PROVIDER=anthropic`, `LLM_MODEL=claude-fable-5-1` | OCI GenAI (OKE default) |
+| LLM | ~~`anthropic` / `claude-fable-5-1`~~ **Amended by Eric 2026-09-06: `LLM_PROVIDER=openai`, `LLM_MODEL=gpt-daybreak-blue-latest`**, key from `~/.keys/OPENAI_CYBER_API_KEY` | OCI GenAI (OKE default); `gpt-5.6-cyber` (not enabled on the key) |
 | Terraform layout | Move OCI to `infra/oci/`, add `infra/aws/` | Keep OCI at `infra/` root |
+| TMI write auth (Eric, 2026-09-06) | tmi-tf-wh authenticates to the TMI API with **client_credentials of a dedicated non-admin automation user** (member of `tmi-automation`, writer on the threat model); the webhook is only a trigger. TMI will add an opt-in `direct_write` flag on the credential so the invoker-only gate (T18) lets it through to normal ACL checks; ADR + issues tracked in the `tmi` repo. | Port to the addon flow and write back with the per-delivery delegation JWT — rejected: protocol transition from webhook auth to OAuth, and the JWT TTL is 60 s vs 10–40 min jobs |
 
 ## Architecture
 
