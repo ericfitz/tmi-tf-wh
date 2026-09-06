@@ -399,7 +399,7 @@ class TMIClient:
             )
             note = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_note(
-                    note_input, threat_model_id
+                    threat_model_id=threat_model_id, note_input=note_input
                 )
             )
             logger.info(f"Note created successfully with ID: {note.id}")
@@ -491,7 +491,9 @@ class TMIClient:
             )
             note = self._call_with_retry(
                 lambda: self.sub_resources_api.update_threat_model_note(
-                    note_input, threat_model_id, note_id
+                    threat_model_id=threat_model_id,
+                    note_id=note_id,
+                    note_input=note_input,
                 )
             )
             logger.info("Note updated successfully")
@@ -612,7 +614,7 @@ class TMIClient:
             request = CreateDiagramRequest(name=name, type="DFD-1.0.0")
             diagram = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_diagram(
-                    request, threat_model_id
+                    threat_model_id=threat_model_id, create_diagram_request=request
                 )
             )
             diagram_id = diagram.id
@@ -646,7 +648,9 @@ class TMIClient:
 
             diagram = self._call_with_retry(
                 lambda: self.sub_resources_api.patch_threat_model_diagram(
-                    patch_operations, threat_model_id, diagram_id
+                    threat_model_id=threat_model_id,
+                    diagram_id=diagram_id,
+                    json_patch_document_inner=patch_operations,
                 )
             )
             logger.info("Diagram updated successfully")
@@ -798,7 +802,7 @@ class TMIClient:
             )
             threat = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_threat(
-                    threat_input, threat_model_id
+                    threat_model_id=threat_model_id, threat_input=threat_input
                 )
             )
             logger.info(f"Threat created successfully with ID: {threat.id}")
@@ -831,7 +835,9 @@ class TMIClient:
             ]
             result = self._call_with_retry(
                 lambda: self.sub_resources_api.bulk_create_note_metadata(
-                    metadata_objects, threat_model_id, note_id
+                    threat_model_id=threat_model_id,
+                    note_id=note_id,
+                    metadata=metadata_objects,
                 )
             )
             logger.info(f"Metadata set successfully: {len(metadata)} items")
@@ -864,7 +870,9 @@ class TMIClient:
             ]
             result = self._call_with_retry(
                 lambda: self.sub_resources_api.bulk_create_diagram_metadata(
-                    metadata_objects, threat_model_id, diagram_id
+                    threat_model_id=threat_model_id,
+                    diagram_id=diagram_id,
+                    metadata=metadata_objects,
                 )
             )
             logger.info(f"Metadata set successfully: {len(metadata)} items")

@@ -85,6 +85,12 @@ variable "tmi_server_url" {
   default     = "https://api.tmi.dev"
 }
 
+variable "webhook_subscription_id" {
+  description = "TMI webhook subscription id; when set the app rejects deliveries for other subscriptions"
+  type        = string
+  default     = ""
+}
+
 variable "max_concurrent_jobs" {
   description = "Maximum concurrent analysis jobs"
   type        = number

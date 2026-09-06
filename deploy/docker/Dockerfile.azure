@@ -51,10 +51,13 @@ RUN tdnf -y update && \
 RUN groupadd -r tmi-tf && \
     useradd -r -g tmi-tf -m -d /home/tmi-tf -s /sbin/nologin tmi-tf
 
-ARG TMI_CLIENT_VERSION=v1.4.0
+ARG TMI_CLIENT_VERSION=v1.8.3
 
 COPY --from=builder /install /usr/local
 COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
+COPY --from=hashicorp/terraform:1.15 /bin/terraform /usr/local/bin/terraform
+COPY prompts/ /opt/tmi-tf/prompts/
+ENV PROMPTS_DIR=/opt/tmi-tf/prompts
 
 ENV HOME=/home/tmi-tf \
     TMI_CLIENT_PATH=/opt/tmi-client \

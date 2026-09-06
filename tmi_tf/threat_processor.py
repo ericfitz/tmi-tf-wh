@@ -2,9 +2,9 @@
 
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
+from tmi_tf.config import prompts_dir
 from tmi_tf.cwe_699 import CWE_699_IDS
 from tmi_tf.json_extract import extract_json_array
 from tmi_tf.providers import LLMProvider
@@ -106,14 +106,14 @@ class ThreatProcessor:
 
     def _load_prompts(self):
         """Load threat extraction prompts from files."""
-        prompts_dir = Path(__file__).parent.parent / "prompts"
-        system_path = prompts_dir / "threat_extraction_system.txt"
-        user_path = prompts_dir / "threat_extraction_user.txt"
+        pdir = prompts_dir()
+        system_path = pdir / "threat_extraction_system.txt"
+        user_path = pdir / "threat_extraction_user.txt"
 
         try:
             self.system_prompt = system_path.read_text(encoding="utf-8")
             self.user_prompt_template = user_path.read_text(encoding="utf-8")
-            logger.info("Loaded threat extraction prompts from %s", prompts_dir)
+            logger.info("Loaded threat extraction prompts from %s", pdir)
         except FileNotFoundError as e:
             logger.warning(
                 "Threat extraction prompt file not found: %s, using defaults", e
