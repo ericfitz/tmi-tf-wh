@@ -58,6 +58,7 @@ ARG TMI_CLIENT_VERSION=v1.8.3
 
 COPY --from=builder /install /usr/local
 COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
+COPY --from=hashicorp/terraform:1.15 /bin/terraform /usr/local/bin/terraform
 
 ENV HOME=/home/tmi-tf \
     TMI_CLIENT_PATH=/opt/tmi-client \
