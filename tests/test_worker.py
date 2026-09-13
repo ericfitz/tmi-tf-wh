@@ -85,6 +85,7 @@ def _job(**kw):
 class TestFanout:
     def test_parent_enqueues_children_and_completes(self):
         pool, queue = _pool()
+        queue.delete = MagicMock(wraps=queue.delete)
         targets = [
             FanoutTarget("r1", "u", "aws-public"),
             FanoutTarget("r1", "u", "gcp-public"),
@@ -96,15 +97,61 @@ class TestFanout:
             patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets),
             patch("tmi_tf.worker.AddonCallback") as cb_cls,
         ):
-            asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
+            asyncio.run(
+                pool._run_job(
+                    _job(
+                        scope="all",
+                        invocation_id="inv1",
+                        event_type="addon.invoked",
+                        threat_model_id="tm1",
+                    ),
+                    receipt="rc",
+                )
+            )
         bodies = [m.body for m in queue.consume(max_messages=10)]
         assert sorted(b["environment"] for b in bodies) == ["aws-public", "gcp-public"]
         assert all(
             b["job_id"].startswith("p1:") and b["repo_id"] == "r1" for b in bodies
         )
         assert all(b["callback_url"] == "https://cb" for b in bodies)
+        assert all(b["invocation_id"] == "inv1" for b in bodies)
+        assert all(b["event_type"] == "addon.invoked" for b in bodies)
+        assert all(b["threat_model_id"] == "tm1" for b in bodies)
         cb_cls.return_value.send_status.assert_any_call(
-            "completed", "enqueued 2 environment jobs"
+            "completed", "enqueued 2 of 2 environment jobs"
+        )
+        queue.delete.assert_called_once_with("rc")
+
+    def test_parent_publish_failure_continues_and_completes(self):
+        pool, queue = _pool()
+        targets = [
+            FanoutTarget("r1", "u", "aws-public"),
+            FanoutTarget("r1", "u", "gcp-public"),
+        ]
+        real_publish = queue.publish
+        calls = {"n": 0}
+
+        def flaky_publish(message):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("boom")
+            return real_publish(message)
+
+        queue.publish = MagicMock(side_effect=flaky_publish)
+        tmi = MagicMock()
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets),
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
+        bodies = [m.body for m in queue.consume(max_messages=10)]
+        assert len(bodies) == 1
+        assert bodies[0]["environment"] == "gcp-public"
+        assert tmi.update_status_note.call_args.args[0] == "tm1"
+        assert "aws-public" in tmi.update_status_note.call_args.args[1]
+        cb_cls.return_value.send_status.assert_any_call(
+            "completed", "enqueued 1 of 2 environment jobs"
         )
 
     def test_parent_with_no_targets_completes_without_enqueue(self):

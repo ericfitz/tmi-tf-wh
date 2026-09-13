@@ -158,7 +158,9 @@ class WorkerPool:
                 callback.send_status("failed", str(e))
             # Don't delete — let visibility timeout handle retry
 
-    async def _run_parent(self, job: Job, tmi_client: TMIClient, callback) -> None:
+    async def _run_parent(
+        self, job: Job, tmi_client: TMIClient, callback: AddonCallback | None
+    ) -> None:
         """Resolve fan-out targets and enqueue one child job per environment."""
         targets = await asyncio.to_thread(
             resolve_fanout_targets,
@@ -189,10 +191,13 @@ class WorkerPool:
             except Exception as e:
                 msg = f"Failed to enqueue environment {t.environment!r}: {e}"
                 logger.error(msg)
-                tmi_client.update_status_note(job.threat_model_id, msg)
+                try:
+                    tmi_client.update_status_note(job.threat_model_id, msg)
+                except Exception as note_err:
+                    logger.error(f"Failed to write status note: {note_err}")
         summary = (
-            f"enqueued {enqueued} environment jobs"
-            if enqueued
+            f"enqueued {enqueued} of {len(targets)} environment jobs"
+            if targets
             else "no environments matched"
         )
         logger.info("Parent job %s: %s", job.job_id, summary)
