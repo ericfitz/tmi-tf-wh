@@ -44,8 +44,8 @@ Sources, in priority order:
 
 Resolution happens in the parent job after environment detection. If a repo has
 exactly one environment, scope is irrelevant and that environment is used. If
-no environments are detected, the existing "analyze all files" fallback runs
-inline (no fan-out).
+no environments are detected, the parent enqueues one child with
+`environment=""`, which runs the existing "analyze all files" fallback.
 
 `latest` selection: the sparse clone is currently `--depth=1`. The parent
 instead pulls with `--depth=<LATEST_COMMIT_DEPTH>` (default 200), then runs
@@ -94,20 +94,22 @@ successfully (no retry).
 ### Removed code
 
 - The "analyze ALL environments" sequential branch in `analyzer.py`.
-- The merged `combined_inventory` / `combined_infrastructure` aggregation
-  before DFD generation; `analyses` for a child always has exactly one entry.
 - The `selected_env_name` last-writer-wins naming bug disappears with it.
 
+The merged inventory/infrastructure aggregation before DFD generation stays:
+a CLI run can still analyze several repositories in one pass. A child job has
+exactly one analysis, so the merge is a no-op for it.
+
 `run_analysis` keeps its `environment` argument and the CLI keeps `--environment`.
-When the CLI is run without `--environment` against a multi-environment repo it
-uses the same scope resolution with `latest` (no fan-out from the CLI; the CLI
-runs the resolved environment inline). A `--scope` CLI option is not added.
+`run_analysis` called with `environment=None` on a multi-environment repo
+selects `latest` inline (the CLI still prompts interactively before that). A `--scope` CLI option is not added.
 
-## Status note
+## Status notes
 
-The parent's note lists every environment and its disposition. Each child then
-updates the same note with its own progress lines prefixed by the environment
-name, so concurrent children stay readable, e.g. `[aws-public] Phase 2 ...`.
+The parent writes the existing `Analysis Status` note: every environment and
+its disposition. Each child writes its own note, `Analysis Status - <env>`.
+Separate notes rather than one shared note because `TMIClient` caches the note
+body per client and concurrent appenders would overwrite each other.
 
 ## Configuration
 
@@ -140,8 +142,9 @@ Unit tests, no network:
 - Worker dispatches parent vs child by the `environment` field; parent enqueues
   one message per matched environment with the expected fields, using the
   in-memory queue provider.
-- Analyzer: multi-environment repo with `environment=None` in CLI mode picks
-  `latest`; child path still produces per-environment artifact names.
+- Analyzer: `resolve_fanout_targets` returns one target per matched
+  environment and one `environment=""` target for a repo with no environments.
+- `TMIClient.status_note_name` controls which note `update_status_note` writes.
 
 ## Out of scope
 
