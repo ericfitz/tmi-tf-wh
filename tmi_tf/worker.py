@@ -8,11 +8,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tmi_tf.addon_callback import AddonCallback
-from tmi_tf.analyzer import run_analysis
+from tmi_tf.analyzer import resolve_fanout_targets, run_analysis
 from tmi_tf.config import Config
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueMessage, QueueProvider
-from tmi_tf.tmi_client_wrapper import TMIClient
+from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, TMIClient
 
 logger = logging.getLogger(__name__)
 
@@ -127,21 +127,29 @@ class WorkerPool:
 
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
-            result = await asyncio.to_thread(
-                run_analysis,
-                config=self.config,
-                threat_model_id=job.threat_model_id,
-                tmi_client=tmi_client,
-                repo_id=job.repo_id,
-                temp_dir=job.temp_dir,
-                callback=callback,
-            )
-            if result.success:
-                if callback:
-                    callback.send_status("completed")
+            if job.is_child:
+                if job.environment:
+                    tmi_client.status_note_name = (
+                        f"{STATUS_NOTE_NAME} - {job.environment}"
+                    )
+                result = await asyncio.to_thread(
+                    run_analysis,
+                    config=self.config,
+                    threat_model_id=job.threat_model_id,
+                    tmi_client=tmi_client,
+                    repo_id=job.repo_id,
+                    temp_dir=job.temp_dir,
+                    callback=callback,
+                    environment=job.environment,
+                )
+                if result.success:
+                    if callback:
+                        callback.send_status("completed")
+                else:
+                    if callback:
+                        callback.send_status("failed", "; ".join(result.errors))
             else:
-                if callback:
-                    callback.send_status("failed", "; ".join(result.errors))
+                await self._run_parent(job, tmi_client, callback)
             # Delete message on completion
             await asyncio.to_thread(self.queue_client.delete, receipt)
         except Exception as e:
@@ -149,6 +157,47 @@ class WorkerPool:
             if callback:
                 callback.send_status("failed", str(e))
             # Don't delete — let visibility timeout handle retry
+
+    async def _run_parent(self, job: Job, tmi_client: TMIClient, callback) -> None:
+        """Resolve fan-out targets and enqueue one child job per environment."""
+        targets = await asyncio.to_thread(
+            resolve_fanout_targets,
+            self.config,
+            job.threat_model_id,
+            tmi_client,
+            job.scope,
+            repo_id=job.repo_id,
+            temp_dir=job.temp_dir,
+        )
+        enqueued = 0
+        for t in targets:
+            child = Job(
+                job_id=f"{job.job_id}:{t.environment or 'all'}",
+                threat_model_id=job.threat_model_id,
+                event_type=job.event_type,
+                enqueued_at=datetime.now(timezone.utc),
+                repo_id=t.repo_id,
+                callback_url=job.callback_url,
+                invocation_id=job.invocation_id,
+                environment=t.environment,
+            )
+            try:
+                await asyncio.to_thread(
+                    self.queue_client.publish, child.to_queue_message()
+                )
+                enqueued += 1
+            except Exception as e:
+                msg = f"Failed to enqueue environment {t.environment!r}: {e}"
+                logger.error(msg)
+                tmi_client.update_status_note(job.threat_model_id, msg)
+        summary = (
+            f"enqueued {enqueued} environment jobs"
+            if enqueued
+            else "no environments matched"
+        )
+        logger.info("Parent job %s: %s", job.job_id, summary)
+        if callback:
+            callback.send_status("completed", summary)
 
     async def _fire_and_forget_status(
         self, job: Job, status: str, message: str
