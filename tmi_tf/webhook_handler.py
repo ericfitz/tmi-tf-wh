@@ -85,4 +85,10 @@ def parse_webhook_payload(payload: dict) -> dict:
     if invocation_id is not None:
         result["invocation_id"] = invocation_id
 
+    data = payload.get("data")
+    user_data = data.get("user_data") if isinstance(data, dict) else None
+    scope = user_data.get("environments") if isinstance(user_data, dict) else None
+    if isinstance(scope, str) and scope.strip():
+        result["scope"] = scope.strip()
+
     return result

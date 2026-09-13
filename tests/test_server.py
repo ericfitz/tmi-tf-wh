@@ -76,6 +76,34 @@ class TestWebhookEndpoint:
         # Verify publish was called
         assert server_module.queue_client.publish.called  # type: ignore[union-attr]
 
+    def test_addon_user_data_environments_sets_scope(self, client):
+        payload = {
+            "type": "addon.invoked",
+            "threat_model_id": "tm-001",
+            "resource_type": "addon",
+            "resource_id": "addon-1",
+            "callback_url": "https://api.tmi.dev/cb",
+            "invocation_id": "inv-001",
+            "data": {"user_data": {"environments": "aws-*, oci-public"}},
+        }
+        body = json.dumps(payload).encode()
+        sig = _make_sig(body, "test-secret")
+
+        response = client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": sig,
+                "X-Invocation-Id": "inv-001",
+            },
+        )
+
+        assert response.status_code == 200
+        publish_call = server_module.queue_client.publish.call_args  # type: ignore[union-attr]
+        message = publish_call.args[0]
+        assert message["scope"] == "aws-*, oci-public"
+
     def test_invalid_hmac_returns_401(self, client):
         payload = {"type": "addon.invoked", "threat_model_id": "tm-001"}
         body = json.dumps(payload).encode()

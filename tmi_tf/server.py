@@ -171,6 +171,7 @@ async def webhook(request: Request) -> Response:
         repo_id=parsed.get("repo_id"),
         callback_url=parsed.get("callback_url"),
         invocation_id=parsed.get("invocation_id"),
+        scope=parsed.get("scope"),
     )
 
     if queue_client is not None:
