@@ -217,12 +217,14 @@ class RepositoryAnalyzer:
         """Unix time of the newest commit touching any of paths (relative or
         absolute under clone_path); None if no commit in the available history.
         """
+        if not paths:
+            return None
         resolved_clone = clone_path.resolve()
-        rel = [
-            str(p.resolve().relative_to(resolved_clone) if p.is_absolute() else p)
-            for p in paths
-        ]
         try:
+            rel = [
+                str(p.resolve().relative_to(resolved_clone) if p.is_absolute() else p)
+                for p in paths
+            ]
             out = (
                 subprocess.run(
                     ["git", "log", "-1", "--format=%ct", "--", *rel],
@@ -234,10 +236,15 @@ class RepositoryAnalyzer:
                 .stdout.decode()
                 .strip()
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-            logger.debug("git log failed for %s", rel, exc_info=True)
+            return int(out) if out else None
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+            ValueError,
+        ):
+            logger.debug("git log failed for %s", paths, exc_info=True)
             return None
-        return int(out) if out else None
 
     @staticmethod
     def select_latest_environment(

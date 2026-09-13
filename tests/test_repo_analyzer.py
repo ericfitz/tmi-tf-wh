@@ -271,6 +271,14 @@ class TestLatestEnvironment:
         assert RepositoryAnalyzer.last_commit_timestamp(repo, [Path("envs/b")]) == 2000
         assert RepositoryAnalyzer.last_commit_timestamp(repo, [Path("nope")]) is None
 
+    def test_last_commit_timestamp_empty_paths(self, tmp_path):
+        repo = self._repo(tmp_path)
+        assert RepositoryAnalyzer.last_commit_timestamp(repo, []) is None
+
+    def test_last_commit_timestamp_path_outside_clone_returns_none(self, tmp_path):
+        repo = self._repo(tmp_path)
+        assert RepositoryAnalyzer.last_commit_timestamp(repo, [tmp_path.parent]) is None
+
     def test_module_commit_counts_for_environment(self, tmp_path):
         repo = self._repo(tmp_path)
         envs = RepositoryAnalyzer.detect_environments(repo)
