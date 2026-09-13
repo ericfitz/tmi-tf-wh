@@ -74,6 +74,7 @@ All configuration is managed through the `.env` file:
 | `CLONE_TIMEOUT` | Git clone timeout in seconds | `300` |
 | `ANALYSIS_NOTE_NAME` | Base name for the generated note | `Terraform Analysis Report` |
 | `DIAGRAM_NAME` | Base name for the generated diagram | `Infrastructure Data Flow Diagram` |
+| `LATEST_COMMIT_DEPTH` | Commit window used by the `latest` scope, and the sparse-clone pull depth | `200` |
 
 **Note:** The model name is automatically appended to note and diagram names (e.g., "Terraform Analysis Report (claude-sonnet-4-5)").
 
@@ -149,6 +150,36 @@ uv run tmi-tf analyze abc-123-def-456 --max-repos 1 --verbose
 7. **Note Storage**: Creates or updates a note in the TMI threat model
 8. **Diagram Generation**: Creates a data flow diagram (DFD) visualizing infrastructure components and flows
 9. **Threat Extraction**: Automatically extracts security vulnerabilities and creates threat objects using STRIDE framework
+
+## Webhook Service: Environment Scope
+
+When run as a webhook service, a repository with several Terraform root modules
+("environments") is analyzed one environment per queue job, each with its own
+`JOB_TIMEOUT` and retry. `MAX_CONCURRENT_JOBS` bounds environments in flight per
+pod, not repositories.
+
+Which environments are analyzed is controlled by `scope`, a string with three
+forms:
+
+| Value | Meaning |
+|-------|---------|
+| `latest` (default) | The single environment with the newest commit touching its own files or its resolved relative modules, within the last `LATEST_COMMIT_DEPTH` commits. |
+| `all` | Every detected environment. |
+| Comma-separated names/globs, e.g. `aws-*,oci-public` | Environments whose short name matches any pattern (case-insensitive). |
+
+`scope` is read from the TMI addon invocation payload (`data.user_data.environments`).
+Any other webhook event always uses `latest`.
+
+Each matched environment becomes its own child job and writes its own set of
+artifacts: a status note `Analysis Status - <env>`, an inventory note, an
+analysis note, a DFD, and threats. There is no merged overview across
+environments. The parent job writes an `Analysis Status` note listing
+environments found/matched/skipped, then reports the addon callback
+`completed` with "enqueued N environment jobs".
+
+**Operator setup**: register the addon in TMI with a string parameter named
+`environments`, default `latest`, described as accepting `latest`, `all`, or a
+comma-separated list of environment names/globs.
 
 ## Project Structure
 
