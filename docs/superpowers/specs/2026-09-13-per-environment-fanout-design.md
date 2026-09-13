@@ -73,8 +73,9 @@ A message with `environment` set is a **child job**. Everything else is a
    (with the reason: not in scope, or unmatched pattern), and for `latest`,
    which one won and its commit date.
 5. Enqueue one child message per matched environment, copying `threat_model_id`,
-   `repo_id` (the repository being fanned out), `callback_url`, `invocation_id`,
-   and setting `environment`. `job_id` is `<parent job_id>:<env name>`.
+   `repo_id` (the repository being fanned out) and `invocation_id`, setting
+   `environment`, and leaving `callback_url` unset so children never send addon
+   callbacks. `job_id` is `<parent job_id>:<env name>`.
 6. Addon callback: `completed` with message "enqueued N of M environment jobs"
    (M = targets resolved). When a child publish fails, it is logged and
    recorded in the status note, and N reflects only the successful enqueues.
