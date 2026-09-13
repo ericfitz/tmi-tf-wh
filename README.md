@@ -171,11 +171,12 @@ forms:
 Any other webhook event always uses `latest`.
 
 Each matched environment becomes its own child job and writes its own set of
-artifacts: a status note `Analysis Status - <env>`, an inventory note, an
+artifacts: a status note `TMI-TF Analysis Status - <env>`, an inventory note, an
 analysis note, a DFD, and threats. There is no merged overview across
-environments. The parent job writes an `Analysis Status` note listing
+environments. The parent job writes a `TMI-TF Analysis Status` note listing
 environments found/matched/skipped, then reports the addon callback
-`completed` with "enqueued N environment jobs".
+`completed` with "enqueued N of M environment jobs" (or "no environments
+matched" if scope resolved to zero targets).
 
 **Operator setup**: register the addon in TMI with a string parameter named
 `environments`, default `latest`, described as accepting `latest`, `all`, or a

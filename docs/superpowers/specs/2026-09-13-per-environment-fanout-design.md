@@ -22,7 +22,7 @@ with whichever environment ran last.
 | What lands in TMI for an N-environment repo | One set of artifacts per environment (notes, DFD, threats). No merged overview. | Merged set (today); per-env plus merged overview |
 | How per-environment work is scheduled | Fan out: the webhook job enqueues one queue message per environment; each runs the existing single-environment path with its own timeout and retry. | In-process bounded concurrency inside one job |
 | Who chooses the environments | The security reviewer, via the addon invocation payload (`environments` parameter). Default `latest` = most recently modified environment. | Deployment-wide env var; always all |
-| Addon completion signal | Parent reports `completed` with "enqueued N environment jobs" after fan-out. Children report progress via status notes only. Completion monitoring across children is a backlog item. | Shared completion state across child jobs |
+| Addon completion signal | Parent reports `completed` with "enqueued N of M environment jobs" after fan-out. Children report progress via status notes only. Completion monitoring across children is a backlog item. | Shared completion state across child jobs |
 | Commit window for `latest` | 200 commits, configurable (`LATEST_COMMIT_DEPTH`). | Full history; GitHub commits API |
 
 ## Scope model
@@ -75,7 +75,9 @@ A message with `environment` set is a **child job**. Everything else is a
 5. Enqueue one child message per matched environment, copying `threat_model_id`,
    `repo_id` (the repository being fanned out), `callback_url`, `invocation_id`,
    and setting `environment`. `job_id` is `<parent job_id>:<env name>`.
-6. Addon callback: `completed` with message "enqueued N environment jobs".
+6. Addon callback: `completed` with message "enqueued N of M environment jobs"
+   (M = targets resolved). When a child publish fails, it is logged and
+   recorded in the status note, and N reflects only the successful enqueues.
 7. Delete the parent message.
 
 The parent does no LLM work.
@@ -106,8 +108,8 @@ selects `latest` inline (the CLI still prompts interactively before that). A `--
 
 ## Status notes
 
-The parent writes the existing `Analysis Status` note: every environment and
-its disposition. Each child writes its own note, `Analysis Status - <env>`.
+The parent writes the existing `TMI-TF Analysis Status` note: every environment
+and its disposition. Each child writes its own note, `TMI-TF Analysis Status - <env>`.
 Separate notes rather than one shared note because `TMIClient` caches the note
 body per client and concurrent appenders would overwrite each other.
 
