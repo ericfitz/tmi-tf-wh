@@ -71,7 +71,12 @@ def _github_repos(
     repositories = tmi_client.get_threat_model_repositories(threat_model_id)
     repos = [r for r in repositories if github_client.is_github_url(r.uri)]
     if repo_id is not None:
-        repos = [r for r in repos if str(r.id) == repo_id]
+        filtered = [r for r in repos if str(r.id) == repo_id]
+        if repos and not filtered:
+            logger.warning(
+                f"repo_id {repo_id!r} filter matched none of {len(repos)} repositories"
+            )
+        repos = filtered
     if len(repos) > config.max_repos:
         logger.warning(
             f"Limiting analysis to {config.max_repos} of {len(repos)} repositories"
@@ -95,7 +100,17 @@ def resolve_fanout_targets(
     repo_analyzer = RepositoryAnalyzer(config)
     targets: list[FanoutTarget] = []
 
-    for repo in _github_repos(config, tmi_client, threat_model_id, repo_id):
+    repos = _github_repos(config, tmi_client, threat_model_id, repo_id)
+    if not repos:
+        msg = (
+            f"Repository {repo_id} not found or not a GitHub repository"
+            if repo_id is not None
+            else "No GitHub repositories found for this threat model"
+        )
+        tmi_client.update_status_note(threat_model_id, msg)
+        return targets
+
+    for repo in repos:
         repo_name = repo_analyzer.extract_repository_name(repo.uri)
         tmi_client.update_status_note(
             threat_model_id, f"Cloning repository: {repo.uri}"

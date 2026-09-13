@@ -99,7 +99,8 @@ def analyze(
 
         # In CLI mode with multiple environments and no --environment flag,
         # the user gets an interactive prompt.  We handle that here before
-        # delegating to run_analysis which would analyse ALL environments.
+        # delegating to run_analysis, which would otherwise select the most
+        # recently modified environment (`latest`) when none is given.
         # If --environment is given we pass it through; if not, we need to
         # detect the interactive case ourselves.
         cli_environment = environment  # may be None

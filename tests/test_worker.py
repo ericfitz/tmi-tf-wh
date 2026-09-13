@@ -113,7 +113,7 @@ class TestFanout:
         assert all(
             b["job_id"].startswith("p1:") and b["repo_id"] == "r1" for b in bodies
         )
-        assert all(b["callback_url"] == "https://cb" for b in bodies)
+        assert all(b["callback_url"] is None for b in bodies)
         assert all(b["invocation_id"] == "inv1" for b in bodies)
         assert all(b["event_type"] == "addon.invoked" for b in bodies)
         assert all(b["threat_model_id"] == "tm1" for b in bodies)

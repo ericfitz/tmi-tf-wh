@@ -132,6 +132,23 @@ class TestResolveFanoutTargets:
                 == []
             )
 
+    def test_no_repositories_writes_status_note(self, tmp_path):
+        tmi = MagicMock()
+        tmi.get_threat_model_repositories.return_value = []
+        assert resolve_fanout_targets(Config(), "tm1", tmi, "all") == []
+        note = " ".join(str(c) for c in tmi.update_status_note.call_args_list)
+        assert "No GitHub repositories" in note
+
+    def test_repo_id_not_found_writes_status_note(self, tmp_path):
+        tmi = _tmi_with_repo()
+        with patch("tmi_tf.analyzer.GitHubClient.is_github_url", return_value=True):
+            targets = resolve_fanout_targets(
+                Config(), "tm1", tmi, "all", repo_id="nope"
+            )
+        assert targets == []
+        note = " ".join(str(c) for c in tmi.update_status_note.call_args_list)
+        assert "nope" in note
+
     def test_no_environments_yields_whole_repo_target(self, tmp_path):
         (tmp_path / "loose.tf").write_text("# loose")
         tmi = _tmi_with_repo()

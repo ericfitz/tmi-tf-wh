@@ -179,7 +179,7 @@ class WorkerPool:
                 event_type=job.event_type,
                 enqueued_at=datetime.now(timezone.utc),
                 repo_id=t.repo_id,
-                callback_url=job.callback_url,
+                callback_url=None,
                 invocation_id=job.invocation_id,
                 environment=t.environment,
             )
