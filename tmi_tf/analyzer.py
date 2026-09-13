@@ -6,6 +6,7 @@ both the CLI command and the webhook worker.
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,6 +22,7 @@ from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.providers import get_llm_provider
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
+from tmi_tf.scope import LATEST, match_environments, normalize_scope
 from tmi_tf.tf_validator import validate_and_sanitize
 from tmi_tf.threat_processor import ThreatProcessor
 from tmi_tf.tmi_client_wrapper import TMIClient
@@ -43,6 +45,114 @@ class AnalysisResult:
     errors: list[str] = field(default_factory=list)
     inventory_content: str = ""
     analysis_content: str = ""
+
+
+@dataclass(frozen=True)
+class FanoutTarget:
+    """One unit of analysis work: a repository plus one environment.
+
+    ``environment`` is "" when the repository has no detected environments,
+    meaning "analyze every Terraform file in the repo".
+    """
+
+    repo_id: str
+    repo_url: str
+    environment: str
+
+
+def _github_repos(
+    config: Config,
+    tmi_client: TMIClient,
+    threat_model_id: str,
+    repo_id: str | None,
+) -> list[Any]:
+    """GitHub repositories of a threat model, filtered and capped."""
+    github_client = GitHubClient(config)
+    repositories = tmi_client.get_threat_model_repositories(threat_model_id)
+    repos = [r for r in repositories if github_client.is_github_url(r.uri)]
+    if repo_id is not None:
+        repos = [r for r in repos if str(r.id) == repo_id]
+    if len(repos) > config.max_repos:
+        logger.warning(
+            f"Limiting analysis to {config.max_repos} of {len(repos)} repositories"
+        )
+    return repos[: config.max_repos]
+
+
+def resolve_fanout_targets(
+    config: Config,
+    threat_model_id: str,
+    tmi_client: TMIClient,
+    scope: str | None,
+    repo_id: str | None = None,
+    temp_dir: Path | None = None,
+) -> list[FanoutTarget]:
+    """Clone each GitHub repository of the threat model, detect environments,
+    apply ``scope``, write status notes, and return one target per unit of
+    work. Never runs the LLM.
+    """
+    scope = normalize_scope(scope)
+    repo_analyzer = RepositoryAnalyzer(config)
+    targets: list[FanoutTarget] = []
+
+    for repo in _github_repos(config, tmi_client, threat_model_id, repo_id):
+        repo_name = repo_analyzer.extract_repository_name(repo.uri)
+        tmi_client.update_status_note(
+            threat_model_id, f"Cloning repository: {repo.uri}"
+        )
+        with repo_analyzer.clone_repository_sparse(
+            repo.uri, repo_name, base_temp_dir=temp_dir
+        ) as tf_repo:
+            if not tf_repo:
+                tmi_client.update_status_note(
+                    threat_model_id, f"No Terraform files in {repo_name}; skipping"
+                )
+                continue
+
+            envs = RepositoryAnalyzer.detect_environments(tf_repo.clone_path)
+            names = [e.name for e in envs]
+
+            if not envs:
+                tmi_client.update_status_note(
+                    threat_model_id,
+                    f"{repo_name}: no environments detected; analyzing all files",
+                )
+                targets.append(FanoutTarget(str(repo.id), repo.uri, ""))
+                continue
+
+            skipped: list[tuple[str, str]] = []
+            if len(envs) == 1:
+                matched = names
+            elif scope == LATEST:
+                chosen, ts = RepositoryAnalyzer.select_latest_environment(
+                    tf_repo.clone_path, envs
+                )
+                when = (
+                    datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                    if ts is not None
+                    else "no commit in window; first environment chosen"
+                )
+                matched = [chosen.name]
+                skipped = [(n, "not latest") for n in names if n != chosen.name]
+                tmi_client.update_status_note(
+                    threat_model_id,
+                    f"{repo_name}: scope latest -> {chosen.name} (last commit {when})",
+                )
+            else:
+                matched, skipped = match_environments(scope, names)
+
+            tmi_client.update_status_note(
+                threat_model_id,
+                f"{repo_name}: environments found: {', '.join(names)}; "
+                f"analyzing: {', '.join(matched) or 'none'}",
+            )
+            for name, reason in skipped:
+                tmi_client.update_status_note(
+                    threat_model_id, f"{repo_name}: skipping {name} ({reason})"
+                )
+            targets.extend(FanoutTarget(str(repo.id), repo.uri, n) for n in matched)
+
+    return targets
 
 
 def _analyze_single_environment(
@@ -127,7 +237,6 @@ def run_analysis(
 
         # Initialize helpers
         logger.info("\n[1/7] Initializing clients...")
-        github_client = GitHubClient(config)
         repo_analyzer = RepositoryAnalyzer(config)
         llm_provider = get_llm_provider(config)
         llm_analyzer = LLMAnalyzer(llm_provider)
@@ -142,39 +251,22 @@ def run_analysis(
 
         # Get repositories
         logger.info("\n[3/7] Fetching repositories...")
-        repositories = tmi_client.get_threat_model_repositories(threat_model_id)
-        logger.info(f"Found {len(repositories)} total repositories")
-
-        # Filter for GitHub repos
-        github_repos = [
-            repo for repo in repositories if github_client.is_github_url(repo.uri)
-        ]
-        logger.info(f"GitHub repositories: {len(github_repos)}")
-
-        # Filter to specific repo_id if provided
-        if repo_id is not None:
-            github_repos = [r for r in github_repos if str(r.id) == repo_id]
-            if not github_repos:
-                msg = f"Repository {repo_id} not found or not a GitHub repository"
-                logger.error(msg)
-                return AnalysisResult(success=False, errors=[msg])
-
-        if not github_repos:
-            msg = "No GitHub repositories found in threat model"
+        repos_to_analyze = _github_repos(config, tmi_client, threat_model_id, repo_id)
+        if not repos_to_analyze:
+            msg = (
+                f"Repository {repo_id} not found or not a GitHub repository"
+                if repo_id is not None
+                else "No GitHub repositories found in threat model"
+            )
             logger.error(msg)
             return AnalysisResult(success=False, errors=[msg])
-
-        # Limit number of repos
-        repos_to_analyze = github_repos[: config.max_repos]
-        if len(github_repos) > config.max_repos:
-            logger.warning(
-                f"Limiting analysis to {config.max_repos} of {len(github_repos)} repositories"
-            )
 
         # Analyze repositories
         logger.info(f"\n[4/7] Analyzing {len(repos_to_analyze)} repositories...")
         analyses: list[TerraformAnalysis] = []
         selected_env_name: str | None = None
+        missing_env_skips = 0
+        environment = environment or None
 
         for i, repo in enumerate(repos_to_analyze, 1):
             logger.info(
@@ -261,41 +353,37 @@ def run_analysis(
                                     if e.name.lower() == environment.lower()
                                 ]
                                 if not matches:
-                                    available = ", ".join(e.name for e in envs)
                                     msg = (
-                                        f"Environment '{environment}' not found. "
-                                        f"Available: {available}"
+                                        f"Environment '{environment}' not found in "
+                                        f"{repo_name}; available: {env_names}; skipping"
                                     )
-                                    logger.error(msg)
+                                    logger.warning(msg)
+                                    tmi_client.update_status_note(threat_model_id, msg)
                                     errors.append(msg)
+                                    missing_env_skips += 1
                                     continue
                                 selected = matches[0]
-                                selected_env_name = selected.name
-                                analysis = _analyze_single_environment(
-                                    tf_repo,
-                                    selected,
-                                    repo_analyzer,
-                                    llm_analyzer,
-                                    tmi_client,
-                                    threat_model_id,
-                                    repo_name,
-                                )
-                                analyses.append(analysis)
                             else:
-                                # Analyze ALL environments
-                                for env in envs:
-                                    logger.info(f"Analyzing environment: {env.name}")
-                                    selected_env_name = env.name
-                                    analysis = _analyze_single_environment(
-                                        tf_repo,
-                                        env,
-                                        repo_analyzer,
-                                        llm_analyzer,
-                                        tmi_client,
-                                        threat_model_id,
-                                        repo_name,
+                                selected, _ts = (
+                                    RepositoryAnalyzer.select_latest_environment(
+                                        tf_repo.clone_path, envs
                                     )
-                                    analyses.append(analysis)
+                                )
+                                tmi_client.update_status_note(
+                                    threat_model_id,
+                                    f"Selected latest environment: {selected.name}",
+                                )
+                            selected_env_name = selected.name
+                            analysis = _analyze_single_environment(
+                                tf_repo,
+                                selected,
+                                repo_analyzer,
+                                llm_analyzer,
+                                tmi_client,
+                                threat_model_id,
+                                repo_name,
+                            )
+                            analyses.append(analysis)
                     else:
                         logger.warning(
                             f"Skipping {repo.name} - no Terraform files found"
@@ -308,6 +396,10 @@ def run_analysis(
                 continue
 
         if not analyses:
+            if missing_env_skips and missing_env_skips == len(errors):
+                # Every repository was skipped because the named environment is
+                # gone (repo changed since fan-out); not an error, do not retry.
+                return AnalysisResult(success=True, errors=errors)
             msg = "No repositories were successfully analyzed"
             logger.error(msg)
             errors.append(msg)
