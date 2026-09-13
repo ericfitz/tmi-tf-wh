@@ -85,6 +85,7 @@ class Config:
         # Application Settings
         self.max_repos: int = int(os.getenv("MAX_REPOS", "3"))
         self.clone_timeout: int = int(os.getenv("CLONE_TIMEOUT", "300"))
+        self.latest_commit_depth: int = int(os.getenv("LATEST_COMMIT_DEPTH", "200"))
 
         self.timestamp: str = datetime.now(timezone.utc).strftime(
             "%Y-%m-%d %H:%M:%S UTC"
