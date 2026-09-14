@@ -49,3 +49,45 @@ class TestJob:
         assert restored.job_id == job.job_id
         assert restored.threat_model_id == job.threat_model_id
         assert restored.enqueued_at == job.enqueued_at
+
+
+class TestScopeAndEnvironment:
+    def _job(self, **kw):
+        return Job(
+            job_id="j1",
+            threat_model_id="tm1",
+            event_type="addon.invoked",
+            enqueued_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+            **kw,
+        )
+
+    def test_defaults_are_parent(self):
+        job = self._job()
+        assert job.scope is None
+        assert job.environment is None
+        assert job.is_child is False
+
+    def test_round_trip(self):
+        job = self._job(scope="aws-*", environment="aws-public")
+        data = job.to_queue_message()
+        assert data["scope"] == "aws-*"
+        assert data["environment"] == "aws-public"
+        back = Job.from_queue_message(data)
+        assert back.scope == "aws-*"
+        assert back.environment == "aws-public"
+        assert back.is_child is True
+
+    def test_empty_environment_is_child(self):
+        assert (
+            Job.from_queue_message(
+                {**self._job(environment="").to_queue_message()}
+            ).is_child
+            is True
+        )
+
+    def test_missing_keys_default_to_none(self):
+        data = self._job().to_queue_message()
+        data.pop("scope")
+        data.pop("environment")
+        back = Job.from_queue_message(data)
+        assert back.scope is None and back.environment is None

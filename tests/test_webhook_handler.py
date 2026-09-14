@@ -133,3 +133,36 @@ class TestParseWebhookPayload:
         payload = {"type": "threat_model.created"}
         with pytest.raises(ValueError):
             parse_webhook_payload(payload)
+
+
+class TestScopeExtraction:
+    def test_addon_user_data_environments(self):
+        payload = {
+            "type": "addon.invoked",
+            "threat_model_id": "tm1",
+            "data": {
+                "addon_id": "a1",
+                "user_data": {"environments": "aws-*, oci-public"},
+            },
+        }
+        assert parse_webhook_payload(payload)["scope"] == "aws-*, oci-public"
+
+    def test_no_user_data(self):
+        payload = {"type": "threat_model.updated", "threat_model_id": "tm1"}
+        assert "scope" not in parse_webhook_payload(payload)
+
+    def test_user_data_without_environments(self):
+        payload = {
+            "type": "addon.invoked",
+            "threat_model_id": "tm1",
+            "data": {"user_data": {}},
+        }
+        assert "scope" not in parse_webhook_payload(payload)
+
+    def test_non_string_environments_ignored(self):
+        payload = {
+            "type": "addon.invoked",
+            "threat_model_id": "tm1",
+            "data": {"user_data": {"environments": 5}},
+        }
+        assert "scope" not in parse_webhook_payload(payload)

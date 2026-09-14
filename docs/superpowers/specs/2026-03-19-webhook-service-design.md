@@ -110,6 +110,12 @@ Signature is in the `X-Webhook-Signature` header, format `sha256=<hex_digest>`.
 
 ## Job Processing
 
+> Superseded in part by docs/superpowers/specs/2026-09-13-per-environment-fanout-design.md
+> (per-environment fan-out): a repository with multiple Terraform environments
+> is now split into one child job per environment, each with its own
+> `JOB_TIMEOUT`; `MAX_CONCURRENT_JOBS` bounds environments in flight, not
+> repositories.
+
 ### Worker Pool
 
 - Async worker pool using asyncio tasks

@@ -265,6 +265,7 @@ class TMIClient:
         self._status_note_id: str | None = None
         self._status_note_initialized: bool = False
         self._status_note_content: str = ""
+        self.status_note_name: str = STATUS_NOTE_NAME
 
         logger.info(f"TMI client initialized for {config.tmi_server_url}")
 
@@ -537,21 +538,23 @@ class TMIClient:
         try:
             if not self._status_note_initialized:
                 # First call: find or create the note, overwrite content
-                existing = self.find_note_by_name(threat_model_id, STATUS_NOTE_NAME)
+                existing = self.find_note_by_name(
+                    threat_model_id, self.status_note_name
+                )
                 if existing:
                     self._status_note_id = existing.id
                     self._status_note_content = line
                     self.update_note(
                         threat_model_id=threat_model_id,
                         note_id=existing.id,
-                        name=STATUS_NOTE_NAME,
+                        name=self.status_note_name,
                         content=line,
                         description="Tracks tmi-tf analysis progress",
                     )
                 else:
                     note = self.create_note(
                         threat_model_id=threat_model_id,
-                        name=STATUS_NOTE_NAME,
+                        name=self.status_note_name,
                         content=line,
                         description="Tracks tmi-tf analysis progress",
                     )
@@ -565,7 +568,7 @@ class TMIClient:
                     self.update_note(
                         threat_model_id=threat_model_id,
                         note_id=self._status_note_id,
-                        name=STATUS_NOTE_NAME,
+                        name=self.status_note_name,
                         content=self._status_note_content,
                         description="Tracks tmi-tf analysis progress",
                     )

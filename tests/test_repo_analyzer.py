@@ -1,8 +1,12 @@
 """Tests for environment detection and module resolution in repo_analyzer."""
 
+import os
+import subprocess
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
+from tmi_tf.config import Config
 from tmi_tf.repo_analyzer import (
     RepositoryAnalyzer,
 )
@@ -218,3 +222,101 @@ class TestResolveModules:
         all_files = RepositoryAnalyzer.resolve_modules(envs[0], clone)
         # Should just return the env file, not crash
         assert len(all_files) == 1
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _commit(cwd, relpath, content, when):
+    p = cwd / relpath
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content)
+    _git(cwd, "add", relpath)
+    env_date = f"@{when} +0000"
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@x",
+            "commit",
+            "-q",
+            "-m",
+            relpath,
+        ],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GIT_AUTHOR_DATE": env_date, "GIT_COMMITTER_DATE": env_date},
+    )
+
+
+class TestLatestEnvironment:
+    def _repo(self, tmp_path):
+        _git(tmp_path, "init", "-q")
+        _commit(
+            tmp_path,
+            "envs/a/main.tf",
+            'module "m" { source = "../../modules/m" }',
+            1000,
+        )
+        _commit(tmp_path, "envs/b/main.tf", "# b", 2000)
+        _commit(tmp_path, "modules/m/main.tf", "# m", 3000)
+        return tmp_path
+
+    def test_last_commit_timestamp(self, tmp_path):
+        repo = self._repo(tmp_path)
+        assert RepositoryAnalyzer.last_commit_timestamp(repo, [Path("envs/b")]) == 2000
+        assert RepositoryAnalyzer.last_commit_timestamp(repo, [Path("nope")]) is None
+
+    def test_last_commit_timestamp_empty_paths(self, tmp_path):
+        repo = self._repo(tmp_path)
+        assert RepositoryAnalyzer.last_commit_timestamp(repo, []) is None
+
+    def test_last_commit_timestamp_path_outside_clone_returns_none(self, tmp_path):
+        repo = self._repo(tmp_path)
+        assert RepositoryAnalyzer.last_commit_timestamp(repo, [tmp_path.parent]) is None
+
+    def test_module_commit_counts_for_environment(self, tmp_path):
+        repo = self._repo(tmp_path)
+        envs = RepositoryAnalyzer.detect_environments(repo)
+        chosen, ts = RepositoryAnalyzer.select_latest_environment(repo, envs)
+        assert chosen.name == "a"  # a's module changed at 3000 > b at 2000
+        assert ts == 3000
+
+    def test_no_history_falls_back_to_first(self, tmp_path):
+        (tmp_path / "x").mkdir()
+        (tmp_path / "x" / "main.tf").write_text("# x")
+        (tmp_path / "y").mkdir()
+        (tmp_path / "y" / "main.tf").write_text("# y")
+        _git(tmp_path, "init", "-q")
+        envs = RepositoryAnalyzer.detect_environments(tmp_path)
+        chosen, ts = RepositoryAnalyzer.select_latest_environment(tmp_path, envs)
+        assert chosen.name == "x" and ts is None
+
+
+class TestCloneDepth:
+    def test_pull_uses_configured_depth(self, tmp_path):
+        config = Config()
+        config.latest_commit_depth = 7
+        analyzer = RepositoryAnalyzer(config)
+        calls = []
+
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+
+            class R:
+                stdout = b""
+                stderr = b""
+                returncode = 0
+
+            return R()
+
+        with patch("tmi_tf.repo_analyzer.subprocess.run", side_effect=fake_run):
+            (tmp_path / ".git" / "info").mkdir(parents=True)
+            (tmp_path / "main.tf").write_text("# keep rglob non-empty")
+            analyzer._sparse_clone("https://github.com/o/r", tmp_path, "r")
+        pull = next(c for c in calls if c[:2] == ["git", "pull"])
+        assert "--depth=7" in pull

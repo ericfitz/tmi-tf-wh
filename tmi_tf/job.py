@@ -17,6 +17,13 @@ class Job:
     callback_url: str | None = None
     invocation_id: str | None = None
     temp_dir: Path | None = None
+    scope: str | None = None
+    environment: str | None = None
+
+    @property
+    def is_child(self) -> bool:
+        """A child job analyzes exactly one environment ("" = whole repo)."""
+        return self.environment is not None
 
     def to_queue_message(self) -> dict:
         """Serialize to dict for OCI Queue message body."""
@@ -28,6 +35,8 @@ class Job:
             "repo_id": self.repo_id,
             "callback_url": self.callback_url,
             "invocation_id": self.invocation_id,
+            "scope": self.scope,
+            "environment": self.environment,
         }
 
     @classmethod
@@ -41,4 +50,6 @@ class Job:
             repo_id=data.get("repo_id"),
             callback_url=data.get("callback_url"),
             invocation_id=data.get("invocation_id"),
+            scope=data.get("scope"),
+            environment=data.get("environment"),
         )

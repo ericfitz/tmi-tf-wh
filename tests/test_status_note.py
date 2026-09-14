@@ -16,6 +16,7 @@ class TestUpdateStatusNote:
             client._status_note_id = None
             client._status_note_initialized = False
             client._status_note_content = ""
+            client.status_note_name = "TMI-TF Analysis Status"
             # Mock the methods used internally
             client.find_note_by_name = MagicMock(return_value=None)  # type: ignore[method-assign]
             client.create_note = MagicMock()  # type: ignore[method-assign]
@@ -85,3 +86,17 @@ class TestUpdateStatusNote:
         content = cast(MagicMock, client.create_note).call_args.kwargs["content"]
         assert "[" in content and "]" in content  # Timestamp brackets
         assert "Test message" in content
+
+    def test_custom_status_note_name(self):
+        client = self._make_client()
+        client.status_note_name = "Analysis Status - aws-public"
+        client.find_note_by_name = MagicMock(return_value=None)  # type: ignore[method-assign]
+        client.create_note = MagicMock(return_value=MagicMock(id="n1"))  # type: ignore[method-assign]
+        client.update_status_note("tm1", "hello")
+        client.find_note_by_name.assert_called_once_with(
+            "tm1", "Analysis Status - aws-public"
+        )
+        assert (
+            cast(MagicMock, client.create_note).call_args.kwargs["name"]
+            == "Analysis Status - aws-public"
+        )

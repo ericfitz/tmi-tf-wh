@@ -230,3 +230,14 @@ class TestDotenvIsolation:
     def test_conftest_disables_the_default_env_file(self):
         """The autouse fixture in conftest.py is what keeps the suite honest."""
         assert config_module.DEFAULT_ENV_FILE is None
+
+
+class TestLatestCommitDepth:
+    def test_default(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("LATEST_COMMIT_DEPTH", None)
+            assert Config().latest_commit_depth == 200
+
+    def test_override(self):
+        with patch.dict(os.environ, {"LATEST_COMMIT_DEPTH": "50"}):
+            assert Config().latest_commit_depth == 50

@@ -212,6 +212,59 @@ class RepositoryAnalyzer:
 
         return all_files
 
+    @staticmethod
+    def last_commit_timestamp(clone_path: Path, paths: list[Path]) -> int | None:
+        """Unix time of the newest commit touching any of paths (relative or
+        absolute under clone_path); None if no commit in the available history.
+        """
+        if not paths:
+            return None
+        resolved_clone = clone_path.resolve()
+        try:
+            rel = [
+                str(p.resolve().relative_to(resolved_clone) if p.is_absolute() else p)
+                for p in paths
+            ]
+            out = (
+                subprocess.run(
+                    ["git", "log", "-1", "--format=%ct", "--", *rel],
+                    cwd=resolved_clone,
+                    check=True,
+                    capture_output=True,
+                    timeout=30,
+                )
+                .stdout.decode()
+                .strip()
+            )
+            return int(out) if out else None
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+            ValueError,
+        ):
+            logger.debug("git log failed for %s", paths, exc_info=True)
+            return None
+
+    @staticmethod
+    def select_latest_environment(
+        clone_path: Path, environments: list[TerraformEnvironment]
+    ) -> tuple[TerraformEnvironment, int | None]:
+        """Pick the environment with the newest commit over its own directory
+        plus the directories of its resolved relative modules. Ties/None fall
+        back to the first environment in `environments` order; the int is
+        that environment's timestamp (None when nothing had history).
+        """
+        best = environments[0]
+        best_ts: int | None = None
+        for env in environments:
+            files = RepositoryAnalyzer.resolve_modules(env, clone_path)
+            dirs = sorted({f.resolve().parent for f in files})
+            ts = RepositoryAnalyzer.last_commit_timestamp(clone_path, dirs)
+            if ts is not None and (best_ts is None or ts > best_ts):
+                best, best_ts = env, ts
+        return best, best_ts
+
     @contextmanager
     def clone_repository_sparse(
         self, repo_url: str, repo_name: str, base_temp_dir: Path | None = None
@@ -321,7 +374,13 @@ class RepositoryAnalyzer:
                 f"Pulling repository content (timeout: {self.config.clone_timeout}s)"
             )
             subprocess.run(
-                ["git", "pull", "--depth=1", "origin", "HEAD"],
+                [
+                    "git",
+                    "pull",
+                    f"--depth={self.config.latest_commit_depth}",
+                    "origin",
+                    "HEAD",
+                ],
                 cwd=clone_path,
                 check=True,
                 capture_output=True,
