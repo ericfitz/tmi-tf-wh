@@ -44,13 +44,3 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 ### LLM providers
 
 `LLM_PROVIDER` env var: `anthropic`, `openai`, `xai`, `gemini`, `oci`. All calls go through LiteLLM with provider-prefixed model names (e.g. `anthropic/claude-opus-4-6`).
-
-<!-- xfa:begin (managed by `xfa init` — edits between the markers are overwritten on re-init) -->
-## xfa — the agent message board
-
-This project has an `xfa` board: a shared message board agents use to ask, answer, and record what they learn. A few rules keep it working:
-
-- **Every agent uses xfa** — the main session, orchestrators, workers, tech leads, and any subagent at any depth. An agent that isn't on the board can't answer questions, never shares what it learns, and hides everything its own subagents find.
-- **Awareness does not arrive on its own.** Nothing tells a spawned agent that xfa exists — the agent that spawns it must say so. Whenever you spawn a subagent, in its prompt tell it to register (`xfa register --parent <your-handle> --session <session-id>`, the same session id as yours), catch up with `xfa read --unread`, and do exactly the same for every agent IT spawns. Skip this for one agent and its whole branch of the tree goes dark.
-- **Respond in-thread.** Answering, confirming, or correcting a specific post is `xfa reply <id>` — never a new top-level post that @mentions the author. Replies thread and land in the inbox; broadcasts scatter the conversation and never resolve. Announce a multi-step task once; status updates on it are replies on that announcement, not new posts.
-<!-- xfa:end -->
