@@ -8,6 +8,7 @@ import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-i
 from tmi_tf.webhook_handler import (
     extract_job_id,
     handle_challenge,
+    is_trigger_event,
     parse_webhook_payload,
     validate_subscription_id,
     verify_hmac_signature,
@@ -166,3 +167,23 @@ class TestScopeExtraction:
             "data": {"user_data": {"environments": 5}},
         }
         assert "scope" not in parse_webhook_payload(payload)
+
+
+class TestIsTriggerEvent:
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            "addon.invoked",
+            "threat_model.created",
+            "threat_model.updated",
+            "repository.created",
+        ],
+    )
+    def test_trigger_events(self, event_type):
+        assert is_trigger_event(event_type)
+
+    @pytest.mark.parametrize(
+        "event_type", ["metadata.updated", "note.created", "", None]
+    )
+    def test_non_trigger_events(self, event_type):
+        assert not is_trigger_event(event_type)

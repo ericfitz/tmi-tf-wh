@@ -3,6 +3,21 @@
 import hashlib
 import hmac
 
+# Events that start an analysis. Anything else (e.g. metadata.updated, which
+# TMI emits for every note-metadata write the worker itself performs) is
+# acknowledged and dropped, otherwise the worker feeds itself.
+TRIGGER_EVENTS = frozenset(
+    {"addon.invoked", "threat_model.created", "threat_model.updated"}
+)
+TRIGGER_EVENT_PREFIXES = ("repository.",)
+
+
+def is_trigger_event(event_type: str | None) -> bool:
+    """True if this event type should enqueue an analysis job."""
+    if not event_type:
+        return False
+    return event_type in TRIGGER_EVENTS or event_type.startswith(TRIGGER_EVENT_PREFIXES)
+
 
 def verify_hmac_signature(raw_body: bytes, signature: str, secret: str) -> bool:
     """Verify HMAC-SHA256 signature from X-Webhook-Signature header.

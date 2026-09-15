@@ -190,3 +190,37 @@ class TestUrlPrefix:
 
     def test_no_prefix_by_default(self, client):
         assert client.get("/health").status_code == 200
+
+
+class TestIgnoredEvents:
+    def test_metadata_updated_is_acknowledged_not_enqueued(self, client):
+        payload = {"type": "metadata.updated", "threat_model_id": "tm-001"}
+        body = json.dumps(payload).encode()
+        response = client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _make_sig(body, "test-secret"),
+                "X-Webhook-Delivery-Id": "del-002",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "ignored"
+        assert not server_module.queue_client.publish.called  # type: ignore[union-attr]
+
+    def test_delegation_token_header_is_redacted_in_log(self, client, caplog):
+        payload = {"type": "addon.invoked", "threat_model_id": "tm-001"}
+        body = json.dumps(payload).encode()
+        with caplog.at_level("INFO", logger="tmi_tf.server"):
+            client.post(
+                "/webhook",
+                content=body,
+                headers={
+                    "X-Webhook-Signature": _make_sig(body, "test-secret"),
+                    "X-Webhook-Delivery-Id": "del-003",
+                    "X-TMI-Delegation-Token": "eyJsecret",
+                },
+            )
+        assert "eyJsecret" not in caplog.text
+        assert "<redacted>" in caplog.text
