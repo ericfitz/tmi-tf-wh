@@ -166,8 +166,10 @@ async def webhook(request: Request) -> Response:
             media_type="application/json",
         )
 
-    event_type = parsed.get("event_type")
-    if not is_trigger_event(event_type):
+    # TMI puts the event type in X-Webhook-Event (api/webhook_delivery_worker.go);
+    # the body "type" field is a fallback for older payloads and tests.
+    event_type = request.headers.get("x-webhook-event") or parsed.get("event_type")
+    if not event_type or not is_trigger_event(event_type):
         logger.info("Ignoring event type %r for job_id=%s", event_type, job_id)
         return JSONResponse(content={"status": "ignored", "job_id": job_id})
 
@@ -175,7 +177,7 @@ async def webhook(request: Request) -> Response:
     job = Job(
         job_id=job_id,
         threat_model_id=parsed["threat_model_id"],
-        event_type=parsed.get("event_type", "unknown"),
+        event_type=event_type,
         enqueued_at=datetime.now(timezone.utc),
         repo_id=parsed.get("repo_id"),
         callback_url=parsed.get("callback_url"),
