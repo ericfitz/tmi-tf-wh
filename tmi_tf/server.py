@@ -16,6 +16,7 @@ from tmi_tf.providers import QueueProvider, get_queue_provider
 from tmi_tf.webhook_handler import (
     extract_job_id,
     handle_challenge,
+    is_trigger_event,
     parse_webhook_payload,
     validate_subscription_id,
     verify_hmac_signature,
@@ -96,7 +97,10 @@ async def webhook(request: Request) -> Response:
     raw_body = await request.body()
 
     # Log headers and payload at INFO
-    headers = dict(request.headers)
+    headers = {
+        k: ("<redacted>" if "token" in k.lower() else v)
+        for k, v in request.headers.items()
+    }
     logger.info("Webhook received: headers=%s payload_size=%d", headers, len(raw_body))
 
     # Validate subscription ID if configured
@@ -161,6 +165,11 @@ async def webhook(request: Request) -> Response:
             content=json.dumps({"error": str(e)}),
             media_type="application/json",
         )
+
+    event_type = parsed.get("event_type")
+    if not is_trigger_event(event_type):
+        logger.info("Ignoring event type %r for job_id=%s", event_type, job_id)
+        return JSONResponse(content={"status": "ignored", "job_id": job_id})
 
     # Build job and enqueue
     job = Job(
