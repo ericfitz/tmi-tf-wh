@@ -224,3 +224,21 @@ class TestIgnoredEvents:
             )
         assert "eyJsecret" not in caplog.text
         assert "<redacted>" in caplog.text
+
+    def test_event_type_taken_from_header_when_body_lacks_type(self, client):
+        payload = {"threat_model_id": "tm-001", "resource_type": "addon"}
+        body = json.dumps(payload).encode()
+        response = client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Webhook-Signature": _make_sig(body, "test-secret"),
+                "X-Webhook-Delivery-Id": "del-004",
+                "X-Webhook-Event": "addon.invoked",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "accepted"
+        message = server_module.queue_client.publish.call_args.args[0]  # type: ignore[union-attr]
+        assert message["event_type"] == "addon.invoked"
