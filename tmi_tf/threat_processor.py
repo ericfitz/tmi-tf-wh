@@ -159,7 +159,7 @@ class ThreatProcessor:
         try:
             response = retry_transient_llm_call(
                 lambda: self.llm_provider.complete(
-                    system_prompt, user_prompt, max_tokens=16000, timeout=180.0
+                    system_prompt, user_prompt, max_tokens=32000, timeout=600.0
                 ),
                 description=f"Threat extraction for {repo_name}",
             )

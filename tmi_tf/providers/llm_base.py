@@ -34,8 +34,8 @@ class BaseLLMProvider:
         self,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 16000,
-        timeout: float = 300.0,
+        max_tokens: int = 32000,
+        timeout: float = 600.0,
     ) -> LLMResponse:
         """Make a single LLM completion call via LiteLLM."""
         prompt_chars = len(system_prompt) + len(user_prompt)

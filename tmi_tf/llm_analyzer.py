@@ -459,8 +459,8 @@ class LLMAnalyzer:
         system_prompt: str,
         user_prompt: str,
         phase_name: str,
-        max_tokens: int = 16000,
-        timeout: float = 300.0,
+        max_tokens: int = 32000,
+        timeout: float = 600.0,
     ) -> LLMResponse:
         """
         Make a single LLM API call via the provider.
@@ -497,8 +497,8 @@ class LLMAnalyzer:
         system_prompt: str,
         user_prompt: str,
         phase_name: str,
-        max_tokens: int = 16000,
-        timeout: float = 300.0,
+        max_tokens: int = 32000,
+        timeout: float = 600.0,
     ) -> tuple[dict[str, Any] | None, int, int, float]:
         """
         Call LLM and parse JSON object response.
@@ -536,8 +536,8 @@ class LLMAnalyzer:
         system_prompt: str,
         user_prompt: str,
         phase_name: str,
-        max_tokens: int = 16000,
-        timeout: float = 300.0,
+        max_tokens: int = 32000,
+        timeout: float = 600.0,
     ) -> tuple[list[dict[str, Any]], int, int, float]:
         """
         Call LLM and parse JSON array response.
