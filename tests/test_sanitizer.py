@@ -1,9 +1,12 @@
 """Tests for content sanitization."""
 
+import re
+
 from tmi_tf.tmi_client_wrapper import (
     _escape_template_patterns,
     clamp_for_api,
     sanitize_content_for_api,
+    sanitize_threat_name,
 )
 
 
@@ -247,3 +250,17 @@ class TestClampForApi:
     def test_no_spaces_hard_cut(self):
         out = clamp_for_api("x" * 2000, 1024)
         assert len(out) == 1024 and out.endswith("...")
+
+
+class TestSanitizeThreatName:
+    """#64: ThreatInput.name rejects < > " ' &."""
+
+    def test_forbidden_chars_replaced(self):
+        out = sanitize_threat_name("""Certmgr granted 'use keys' & "read" <all>""")
+        assert not re.search(r"""[<>"'&]""", out)
+        assert out == "Certmgr granted \u2019use keys\u2019 and \u201dread\u201d all"
+
+    def test_clean_name_unchanged(self):
+        assert sanitize_threat_name("RDS lacks deletion protection") == (
+            "RDS lacks deletion protection"
+        )

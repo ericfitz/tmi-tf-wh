@@ -182,16 +182,19 @@ class TestFanout:
             asyncio.run(
                 pool._run_job(
                     _job(
-                        job_id="p1:aws-public", repo_id="r1", environment="aws-public"
+                        job_id="p1:aws-public",
+                        repo_id="r1",
+                        environment="aws-public",
+                        repo_name="o_r",
                     ),
                     receipt="rc",
                 )
             )
         assert ra.call_args.kwargs["environment"] == "aws-public"
         assert ra.call_args.kwargs["repo_id"] == "r1"
-        assert tmi.status_note_name == f"{STATUS_NOTE_NAME} - aws-public"
+        assert tmi.status_note_name == f"{STATUS_NOTE_NAME} - o_r - aws-public"
 
-    def test_child_whole_repo_keeps_default_note_name(self):
+    def test_child_whole_repo_note_named_after_repo(self):
         pool, _ = _pool()
         tmi = MagicMock(status_note_name="Analysis Status")
         with (
@@ -201,5 +204,7 @@ class TestFanout:
             ),
             patch("tmi_tf.worker.AddonCallback"),
         ):
-            asyncio.run(pool._run_job(_job(environment=""), receipt="rc"))
-        assert tmi.status_note_name == "Analysis Status"
+            asyncio.run(
+                pool._run_job(_job(environment="", repo_name="o_r"), receipt="rc")
+            )
+        assert tmi.status_note_name == f"{STATUS_NOTE_NAME} - o_r"

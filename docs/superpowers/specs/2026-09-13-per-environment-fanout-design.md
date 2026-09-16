@@ -110,7 +110,7 @@ selects `latest` inline (the CLI still prompts interactively before that). A `--
 ## Status notes
 
 The parent writes the existing `TMI-TF Analysis Status` note: every environment
-and its disposition. Each child writes its own note, `TMI-TF Analysis Status - <env>`.
+and its disposition. Each child writes its own note, `TMI-TF Analysis Status - <repo> - <env>` (`- <repo>` alone for a whole-repo child), unique per repository and environment (#56).
 Separate notes rather than one shared note because `TMIClient` caches the note
 body per client and concurrent appenders would overwrite each other.
 

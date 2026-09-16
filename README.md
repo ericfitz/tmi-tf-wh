@@ -171,7 +171,7 @@ forms:
 Any other webhook event always uses `latest`.
 
 Each matched environment becomes its own child job and writes its own set of
-artifacts: a status note `TMI-TF Analysis Status - <env>`, an inventory note, an
+artifacts: a status note `TMI-TF Analysis Status - <repo> - <env>` (`TMI-TF Analysis Status - <repo>` when the repo has no environments), an inventory note, an
 analysis note, a DFD, and threats. There is no merged overview across
 environments. The parent job writes a `TMI-TF Analysis Status` note listing
 environments found/matched/skipped, then reports the addon callback

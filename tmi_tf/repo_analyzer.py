@@ -77,6 +77,14 @@ class TerraformRepository:
         )
 
 
+def repository_name(repo_url: str) -> str:
+    """owner_repo from a URL like https://github.com/owner/repo.git."""
+    parts = repo_url.rstrip("/").removesuffix(".git").split("/")
+    if len(parts) >= 2:
+        return f"{parts[-2]}_{parts[-1]}"
+    return "unknown_repo"
+
+
 class RepositoryAnalyzer:
     """Handles cloning and analysis of repositories."""
 
@@ -424,11 +432,7 @@ class RepositoryAnalyzer:
         Returns:
             Repository name
         """
-        # Extract from URL like https://github.com/owner/repo.git
-        parts = repo_url.rstrip("/").removesuffix(".git").split("/")
-        if len(parts) >= 2:
-            return f"{parts[-2]}_{parts[-1]}"
-        return "unknown_repo"
+        return repository_name(repo_url)
 
     def should_analyze_repository(
         self, repo_url: str, max_size_kb: int = 500000

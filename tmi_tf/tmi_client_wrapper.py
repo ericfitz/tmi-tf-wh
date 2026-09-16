@@ -193,6 +193,18 @@ def clamp_for_api(content: str, max_length: int) -> str:
     return cut.rstrip() + "..."
 
 
+# ThreatInput.name must match ^[^<>"'&]*$ (TMI OpenAPI schema); the other
+# text fields have no such restriction.
+_NAME_CHAR_MAP = str.maketrans(
+    {"'": "\u2019", '"': "\u201d", "&": "and", "<": "", ">": ""}
+)
+
+
+def sanitize_threat_name(name: str) -> str:
+    """Replace the characters TMI forbids in threat names, keeping the wording."""
+    return name.translate(_NAME_CHAR_MAP)
+
+
 # ThreatInput max_length values from the generated TMI client schema
 THREAT_NAME_MAX = 256
 THREAT_DESCRIPTION_MAX = 2048
@@ -822,7 +834,7 @@ class TMIClient:
                 )
 
             threat_input = ThreatInput(
-                name=_text(name, THREAT_NAME_MAX),
+                name=_text(sanitize_threat_name(name), THREAT_NAME_MAX),
                 threat_type=threat_type_list,
                 description=_text(description, THREAT_DESCRIPTION_MAX),
                 mitigation=_text(mitigation, THREAT_MITIGATION_MAX),

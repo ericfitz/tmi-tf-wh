@@ -19,6 +19,7 @@ class Job:
     temp_dir: Path | None = None
     scope: str | None = None
     environment: str | None = None
+    repo_name: str | None = None
 
     @property
     def is_child(self) -> bool:
@@ -37,6 +38,7 @@ class Job:
             "invocation_id": self.invocation_id,
             "scope": self.scope,
             "environment": self.environment,
+            "repo_name": self.repo_name,
         }
 
     @classmethod
@@ -52,4 +54,5 @@ class Job:
             invocation_id=data.get("invocation_id"),
             scope=data.get("scope"),
             environment=data.get("environment"),
+            repo_name=data.get("repo_name"),
         )
