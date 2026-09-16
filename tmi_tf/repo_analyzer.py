@@ -425,7 +425,7 @@ class RepositoryAnalyzer:
             Repository name
         """
         # Extract from URL like https://github.com/owner/repo.git
-        parts = repo_url.rstrip("/").rstrip(".git").split("/")
+        parts = repo_url.rstrip("/").removesuffix(".git").split("/")
         if len(parts) >= 2:
             return f"{parts[-2]}_{parts[-1]}"
         return "unknown_repo"
