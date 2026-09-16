@@ -4,6 +4,7 @@ import re
 
 from tmi_tf.tmi_client_wrapper import (
     _escape_template_patterns,
+    clamp_for_api,
     sanitize_content_for_api,
 )
 
@@ -234,3 +235,17 @@ class TestXssRegexEscapes:
 
     def test_plain_equals_untouched(self):
         assert sanitize_content_for_api("x = 1") == "x = 1"
+
+
+class TestClampForApi:
+    def test_short_unchanged(self):
+        assert clamp_for_api("abc", 10) == "abc"
+
+    def test_long_cut_at_word_boundary_within_limit(self):
+        text = "word " * 300
+        out = clamp_for_api(text, 1024)
+        assert len(out) <= 1024 and out.endswith("...") and not out.endswith(" ...")
+
+    def test_no_spaces_hard_cut(self):
+        out = clamp_for_api("x" * 2000, 1024)
+        assert len(out) == 1024 and out.endswith("...")
