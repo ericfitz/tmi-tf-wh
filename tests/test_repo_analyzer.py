@@ -320,3 +320,22 @@ class TestCloneDepth:
             analyzer._sparse_clone("https://github.com/o/r", tmp_path, "r")
         pull = next(c for c in calls if c[:2] == ["git", "pull"])
         assert "--depth=7" in pull
+
+
+class TestExtractRepositoryName:
+    """#65: rstrip(".git") stripped trailing characters, turning tmi into tm."""
+
+    def test_trailing_git_chars_kept(self):
+        analyzer = RepositoryAnalyzer(Config())
+        assert (
+            analyzer.extract_repository_name("https://github.com/ericfitz/tmi.git")
+            == "ericfitz_tmi"
+        )
+        assert (
+            analyzer.extract_repository_name("https://github.com/ericfitz/tmi")
+            == "ericfitz_tmi"
+        )
+        assert (
+            analyzer.extract_repository_name("https://github.com/o/digit.git/")
+            == "o_digit"
+        )

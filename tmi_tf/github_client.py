@@ -147,7 +147,7 @@ class GitHubClient:
 
             if len(path_parts) >= 2:
                 owner = path_parts[0]
-                repo_name = path_parts[1].replace(".git", "")
+                repo_name = path_parts[1].removesuffix(".git")
                 return owner, repo_name
             else:
                 return None, None
