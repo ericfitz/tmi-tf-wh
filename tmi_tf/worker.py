@@ -12,6 +12,7 @@ from tmi_tf.analyzer import resolve_fanout_targets, run_analysis
 from tmi_tf.config import Config
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueMessage, QueueProvider
+from tmi_tf.repo_analyzer import repository_name
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, TMIClient
 
 logger = logging.getLogger(__name__)
@@ -128,10 +129,11 @@ class WorkerPool:
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
             if job.is_child:
-                if job.environment:
-                    tmi_client.status_note_name = (
-                        f"{STATUS_NOTE_NAME} - {job.environment}"
-                    )
+                # Unique per (repository, environment) so two repos with the
+                # same environment name do not overwrite each other (#56).
+                suffix = " - ".join(x for x in (job.repo_name, job.environment) if x)
+                if suffix:
+                    tmi_client.status_note_name = f"{STATUS_NOTE_NAME} - {suffix}"
                 result = await asyncio.to_thread(
                     run_analysis,
                     config=self.config,
@@ -182,6 +184,7 @@ class WorkerPool:
                 callback_url=None,
                 invocation_id=job.invocation_id,
                 environment=t.environment,
+                repo_name=repository_name(t.repo_url),
             )
             try:
                 await asyncio.to_thread(
