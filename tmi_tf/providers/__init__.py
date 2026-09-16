@@ -67,8 +67,8 @@ class LLMProvider(Protocol):
         self,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 32000,
-        timeout: float = 600.0,
+        max_tokens: int = 64000,
+        timeout: float = 1200.0,
     ) -> LLMResponse:
         """Make a single LLM completion call."""
         ...

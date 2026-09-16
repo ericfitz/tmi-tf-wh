@@ -34,7 +34,10 @@ class TestBaseLLMProvider:
     @patch("tmi_tf.providers.llm_base.litellm")
     @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
     def test_complete_returns_llm_response(self, mock_save, mock_litellm):
-        mock_litellm.completion.return_value = _make_litellm_response("hello world")
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response(
+            "hello world"
+        )
         mock_litellm.completion_cost.return_value = 0.01
 
         provider = BaseLLMProvider(provider="anthropic", model="anthropic/test-model")
@@ -50,7 +53,8 @@ class TestBaseLLMProvider:
     @patch("tmi_tf.providers.llm_base.litellm")
     @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
     def test_complete_passes_extra_kwargs(self, mock_save, mock_litellm):
-        mock_litellm.completion.return_value = _make_litellm_response("ok")
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("ok")
         mock_litellm.completion_cost.return_value = 0.0
 
         provider = BaseLLMProvider(provider="oci", model="oci/test-model")
@@ -65,13 +69,16 @@ class TestBaseLLMProvider:
             ],
             max_tokens=4000,
             timeout=60.0,
+            stream=True,
+            stream_options={"include_usage": True},
             oci_region="us-ashburn-1",
         )
 
     @patch("tmi_tf.providers.llm_base.litellm")
     @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
     def test_complete_returns_none_text_on_empty_content(self, mock_save, mock_litellm):
-        mock_litellm.completion.return_value = _make_litellm_response("")
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("")
         mock_litellm.completion_cost.return_value = 0.0
 
         provider = BaseLLMProvider(provider="anthropic", model="anthropic/test")
@@ -82,7 +89,8 @@ class TestBaseLLMProvider:
     @patch("tmi_tf.providers.llm_base.litellm")
     @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
     def test_complete_handles_cost_error(self, mock_save, mock_litellm):
-        mock_litellm.completion.return_value = _make_litellm_response("ok")
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("ok")
         mock_litellm.completion_cost.side_effect = Exception("no cost data")
 
         provider = BaseLLMProvider(provider="anthropic", model="anthropic/test")
@@ -100,7 +108,8 @@ class TestBaseLLMProvider:
     @patch("tmi_tf.providers.llm_base.litellm")
     @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
     def test_complete_warns_on_truncation(self, mock_save, mock_litellm):
-        mock_litellm.completion.return_value = _make_litellm_response(
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response(
             "truncated", finish_reason="length"
         )
         mock_litellm.completion_cost.return_value = 0.0
