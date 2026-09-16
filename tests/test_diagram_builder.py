@@ -66,11 +66,11 @@ def get_cell(cells: list[dict], component_id: str) -> dict:
 
 
 def get_node_cells(cells: list[dict]) -> list[dict]:
-    return [c for c in cells if c.get("shape") != "edge"]
+    return [c for c in cells if c.get("shape") != "flow"]
 
 
 def get_edge_cells(cells: list[dict]) -> list[dict]:
-    return [c for c in cells if c.get("shape") == "edge"]
+    return [c for c in cells if c.get("shape") == "flow"]
 
 
 def cell_bbox(cell: dict) -> tuple[int, int, int, int]:

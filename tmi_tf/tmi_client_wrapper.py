@@ -126,7 +126,7 @@ ALLOWED_ATTRIBUTES = {
 STATUS_NOTE_NAME = "TMI-TF Analysis Status"
 
 
-def _escape_template_patterns(content: str) -> str:
+def _escape_template_patterns(content: str, exempt_code: bool = True) -> str:
     """Escape template injection patterns outside code blocks.
 
     The TMI server rejects content containing ``${``, ``{{``, or ``<%``
@@ -142,6 +142,15 @@ def _escape_template_patterns(content: str) -> str:
 
     The ``{{`` and ``}}`` escaping uses regex to handle runs of 2+ braces
     (e.g., ``}}}`` → ``&#125;&#125;}``), avoiding residual pairs.
+
+    Also escapes the patterns TMI's XSS regexes reject and nh3 does not
+    strip from plain text: ``on<word>=`` (matches prose such as
+    ``deletion_protection = true``) -> ``on<word>&#61;``, ``javascript:``
+    -> ``javascript&#58;``, ``#{`` -> ``&#35;{``, ``%>`` -> ``%&gt;``.
+
+    ``exempt_code=False`` escapes inside code spans/blocks too. Threat text
+    fields need this: TMI validates them with the raw regexes, whereas note
+    content is only sanitized as markdown.
     """
     if not content:
         return content
@@ -153,7 +162,7 @@ def _escape_template_patterns(content: str) -> str:
 
     result: list[str] = []
     for i, segment in enumerate(segments):
-        if i % 2 == 1:
+        if exempt_code and i % 2 == 1:
             # Inside a code block / inline code — keep as-is
             result.append(segment)
         else:
@@ -166,11 +175,15 @@ def _escape_template_patterns(content: str) -> str:
                 r"\}(\}+)", lambda m: "&#125;" * len(m.group(1)) + "}", segment
             )
             segment = segment.replace("<%", "&lt;%")
+            segment = segment.replace("%>", "%&gt;")
+            segment = segment.replace("#{", "&#35;{")
+            segment = re.sub(r"(?i)(on\w+\s*)=", r"\1&#61;", segment)
+            segment = re.sub(r"(?i)javascript:", "javascript&#58;", segment)
             result.append(segment)
     return "".join(result)
 
 
-def sanitize_content_for_api(content: str) -> str:
+def sanitize_content_for_api(content: str, exempt_code: bool = True) -> str:
     """
     Sanitize content to match TMI API requirements.
 
@@ -202,7 +215,7 @@ def sanitize_content_for_api(content: str) -> str:
     )
 
     # Escape template injection patterns outside code blocks
-    sanitized = _escape_template_patterns(sanitized)
+    sanitized = _escape_template_patterns(sanitized, exempt_code)
 
     # Replace characters outside the allowed range
     # Keep: U+0020-U+FFFF, \n (U+000A), \r (U+000D), \t (U+0009)
@@ -786,12 +799,14 @@ class TMIClient:
                 ]
 
             threat_input = ThreatInput(
-                name=sanitize_content_for_api(name) if name else name,
+                name=sanitize_content_for_api(name, exempt_code=False)
+                if name
+                else name,
                 threat_type=threat_type_list,
-                description=sanitize_content_for_api(description)
+                description=sanitize_content_for_api(description, exempt_code=False)
                 if description
                 else description,
-                mitigation=sanitize_content_for_api(mitigation)
+                mitigation=sanitize_content_for_api(mitigation, exempt_code=False)
                 if mitigation
                 else mitigation,
                 severity=severity,
