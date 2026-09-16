@@ -1,5 +1,3 @@
-import re
-
 """Tests for content sanitization."""
 
 from tmi_tf.tmi_client_wrapper import (
@@ -214,12 +212,12 @@ class TestEscapeTemplatePatterns:
 
 
 class TestXssRegexEscapes:
-    """TMI rejects ``on<word>=`` and ``javascript:`` even in plain prose."""
+    """TMI rejects ``javascript:``, ``#{`` and ``%>`` even in plain prose."""
 
-    def test_on_word_equals_escaped_in_prose(self):
-        result = sanitize_content_for_api("Set deletion_protection = true on RDS")
-        assert "deletion_protection &#61; true" in result
-        assert not re.search(r"(?i)on\w+\s*=", result)
+    def test_on_word_equals_untouched(self):
+        # TMI >= 1.12.3 (#885) only rejects on*= inside a <tag context.
+        text = "Set deletion_protection = true on RDS"
+        assert sanitize_content_for_api(text) == text
 
     def test_javascript_scheme_escaped(self):
         assert "javascript&#58;" in sanitize_content_for_api("avoid javascript: links")
@@ -229,9 +227,9 @@ class TestXssRegexEscapes:
         assert "&#35;{" in result and "%&gt;" in result
 
     def test_code_kept_by_default_but_escaped_for_threat_fields(self):
-        text = "Use `deletion_protection = true`"
-        assert "`deletion_protection = true`" in sanitize_content_for_api(text)
-        assert "&#61;" in sanitize_content_for_api(text, exempt_code=False)
+        text = "Use `a #{b}`"
+        assert "`a #{b}`" in sanitize_content_for_api(text)
+        assert "&#35;{" in sanitize_content_for_api(text, exempt_code=False)
 
     def test_plain_equals_untouched(self):
         assert sanitize_content_for_api("x = 1") == "x = 1"

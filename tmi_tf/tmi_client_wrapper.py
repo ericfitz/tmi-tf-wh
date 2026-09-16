@@ -144,9 +144,9 @@ def _escape_template_patterns(content: str, exempt_code: bool = True) -> str:
     (e.g., ``}}}`` → ``&#125;&#125;}``), avoiding residual pairs.
 
     Also escapes the patterns TMI's XSS regexes reject and nh3 does not
-    strip from plain text: ``on<word>=`` (matches prose such as
-    ``deletion_protection = true``) -> ``on<word>&#61;``, ``javascript:``
-    -> ``javascript&#58;``, ``#{`` -> ``&#35;{``, ``%>`` -> ``%&gt;``.
+    strip from plain text: ``javascript:`` -> ``javascript&#58;``,
+    ``#{`` -> ``&#35;{``, ``%>`` -> ``%&gt;``. (TMI >= 1.12.3 only rejects
+    ``on<word>=`` inside a ``<tag`` context, which nh3 already strips.)
 
     ``exempt_code=False`` escapes inside code spans/blocks too. Threat text
     fields need this: TMI validates them with the raw regexes, whereas note
@@ -177,7 +177,6 @@ def _escape_template_patterns(content: str, exempt_code: bool = True) -> str:
             segment = segment.replace("<%", "&lt;%")
             segment = segment.replace("%>", "%&gt;")
             segment = segment.replace("#{", "&#35;{")
-            segment = re.sub(r"(?i)(on\w+\s*)=", r"\1&#61;", segment)
             segment = re.sub(r"(?i)javascript:", "javascript&#58;", segment)
             result.append(segment)
     return "".join(result)
