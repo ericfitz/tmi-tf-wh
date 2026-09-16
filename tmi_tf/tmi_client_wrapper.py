@@ -183,6 +183,23 @@ def _escape_template_patterns(content: str, exempt_code: bool = True) -> str:
     return "".join(result)
 
 
+def clamp_for_api(content: str, max_length: int) -> str:
+    """Truncate to TMI's schema max_length at a word boundary, marking the cut."""
+    if len(content) <= max_length:
+        return content
+    cut = content[: max_length - 3]
+    space = cut.rfind(" ")
+    if space > max_length // 2:
+        cut = cut[:space]
+    return cut.rstrip() + "..."
+
+
+# ThreatInput max_length values from the generated TMI client schema
+THREAT_NAME_MAX = 256
+THREAT_DESCRIPTION_MAX = 2048
+THREAT_MITIGATION_MAX = 1024
+
+
 def sanitize_content_for_api(content: str, exempt_code: bool = True) -> str:
     """
     Sanitize content to match TMI API requirements.
@@ -798,17 +815,18 @@ class TMIClient:
                     Metadata(key=m["key"], value=m["value"]) for m in metadata
                 ]
 
+            def _text(value: str | None, max_length: int) -> str | None:
+                if not value:
+                    return value
+                return clamp_for_api(
+                    sanitize_content_for_api(value, exempt_code=False), max_length
+                )
+
             threat_input = ThreatInput(
-                name=sanitize_content_for_api(name, exempt_code=False)
-                if name
-                else name,
+                name=_text(name, THREAT_NAME_MAX),
                 threat_type=threat_type_list,
-                description=sanitize_content_for_api(description, exempt_code=False)
-                if description
-                else description,
-                mitigation=sanitize_content_for_api(mitigation, exempt_code=False)
-                if mitigation
-                else mitigation,
+                description=_text(description, THREAT_DESCRIPTION_MAX),
+                mitigation=_text(mitigation, THREAT_MITIGATION_MAX),
                 severity=severity,
                 score=score,
                 cvss=cvss,
