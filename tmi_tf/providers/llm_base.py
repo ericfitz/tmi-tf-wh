@@ -34,8 +34,8 @@ class BaseLLMProvider:
         self,
         system_prompt: str,
         user_prompt: str,
-        max_tokens: int = 16000,
-        timeout: float = 300.0,
+        max_tokens: int = 64000,
+        timeout: float = 1200.0,
     ) -> LLMResponse:
         """Make a single LLM completion call via LiteLLM."""
         prompt_chars = len(system_prompt) + len(user_prompt)
@@ -48,16 +48,24 @@ class BaseLLMProvider:
             estimated_tokens,
         )
 
-        response = litellm.completion(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=max_tokens,
-            timeout=timeout,
-            **self._extra_kwargs,
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        # Stream and reassemble: long outputs (up to 64k tokens) on slower
+        # models exceed provider limits for non-streaming responses.
+        chunks = list(
+            litellm.completion(
+                model=self._model,
+                messages=messages,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                stream=True,
+                stream_options={"include_usage": True},
+                **self._extra_kwargs,
+            )
         )
+        response = litellm.stream_chunk_builder(chunks, messages=messages)
 
         # Extract token usage
         usage = getattr(response, "usage", None)
