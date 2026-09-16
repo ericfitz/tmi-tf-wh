@@ -342,7 +342,7 @@ class DFDBuilder:
 
         edge: dict[str, Any] = {
             "id": cell_id,
-            "shape": "edge",
+            "shape": "flow",
             "source": source_dict,
             "target": target_dict,
             "zIndex": self.Z_INDEX["edge"],
