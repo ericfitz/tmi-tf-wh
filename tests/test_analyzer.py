@@ -251,3 +251,25 @@ class TestRunAnalysisEnvironmentSelection:
         ):
             result = run_analysis(Config(), "tm1", tmi)
         assert result.success is False
+
+
+class TestAllAnalysesFailed:
+    def test_job_fails_when_every_analysis_failed(self, tmp_path):
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+        analysis = MagicMock(success=False, error_message="**Analysis Failed**: boom")
+        analysis.security_findings = []
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        with clone, gh, prov, llm_cls as llm, md, val:
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            result = run_analysis(
+                Config(), "tm1", tmi, skip_diagram=True, skip_threats=True
+            )
+        assert result.success is False
+        assert any("boom" in e for e in result.errors)
+        last_note = tmi.update_status_note.call_args.args[1]
+        assert "failed" in last_note.lower()

@@ -659,13 +659,22 @@ def run_analysis(
         else:
             logger.info("\n[9/9] Skipping threat creation (skip_threats)")
 
-        tmi_client.update_status_note(threat_model_id, "Analysis complete")
+        all_failed = not any(a.success for a in analyses)
+        if all_failed:
+            # #53: every LLM analysis failed (e.g. phase 1 unparseable twice);
+            # surface it as a failed job, not "Analysis complete".
+            errors.extend(f"{a.repo_name}: {a.error_message}" for a in analyses)
+            tmi_client.update_status_note(
+                threat_model_id, "Analysis failed: " + "; ".join(errors)
+            )
+        else:
+            tmi_client.update_status_note(threat_model_id, "Analysis complete")
         logger.info("\n" + "=" * 80)
-        logger.info("Analysis complete!")
+        logger.info("Analysis %s", "failed" if all_failed else "complete!")
         logger.info("=" * 80)
 
         return AnalysisResult(
-            success=True,
+            success=not all_failed,
             analyses=analyses,
             errors=errors,
             inventory_content=inventory_content,

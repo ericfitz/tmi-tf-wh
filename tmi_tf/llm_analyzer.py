@@ -214,6 +214,7 @@ class LLMAnalyzer:
                 system_prompt=self.inventory_system,
                 user_prompt=inventory_user,
                 phase_name="inventory",
+                attempts=2,
             )
             total_input_tokens += tokens_in
             total_output_tokens += tokens_out
@@ -221,7 +222,8 @@ class LLMAnalyzer:
 
             if not inventory:
                 raise ValueError(
-                    "Phase 1 (inventory) returned empty result. "
+                    "Phase 1 (inventory) returned no usable JSON after 2 attempts "
+                    "(truncated or malformed output). "
                     "Check logs for finish_reason, token counts, and response preview."
                 )
 
@@ -499,6 +501,7 @@ class LLMAnalyzer:
         phase_name: str,
         max_tokens: int = 64000,
         timeout: float = 1200.0,
+        attempts: int = 1,
     ) -> tuple[dict[str, Any] | None, int, int, float]:
         """
         Call LLM and parse JSON object response.
@@ -509,27 +512,47 @@ class LLMAnalyzer:
             phase_name: Name of the phase (for logging)
             max_tokens: Max output tokens
             timeout: Request timeout in seconds
+            attempts: Total calls allowed; the call is repeated (same prompt)
+                when the output was truncated (finish_reason=length) or did
+                not parse as a JSON object (#53). Tokens/cost are summed.
 
         Returns:
             Tuple of (parsed JSON dict or None, input_tokens, output_tokens, cost)
         """
-        response = self._call_llm(
-            system_prompt, user_prompt, phase_name, max_tokens, timeout
-        )
-
-        if not response.text:
-            return None, response.input_tokens, response.output_tokens, response.cost
-
-        parsed = extract_json_object(response.text)
-        if not parsed:
-            preview = response.text[:500]
-            logger.error(
-                "Phase %s: Failed to parse JSON object. Length: %d. Preview: %s",
-                phase_name,
-                len(response.text),
-                preview,
+        tokens_in = tokens_out = 0
+        cost = 0.0
+        parsed: dict[str, Any] | None = None
+        for attempt in range(1, attempts + 1):
+            response = self._call_llm(
+                system_prompt, user_prompt, phase_name, max_tokens, timeout
             )
-        return parsed, response.input_tokens, response.output_tokens, response.cost
+            tokens_in += response.input_tokens
+            tokens_out += response.output_tokens
+            cost += response.cost
+
+            parsed = extract_json_object(response.text) if response.text else None
+            if response.finish_reason == "length":
+                logger.error(
+                    "Phase %s: output truncated at max_tokens=%d (attempt %d/%d)",
+                    phase_name,
+                    max_tokens,
+                    attempt,
+                    attempts,
+                )
+                parsed = None
+            elif not parsed:
+                logger.error(
+                    "Phase %s: Failed to parse JSON object (attempt %d/%d). "
+                    "Length: %d. Preview: %s",
+                    phase_name,
+                    attempt,
+                    attempts,
+                    len(response.text or ""),
+                    (response.text or "")[:500],
+                )
+            if parsed:
+                break
+        return parsed, tokens_in, tokens_out, cost
 
     def _call_llm_json_array(
         self,
