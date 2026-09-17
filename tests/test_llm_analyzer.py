@@ -176,3 +176,39 @@ class TestPhase3Decomposition:
         result = analyzer.analyze_repository(_make_tf_repo())
         assert result.success is True
         assert result.security_findings == []
+
+
+class TestPhase1Retry:
+    """#53: phase 1 retries once on truncated/malformed JSON, then fails loudly."""
+
+    def _inventory_calls(self, provider):
+        return [c for c in provider.complete.call_args_list]
+
+    def test_retries_once_on_length_then_succeeds(self):
+        inventory = {"components": [{"id": "x"}], "services": []}
+        provider = _make_provider()
+        truncated = _make_llm_response('{"components": [{"id": "x"')
+        truncated.finish_reason = "length"
+        provider.complete.side_effect = [
+            truncated,
+            _make_llm_response(json.dumps(inventory)),
+            _make_llm_response(json.dumps({"relationships": []})),
+            _make_llm_response("[]"),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+        assert result.success is True
+        assert provider.complete.call_count == 4
+        # tokens from both phase-1 attempts are counted
+        assert result.input_tokens >= 400
+
+    def test_retries_once_on_parse_failure_then_fails_loudly(self):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response("not json"),
+            _make_llm_response("still not json"),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+        assert result.success is False
+        assert provider.complete.call_count == 2
+        assert "Phase 1" in result.error_message
+        assert "2 attempts" in result.error_message
