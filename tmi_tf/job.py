@@ -20,6 +20,8 @@ class Job:
     scope: str | None = None
     environment: str | None = None
     repo_name: str | None = None
+    siblings: list[str] | None = None
+    deadline: datetime | None = None
 
     @property
     def is_child(self) -> bool:
@@ -39,6 +41,8 @@ class Job:
             "scope": self.scope,
             "environment": self.environment,
             "repo_name": self.repo_name,
+            "siblings": self.siblings,
+            "deadline": self.deadline.isoformat() if self.deadline else None,
         }
 
     @classmethod
@@ -55,4 +59,10 @@ class Job:
             scope=data.get("scope"),
             environment=data.get("environment"),
             repo_name=data.get("repo_name"),
+            siblings=data.get("siblings"),
+            deadline=(
+                datetime.fromisoformat(data["deadline"])
+                if data.get("deadline")
+                else None
+            ),
         )

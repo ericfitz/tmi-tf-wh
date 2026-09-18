@@ -91,3 +91,33 @@ class TestScopeAndEnvironment:
         data.pop("environment")
         back = Job.from_queue_message(data)
         assert back.scope is None and back.environment is None
+
+
+def test_siblings_and_deadline_round_trip():
+    deadline = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+    job = Job(
+        job_id="p1:aws",
+        threat_model_id="tm1",
+        event_type="addon.invoked",
+        enqueued_at=datetime.now(timezone.utc),
+        siblings=["p1:aws", "p1:gcp"],
+        deadline=deadline,
+    )
+    body = job.to_queue_message()
+    assert body["siblings"] == ["p1:aws", "p1:gcp"]
+    assert body["deadline"] == deadline.isoformat()
+    back = Job.from_queue_message(body)
+    assert back.siblings == ["p1:aws", "p1:gcp"]
+    assert back.deadline == deadline
+
+
+def test_old_message_without_siblings_or_deadline():
+    body = {
+        "job_id": "p1",
+        "threat_model_id": "tm1",
+        "event_type": "addon.invoked",
+        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    job = Job.from_queue_message(body)
+    assert job.siblings is None
+    assert job.deadline is None
