@@ -235,7 +235,11 @@ async def webhook(request: Request) -> Response:
     )
 
     if queue_client is not None:
-        queue_client.publish(job.to_queue_message())
+        try:
+            queue_client.publish(job.to_queue_message())
+        except Exception:
+            debouncer.forget(parsed["threat_model_id"])
+            raise
         logger.info("Job enqueued: job_id=%s", job_id)
     else:
         logger.warning(

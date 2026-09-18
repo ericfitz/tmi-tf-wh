@@ -362,3 +362,18 @@ class TestDedup:
             r = _post(client, "f", event="threat_model.updated", callback=False)
         assert r.json()["status"] == "deduplicated"
         cb_cls.assert_not_called()
+
+    def test_publish_failure_releases_debounce(self, client):
+        from tmi_tf.invocation import Debouncer
+
+        server_module.debouncer = Debouncer(30)
+        server_module.queue_client.publish.side_effect = [  # type: ignore[union-attr]
+            RuntimeError("sqs down"),
+            None,
+        ]
+        r1 = _post(client, "g")
+        assert r1.status_code != 200
+        r2 = _post(client, "h")
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "accepted"
+        assert server_module.queue_client.publish.call_count == 2  # type: ignore[union-attr]

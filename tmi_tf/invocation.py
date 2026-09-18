@@ -178,3 +178,6 @@ class Debouncer:
             return False
         self._last[key] = t
         return True
+
+    def forget(self, key: str) -> None:
+        self._last.pop(key, None)

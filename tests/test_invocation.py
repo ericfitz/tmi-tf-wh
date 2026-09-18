@@ -119,6 +119,13 @@ def test_debouncer_zero_window_accepts_everything():
     assert d.accept("tm1", now=1.0) and d.accept("tm1", now=1.0)
 
 
+def test_debouncer_forget_allows_immediate_reaccept():
+    d = inv.Debouncer(30)
+    assert d.accept("tm1", now=100.0) is True
+    d.forget("tm1")
+    assert d.accept("tm1", now=101.0) is True
+
+
 def test_lock_for_is_per_threat_model():
     assert inv.lock_for("tm1") is inv.lock_for("tm1")
     assert inv.lock_for("tm1") is not inv.lock_for("tm2")
