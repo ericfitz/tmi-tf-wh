@@ -176,8 +176,10 @@ artifacts: a status note `TMI-TF Analysis Status - <repo> - <env>` (`TMI-TF Anal
 analysis note, a DFD, and threats. There is no merged overview across
 environments. The parent job writes a `TMI-TF Analysis Status` note listing
 environments found/matched/skipped, then reports the addon callback
-`completed` with "enqueued N of M environment jobs" (or "no environments
-matched" if scope resolved to zero targets).
+`in_progress` with "enqueued N of M environment jobs" (or `completed` with
+"no environments matched" if scope resolved to zero targets). The final
+`completed`/`failed` callback arrives later, once the last child job
+finishes (see [Invocation tracking](#invocation-tracking) below).
 
 **Operator setup**: register the addon in TMI with a string parameter named
 `environments`, default `latest`, described as accepting `latest`, `all`, or a
@@ -188,14 +190,16 @@ comma-separated list of environment names/globs.
 The parent job tracks its fan-out on the `TMI-TF Analysis Status` note's
 metadata: `tf_invocation` (invocation id), `tf_open` (`true` while children
 are outstanding), `tf_deadline` (ISO timestamp), and one `tf_child:<job_id>`
-key per child recording its outcome. The deadline is set when children are
-enqueued to `enqueue_time + ceil(N / MAX_CONCURRENT_JOBS) * JOB_TIMEOUT +
-300s`, where N is the number of child jobs. The addon callback fires
-`in_progress` with "enqueued N of M environment jobs" when children are
-enqueued, then a single `completed` or `failed` callback, sent by whichever
-child finishes last or, if children never all report, by a deadline
-watchdog. While an invocation is open, a duplicate trigger for the same
-threat model returns HTTP 200 `{"status": "deduplicated"}` without
+key per child recording its outcome (`success`, `failed`, or `aborted`). The
+deadline is set when children are enqueued to `enqueue_time + ceil(N /
+MAX_CONCURRENT_JOBS) * JOB_TIMEOUT + 300s`, where N is the number of child
+jobs. The addon callback fires `in_progress` with "enqueued N of M
+environment jobs" when children are enqueued, then a single `completed` or
+`failed` callback, sent by whichever child finishes last or, if children
+never all report, by a deadline watchdog; the `failed` message lists which
+child job ids failed, e.g. "1 succeeded, 1 failed (p1)". While an invocation
+is open, a duplicate trigger for the same threat model returns HTTP 200
+`{"status": "deduplicated"}` without
 enqueueing new work, and for an `addon.invoked` trigger also sends a
 `failed` callback, "analysis already running". An invocation left with
 `tf_open=true` past its `tf_deadline` is treated as closed for dedup
