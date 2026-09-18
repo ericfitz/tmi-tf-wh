@@ -43,8 +43,8 @@ def test_compute_deadline_rounds_up_batches():
 
 
 def test_child_key_sanitizes_disallowed_chars():
-    assert inv.child_key("p1:aws-public") == "tf_child:p1:aws-public"
-    assert inv.child_key("p1:env (x)") == "tf_child:p1:env__x_"
+    assert inv.child_key("p1:aws-public") == "tf_child_p1_aws-public"
+    assert inv.child_key("p1:env (x.y)") == "tf_child_p1_env__x_y_"
 
 
 def test_open_then_read():
@@ -60,10 +60,10 @@ def test_open_then_read():
 
 def test_open_clears_previous_child_marks():
     tmi = FakeTMI()
-    tmi.metadata = {"tf_child:old": "success", "tf_open": "false"}
+    tmi.metadata = {"tf_child_old": "success", "tf_open": "false"}
     inv.open_invocation(tmi, "tm1", "inv2", ["a"], NOW)
     assert inv.read_state(tmi, "tm1").children == {}
-    assert "tf_child:old" not in tmi.metadata
+    assert "tf_child_old" not in tmi.metadata
 
 
 def test_mark_child_and_all_reported():

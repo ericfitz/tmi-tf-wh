@@ -19,6 +19,7 @@ All three need the same fact: which invocation is open for a threat model, and w
 | Duplicate trigger while an invocation is open | **Drop it** (200 `deduplicated`, status-note line, `failed` callback for `addon.invoked`) | re-run once after; configurable mode |
 | Where completion state lives | **Metadata on the parent TMI status note**; no new datastore | DynamoDB table; in-memory only |
 | Abort interface | **TMI is the job registry**: automation apps GET and DELETE their own deliveries in TMI; tmi-tf-wh consumes the cancel signal. No admin endpoints or admin token on this service. | `ADMIN_TOKEN` bearer endpoints on the pod; validating TMI tokens on the pod |
+| Child mark key separator (Eric, 2026-09-18) | **`tf_child_<job_id>`**, key limited to `[A-Za-z0-9_-]`: TMI returns 500 on bulk metadata keys containing `:` or `.` (#71) | keep `tf_child:<job_id>` and wait for the TMI fix |
 
 ## Constraints
 
@@ -43,7 +44,7 @@ An invocation is one accepted trigger. Its id is the parent `job_id` (invocation
 | `tf_invocation` | invocation id |
 | `tf_open` | `true` / `false` |
 | `tf_deadline` | ISO timestamp |
-| `tf_child:<job_id>` | `success` / `failed` / `aborted` |
+| `tf_child_<job_id>` | `success` / `failed` / `aborted` |
 
 A new module `tmi_tf/invocation.py` owns this: `open_invocation`, `mark_child`, `read_state`, `close_invocation`, plus the per-threat-model `asyncio.Lock`. Worker and webhook call it; nothing else touches the keys.
 

@@ -937,11 +937,13 @@ class TMIClient:
         try:
             note = self.find_note_by_name(threat_model_id, STATUS_NOTE_NAME)
             if note:
+                # The list endpoint omits content; fetch the full note.
+                content = self.get_note(threat_model_id, note.id).content
                 self.update_note(
                     threat_model_id=threat_model_id,
                     note_id=note.id,
                     name=STATUS_NOTE_NAME,
-                    content=f"{note.content}\n{line}",
+                    content=f"{content}\n{line}",
                     description="Tracks tmi-tf analysis progress",
                 )
             else:
