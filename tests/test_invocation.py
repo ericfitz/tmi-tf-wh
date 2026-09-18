@@ -99,6 +99,14 @@ def test_read_state_without_note_is_closed():
     assert state.open is False and state.invocation_id is None
 
 
+def test_read_state_tolerates_corrupt_deadline():
+    tmi = FakeTMI()
+    tmi.metadata = {"tf_open": "true", "tf_deadline": "garbage"}
+    state = inv.read_state(tmi, "tm1")
+    assert state.deadline is None
+    assert inv.is_open(state, NOW) is False
+
+
 def test_is_open_respects_deadline():
     state = inv.InvocationState("inv1", True, NOW, {})
     assert inv.is_open(state, NOW - timedelta(seconds=1)) is True

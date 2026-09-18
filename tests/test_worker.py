@@ -4,6 +4,9 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import ANY, MagicMock, patch
 
+from test_invocation import FakeTMI
+
+from tmi_tf import invocation as inv
 from tmi_tf.analyzer import AnalysisResult, FanoutTarget
 from tmi_tf.config import Config
 from tmi_tf.invocation import InvocationState
@@ -180,6 +183,35 @@ class TestFanout:
         open_inv.assert_called_once()
         mark.assert_any_call(ANY, "tm1", "p1:aws-public", "failed")
 
+    def test_parent_closes_invocation_when_all_enqueues_fail(self):
+        pool, queue = _pool()
+        targets = [
+            FanoutTarget("r1", "u", "aws-public"),
+            FanoutTarget("r1", "u", "gcp-public"),
+        ]
+        queue.publish = MagicMock(side_effect=RuntimeError("boom"))
+        tmi = MagicMock()
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets),
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+            patch("tmi_tf.worker.open_invocation") as open_inv,
+            patch("tmi_tf.worker.mark_child") as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+            asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
+        open_inv.assert_called_once()
+        assert mark.call_count == 2
+        close.assert_called_once_with(
+            ANY,
+            "tm1",
+            "Invocation complete: 0 succeeded, 2 failed (p1:aws-public, p1:gcp-public)",
+        )
+        cb_cls.return_value.send_status.assert_any_call(
+            "failed", "0 succeeded, 2 failed (p1:aws-public, p1:gcp-public)"
+        )
+        assert "tm1" not in pool._watchdogs
+
     def test_parent_with_no_targets_completes_without_enqueue(self):
         pool, queue = _pool()
         with (
@@ -342,6 +374,41 @@ class TestCompletion:
         mark.assert_called_once_with(ANY, "tm1", "p1:aws", "failed")
         queue.delete.assert_not_called()
 
+    def test_stale_child_mark_does_not_close_newer_invocation(self):
+        """A retried child from a superseded invocation must not close (or
+        send a callback for) whatever invocation happens to be open now."""
+        pool, _queue = _pool()
+        fake = FakeTMI()
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        inv.open_invocation(fake, "tm1", "p2", ["p2:aws"], future)
+
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=fake),
+            patch(
+                "tmi_tf.worker.run_analysis",
+                return_value=AnalysisResult(success=True),
+            ),
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            asyncio.run(pool._run_job(_child("p1:aws", ["p1:aws"]), receipt="rc"))
+        assert fake.metadata["tf_open"] == "true"
+        assert fake.metadata["tf_child:p1:aws"] == "success"
+        cb_cls.return_value.send_status.assert_not_called()
+
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=fake),
+            patch(
+                "tmi_tf.worker.run_analysis",
+                return_value=AnalysisResult(success=True),
+            ),
+            patch("tmi_tf.worker.AddonCallback") as cb_cls2,
+        ):
+            asyncio.run(pool._run_job(_child("p2:aws", ["p2:aws"]), receipt="rc"))
+        assert fake.metadata["tf_open"] == "false"
+        cb_cls2.return_value.send_status.assert_called_once_with(
+            "completed", "1 succeeded, 0 failed"
+        )
+
     def test_timeout_marks_failed(self):
         pool, queue = _pool()
         pool.config.job_timeout = 0.01  # type: ignore[assignment]
@@ -403,6 +470,42 @@ class TestWatchdog:
         )
         cb_cls.return_value.send_status.assert_called_once_with(
             "failed", "1 succeeded, 1 failed (p1:gcp)"
+        )
+
+    def test_watchdog_sends_completed_when_all_succeeded(self):
+        """A close attempt that failed earlier (all children already succeeded,
+        note still open) should report completed, not failed, on timeout."""
+        pool, _ = _pool()
+        state = InvocationState(
+            "p1", True, None, {"p1:aws": "success", "p1:gcp": "success"}
+        )
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.read_state", return_value=state),
+            patch("tmi_tf.worker.mark_child") as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+
+            async def go():
+                pool._arm_watchdog(
+                    "tm1",
+                    "p1",
+                    ["p1:aws", "p1:gcp"],
+                    datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                    "https://cb",
+                )
+                await asyncio.sleep(0.2)
+
+            asyncio.run(go())
+        mark.assert_not_called()
+        close.assert_called_once_with(
+            ANY, "tm1", "Invocation timed out: 2 succeeded, 0 failed"
+        )
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "completed", "2 succeeded, 0 failed"
         )
 
     def test_watchdog_does_nothing_if_already_closed(self):

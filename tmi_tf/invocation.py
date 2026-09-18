@@ -118,10 +118,21 @@ def read_state(tmi: TMILike, threat_model_id: str) -> InvocationState:
         return InvocationState(None, False, None)
     meta = tmi.get_note_metadata(threat_model_id, note_id)
     deadline_raw = meta.get(KEY_DEADLINE)
+    deadline = None
+    if deadline_raw:
+        try:
+            deadline = datetime.fromisoformat(deadline_raw)
+        except ValueError:
+            logger.warning(
+                "Corrupt %s metadata for %s: %r",
+                KEY_DEADLINE,
+                threat_model_id,
+                deadline_raw,
+            )
     return InvocationState(
         invocation_id=meta.get(KEY_INVOCATION),
         open=meta.get(KEY_OPEN) == "true",
-        deadline=datetime.fromisoformat(deadline_raw) if deadline_raw else None,
+        deadline=deadline,
         children={
             k[len(CHILD_PREFIX) :]: v
             for k, v in meta.items()

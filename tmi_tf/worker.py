@@ -246,6 +246,22 @@ class WorkerPool:
                     mark_child(tmi_client, job.threat_model_id, child.job_id, "failed")
                 except Exception as note_err:
                     logger.error(f"Failed to record enqueue failure: {note_err}")
+        if enqueued == 0:
+            summary = f"0 succeeded, {len(targets)} failed ({', '.join(siblings)})"
+            async with lock_for(job.threat_model_id):
+                await asyncio.to_thread(
+                    close_invocation,
+                    tmi_client,
+                    job.threat_model_id,
+                    f"Invocation complete: {summary}",
+                )
+            wd = self._watchdogs.pop(job.threat_model_id, None)
+            if wd:
+                wd.cancel()
+            logger.info("Parent job %s: %s", job.job_id, summary)
+            if callback:
+                callback.send_status("failed", summary)
+            return
         summary = f"enqueued {enqueued} of {len(targets)} environment jobs"
         logger.info("Parent job %s: %s", job.job_id, summary)
         if callback:
@@ -260,7 +276,11 @@ class WorkerPool:
                 state = await asyncio.to_thread(
                     mark_child, tmi_client, job.threat_model_id, job.job_id, outcome
                 )
-                if not state.open or not all_reported(state, siblings):
+                if (
+                    not state.open
+                    or not job.job_id.startswith(f"{state.invocation_id}:")
+                    or not all_reported(state, siblings)
+                ):
                     return
                 failed = sorted(
                     j for j in siblings if outcome_of(state, j) != "success"
@@ -343,7 +363,9 @@ class WorkerPool:
                 )
             if callback_url and self.config.webhook_secret:
                 cb = AddonCallback(callback_url, self.config.webhook_secret)
-                await asyncio.to_thread(cb.send_status, "failed", summary)
+                await asyncio.to_thread(
+                    cb.send_status, "failed" if failed else "completed", summary
+                )
         except Exception as e:
             logger.error(f"Watchdog failed for {threat_model_id}: {e}")
 
