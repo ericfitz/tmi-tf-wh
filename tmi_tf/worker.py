@@ -10,6 +10,7 @@ from pathlib import Path
 from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.analyzer import resolve_fanout_targets, run_analysis
 from tmi_tf.config import Config
+from tmi_tf.invocation import compute_deadline, mark_child, open_invocation
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueMessage, QueueProvider
 from tmi_tf.repo_analyzer import repository_name
@@ -173,39 +174,60 @@ class WorkerPool:
             repo_id=job.repo_id,
             temp_dir=job.temp_dir,
         )
-        enqueued = 0
-        for t in targets:
-            child = Job(
+        if not targets:
+            logger.info("Parent job %s: no environments matched", job.job_id)
+            if callback:
+                callback.send_status("completed", "no environments matched")
+            return
+        now = datetime.now(timezone.utc)
+        deadline = compute_deadline(
+            now, len(targets), self.max_concurrent, self.config.job_timeout
+        )
+        children = [
+            Job(
                 job_id=f"{job.job_id}:{t.environment or 'all'}",
                 threat_model_id=job.threat_model_id,
                 event_type=job.event_type,
-                enqueued_at=datetime.now(timezone.utc),
+                enqueued_at=now,
                 repo_id=t.repo_id,
-                callback_url=None,
+                callback_url=job.callback_url,
                 invocation_id=job.invocation_id,
                 environment=t.environment,
                 repo_name=repository_name(t.repo_url),
+                deadline=deadline,
             )
+            for t in targets
+        ]
+        siblings = [c.job_id for c in children]
+        for c in children:
+            c.siblings = siblings
+        await asyncio.to_thread(
+            open_invocation,
+            tmi_client,
+            job.threat_model_id,
+            job.job_id,
+            siblings,
+            deadline,
+        )
+        enqueued = 0
+        for child in children:
             try:
                 await asyncio.to_thread(
                     self.queue_client.publish, child.to_queue_message()
                 )
                 enqueued += 1
             except Exception as e:
-                msg = f"Failed to enqueue environment {t.environment!r}: {e}"
+                msg = f"Failed to enqueue environment {child.environment!r}: {e}"
                 logger.error(msg)
                 try:
                     tmi_client.update_status_note(job.threat_model_id, msg)
+                    mark_child(tmi_client, job.threat_model_id, child.job_id, "failed")
                 except Exception as note_err:
-                    logger.error(f"Failed to write status note: {note_err}")
-        summary = (
-            f"enqueued {enqueued} of {len(targets)} environment jobs"
-            if targets
-            else "no environments matched"
-        )
+                    logger.error(f"Failed to record enqueue failure: {note_err}")
+        summary = f"enqueued {enqueued} of {len(targets)} environment jobs"
         logger.info("Parent job %s: %s", job.job_id, summary)
         if callback:
-            callback.send_status("completed", summary)
+            callback.send_status("in_progress", summary)
 
     async def _fire_and_forget_status(
         self, job: Job, status: str, message: str

@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from tmi_tf.analyzer import AnalysisResult, FanoutTarget
 from tmi_tf.config import Config
@@ -96,6 +96,8 @@ class TestFanout:
             ),
             patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets),
             patch("tmi_tf.worker.AddonCallback") as cb_cls,
+            patch("tmi_tf.worker.open_invocation") as open_inv,
+            patch("tmi_tf.worker.mark_child") as mark,
         ):
             asyncio.run(
                 pool._run_job(
@@ -113,14 +115,23 @@ class TestFanout:
         assert all(
             b["job_id"].startswith("p1:") and b["repo_id"] == "r1" for b in bodies
         )
-        assert all(b["callback_url"] is None for b in bodies)
+        assert all(b["callback_url"] == "https://cb" for b in bodies)
+        assert all(
+            sorted(b["siblings"]) == ["p1:aws-public", "p1:gcp-public"] for b in bodies
+        )
+        assert all(b["deadline"] for b in bodies)
         assert all(b["invocation_id"] == "inv1" for b in bodies)
         assert all(b["event_type"] == "addon.invoked" for b in bodies)
         assert all(b["threat_model_id"] == "tm1" for b in bodies)
         cb_cls.return_value.send_status.assert_any_call(
-            "completed", "enqueued 2 of 2 environment jobs"
+            "in_progress", "enqueued 2 of 2 environment jobs"
         )
         queue.delete.assert_called_once_with("rc")
+        open_inv.assert_called_once()
+        args = open_inv.call_args.args
+        assert args[1:3] == ("tm1", "p1")
+        assert sorted(args[3]) == ["p1:aws-public", "p1:gcp-public"]
+        mark.assert_not_called()
 
     def test_parent_publish_failure_continues_and_completes(self):
         pool, queue = _pool()
@@ -143,6 +154,8 @@ class TestFanout:
             patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
             patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets),
             patch("tmi_tf.worker.AddonCallback") as cb_cls,
+            patch("tmi_tf.worker.open_invocation") as open_inv,
+            patch("tmi_tf.worker.mark_child") as mark,
         ):
             asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
         bodies = [m.body for m in queue.consume(max_messages=10)]
@@ -151,8 +164,10 @@ class TestFanout:
         assert tmi.update_status_note.call_args.args[0] == "tm1"
         assert "aws-public" in tmi.update_status_note.call_args.args[1]
         cb_cls.return_value.send_status.assert_any_call(
-            "completed", "enqueued 1 of 2 environment jobs"
+            "in_progress", "enqueued 1 of 2 environment jobs"
         )
+        open_inv.assert_called_once()
+        mark.assert_any_call(ANY, "tm1", "p1:aws-public", "failed")
 
     def test_parent_with_no_targets_completes_without_enqueue(self):
         pool, queue = _pool()
@@ -162,12 +177,15 @@ class TestFanout:
             ),
             patch("tmi_tf.worker.resolve_fanout_targets", return_value=[]),
             patch("tmi_tf.worker.AddonCallback") as cb_cls,
+            patch("tmi_tf.worker.open_invocation") as open_inv,
+            patch("tmi_tf.worker.mark_child"),
         ):
             asyncio.run(pool._run_job(_job(scope="zzz"), receipt="rc"))
         assert queue.consume(max_messages=10) == []
         cb_cls.return_value.send_status.assert_any_call(
             "completed", "no environments matched"
         )
+        open_inv.assert_not_called()
 
     def test_child_runs_analysis_with_environment_and_note_name(self):
         pool, _ = _pool()
