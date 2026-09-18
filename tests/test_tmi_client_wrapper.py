@@ -14,12 +14,12 @@ def _client():
 
 def test_get_note_metadata_returns_dict():
     client = _client()
-    m1, m2 = MagicMock(key="tf_open"), MagicMock(key="tf_child:p1:aws")
+    m1, m2 = MagicMock(key="tf_open"), MagicMock(key="tf_child_p1_aws")
     m1.value, m2.value = "true", "success"
     client.sub_resources_api.get_note_metadata.return_value = [m1, m2]
     assert client.get_note_metadata("tm1", "n1") == {
         "tf_open": "true",
-        "tf_child:p1:aws": "success",
+        "tf_child_p1_aws": "success",
     }
     client.sub_resources_api.get_note_metadata.assert_called_once_with(
         threat_model_id="tm1", note_id="n1"
@@ -38,9 +38,9 @@ def test_upsert_note_metadata_sends_key_value_pairs():
 
 def test_delete_note_metadata_sends_key():
     client = _client()
-    client.delete_note_metadata("tm1", "n1", "tf_child:old")
+    client.delete_note_metadata("tm1", "n1", "tf_child_old")
     client.sub_resources_api.delete_note_metadata_by_key.assert_called_once_with(
-        threat_model_id="tm1", note_id="n1", key="tf_child:old"
+        threat_model_id="tm1", note_id="n1", key="tf_child_old"
     )
 
 

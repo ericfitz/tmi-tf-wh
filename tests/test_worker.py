@@ -300,9 +300,9 @@ class TestCompletion:
         sibs = ["p1:aws", "p1:gcp"]
         states = iter(
             [
-                InvocationState("p1", True, None, {"p1:aws": "success"}),
+                InvocationState("p1", True, None, {"p1_aws": "success"}),
                 InvocationState(
-                    "p1", True, None, {"p1:aws": "success", "p1:gcp": "success"}
+                    "p1", True, None, {"p1_aws": "success", "p1_gcp": "success"}
                 ),
             ]
         )
@@ -327,9 +327,9 @@ class TestCompletion:
         sibs = ["p1:aws", "p1:gcp"]
         states = iter(
             [
-                InvocationState("p1", True, None, {"p1:aws": "failed"}),
+                InvocationState("p1", True, None, {"p1_aws": "failed"}),
                 InvocationState(
-                    "p1", True, None, {"p1:aws": "failed", "p1:gcp": "success"}
+                    "p1", True, None, {"p1_aws": "failed", "p1_gcp": "success"}
                 ),
             ]
         )
@@ -349,7 +349,7 @@ class TestCompletion:
     def test_late_mark_after_close_sends_nothing(self):
         pool, _queue = _pool()
         sibs = ["p1:aws"]
-        closed = InvocationState("p1", False, None, {"p1:aws": "success"})
+        closed = InvocationState("p1", False, None, {"p1_aws": "success"})
         with (
             patch("tmi_tf.worker.mark_child", return_value=closed),
             patch("tmi_tf.worker.close_invocation") as close,
@@ -361,7 +361,7 @@ class TestCompletion:
     def test_exception_marks_failed_and_keeps_message(self):
         pool, queue = _pool()
         queue.delete = MagicMock()
-        state = InvocationState("p1", True, None, {"p1:aws": "failed"})
+        state = InvocationState("p1", True, None, {"p1_aws": "failed"})
         with (
             patch("tmi_tf.worker.mark_child", return_value=state) as mark,
             patch("tmi_tf.worker.close_invocation"),
@@ -392,7 +392,7 @@ class TestCompletion:
         ):
             asyncio.run(pool._run_job(_child("p1:aws", ["p1:aws"]), receipt="rc"))
         assert fake.metadata["tf_open"] == "true"
-        assert fake.metadata["tf_child:p1:aws"] == "success"
+        assert fake.metadata["tf_child_p1_aws"] == "success"
         cb_cls.return_value.send_status.assert_not_called()
 
         with (
@@ -424,7 +424,7 @@ class TestCompletion:
             ),
             patch(
                 "tmi_tf.worker.mark_child",
-                return_value=InvocationState("p1", True, None, {"p1:aws": "failed"}),
+                return_value=InvocationState("p1", True, None, {"p1_aws": "failed"}),
             ) as mark,
             patch("tmi_tf.worker.close_invocation") as close,
             patch("tmi_tf.worker.AddonCallback"),
@@ -439,9 +439,9 @@ class TestCompletion:
 class TestWatchdog:
     def test_watchdog_marks_missing_children_failed_and_closes(self):
         pool, _ = _pool()
-        state = InvocationState("p1", True, None, {"p1:aws": "success"})
+        state = InvocationState("p1", True, None, {"p1_aws": "success"})
         after = InvocationState(
-            "p1", True, None, {"p1:aws": "success", "p1:gcp": "failed"}
+            "p1", True, None, {"p1_aws": "success", "p1_gcp": "failed"}
         )
         with (
             patch(
@@ -474,7 +474,7 @@ class TestWatchdog:
 
     def test_watchdog_closes_and_calls_back_when_mark_fails(self):
         pool, _ = _pool()
-        state = InvocationState("p1", True, None, {"p1:aws": "success"})
+        state = InvocationState("p1", True, None, {"p1_aws": "success"})
         with (
             patch(
                 "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
@@ -508,7 +508,7 @@ class TestWatchdog:
         note still open) should report completed, not failed, on timeout."""
         pool, _ = _pool()
         state = InvocationState(
-            "p1", True, None, {"p1:aws": "success", "p1:gcp": "success"}
+            "p1", True, None, {"p1_aws": "success", "p1_gcp": "success"}
         )
         with (
             patch(
@@ -541,7 +541,7 @@ class TestWatchdog:
 
     def test_watchdog_does_nothing_if_already_closed(self):
         pool, _ = _pool()
-        closed = InvocationState("p1", False, None, {"p1:aws": "success"})
+        closed = InvocationState("p1", False, None, {"p1_aws": "success"})
         with (
             patch(
                 "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()

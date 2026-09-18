@@ -43,11 +43,12 @@ class TMILike(Protocol):
 KEY_INVOCATION = "tf_invocation"
 KEY_OPEN = "tf_open"
 KEY_DEADLINE = "tf_deadline"
-CHILD_PREFIX = "tf_child:"
+CHILD_PREFIX = "tf_child_"
 DEADLINE_SLACK_SECONDS = 300
 OUTCOMES = ("success", "failed", "aborted")
 
-_KEY_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_./:-]")
+# TMI 500s on bulk metadata keys containing ":" or "." (#71, probed 2026-09-18).
+_KEY_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 _locks: dict[str, asyncio.Lock] = {}
 
 

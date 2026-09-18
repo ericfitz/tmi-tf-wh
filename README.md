@@ -189,7 +189,7 @@ comma-separated list of environment names/globs.
 
 The parent job tracks its fan-out on the `TMI-TF Analysis Status` note's
 metadata: `tf_invocation` (invocation id), `tf_open` (`true` while children
-are outstanding), `tf_deadline` (ISO timestamp), and one `tf_child:<job_id>`
+are outstanding), `tf_deadline` (ISO timestamp), and one `tf_child_<job_id>`
 key per child recording its outcome (`success`, `failed`, or `aborted`). The
 deadline is set when children are enqueued to `enqueue_time + ceil(N /
 MAX_CONCURRENT_JOBS) * JOB_TIMEOUT + 300s`, where N is the number of child
