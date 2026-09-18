@@ -367,3 +367,90 @@ class TestCompletion:
             asyncio.run(pool._handle_message(msg))
         mark.assert_called_once_with(ANY, "tm1", "p1:aws", "failed")
         close.assert_called_once()
+
+
+class TestWatchdog:
+    def test_watchdog_marks_missing_children_failed_and_closes(self):
+        pool, _ = _pool()
+        state = InvocationState("p1", True, None, {"p1:aws": "success"})
+        after = InvocationState(
+            "p1", True, None, {"p1:aws": "success", "p1:gcp": "failed"}
+        )
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.read_state", return_value=state),
+            patch("tmi_tf.worker.mark_child", return_value=after) as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+
+            async def go():
+                pool._arm_watchdog(
+                    "tm1",
+                    "p1",
+                    ["p1:aws", "p1:gcp"],
+                    datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                    "https://cb",
+                )
+                await asyncio.sleep(0.2)
+
+            asyncio.run(go())
+        mark.assert_called_once_with(ANY, "tm1", "p1:gcp", "failed")
+        close.assert_called_once_with(
+            ANY, "tm1", "Invocation timed out: 1 succeeded, 1 failed (p1:gcp)"
+        )
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "failed", "1 succeeded, 1 failed (p1:gcp)"
+        )
+
+    def test_watchdog_does_nothing_if_already_closed(self):
+        pool, _ = _pool()
+        closed = InvocationState("p1", False, None, {"p1:aws": "success"})
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.read_state", return_value=closed),
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+
+            async def go():
+                pool._arm_watchdog(
+                    "tm1", "p1", ["p1:aws"], datetime.now(timezone.utc), None
+                )
+                await asyncio.sleep(0.05)
+
+            asyncio.run(go())
+        close.assert_not_called()
+
+    def test_child_dequeue_rearms_watchdog(self):
+        pool, queue = _pool()
+        job = _child("p1:aws", ["p1:aws"])
+        with (
+            patch.object(pool, "_run_job", return_value=None),
+            patch.object(pool, "_arm_watchdog") as arm,
+        ):
+            queue.publish(job.to_queue_message())
+            msg = queue.consume(max_messages=1)[0]
+            asyncio.run(pool._handle_message(msg))
+        arm.assert_called_once_with("tm1", "p1", ["p1:aws"], job.deadline, "https://cb")
+
+    def test_parent_arms_watchdog(self):
+        pool, _queue = _pool()
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch(
+                "tmi_tf.worker.resolve_fanout_targets",
+                return_value=[FanoutTarget("r1", "u", "aws")],
+            ),
+            patch("tmi_tf.worker.open_invocation"),
+            patch("tmi_tf.worker.AddonCallback"),
+            patch.object(pool, "_arm_watchdog") as arm,
+        ):
+            asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
+        arm.assert_called_once()
+        assert arm.call_args.args[:3] == ("tm1", "p1", ["p1:aws"])

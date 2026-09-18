@@ -18,6 +18,7 @@ from tmi_tf.invocation import (
     mark_child,
     open_invocation,
     outcome_of,
+    read_state,
 )
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueMessage, QueueProvider
@@ -104,6 +105,14 @@ class WorkerPool:
 
         job = Job.from_queue_message(msg.body)
         job.temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{job.job_id}-"))
+        if job.is_child and job.siblings and job.deadline:
+            self._arm_watchdog(
+                job.threat_model_id,
+                job.job_id.rsplit(":", 1)[0],
+                job.siblings,
+                job.deadline,
+                job.callback_url,
+            )
 
         async with self._semaphore:
             self._active_jobs[job.job_id] = job
@@ -219,6 +228,9 @@ class WorkerPool:
             siblings,
             deadline,
         )
+        self._arm_watchdog(
+            job.threat_model_id, job.job_id, siblings, deadline, job.callback_url
+        )
         enqueued = 0
         for child in children:
             try:
@@ -273,6 +285,67 @@ class WorkerPool:
                 )
         except Exception as e:
             logger.error(f"Completion bookkeeping failed for {job.job_id}: {e}")
+
+    def _arm_watchdog(
+        self,
+        threat_model_id: str,
+        invocation_id: str,
+        siblings: list[str],
+        deadline: datetime,
+        callback_url: str | None,
+    ) -> None:
+        """Ensure one watchdog task per open invocation; survives restarts because
+        every child message carries siblings + deadline."""
+        existing = self._watchdogs.get(threat_model_id)
+        if existing and not existing.done():
+            return
+        self._watchdogs[threat_model_id] = asyncio.create_task(
+            self._watchdog(
+                threat_model_id, invocation_id, siblings, deadline, callback_url
+            )
+        )
+
+    async def _watchdog(
+        self,
+        threat_model_id: str,
+        invocation_id: str,
+        siblings: list[str],
+        deadline: datetime,
+        callback_url: str | None,
+    ) -> None:
+        delay = (deadline - datetime.now(timezone.utc)).total_seconds()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        try:
+            tmi_client = TMIClient.create_authenticated(self.config)
+            async with lock_for(threat_model_id):
+                state = await asyncio.to_thread(read_state, tmi_client, threat_model_id)
+                if not state.open or state.invocation_id != invocation_id:
+                    return
+                for j in siblings:
+                    if outcome_of(state, j) is None:
+                        state = await asyncio.to_thread(
+                            mark_child, tmi_client, threat_model_id, j, "failed"
+                        )
+                failed = sorted(
+                    j for j in siblings if outcome_of(state, j) != "success"
+                )
+                summary = (
+                    f"{len(siblings) - len(failed)} succeeded, {len(failed)} failed"
+                )
+                if failed:
+                    summary += f" ({', '.join(failed)})"
+                await asyncio.to_thread(
+                    close_invocation,
+                    tmi_client,
+                    threat_model_id,
+                    f"Invocation timed out: {summary}",
+                )
+            if callback_url and self.config.webhook_secret:
+                cb = AddonCallback(callback_url, self.config.webhook_secret)
+                await asyncio.to_thread(cb.send_status, "failed", summary)
+        except Exception as e:
+            logger.error(f"Watchdog failed for {threat_model_id}: {e}")
 
     async def _fire_and_forget_status(
         self, job: Job, status: str, message: str
