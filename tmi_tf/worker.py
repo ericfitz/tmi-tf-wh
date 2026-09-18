@@ -10,7 +10,15 @@ from pathlib import Path
 from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.analyzer import resolve_fanout_targets, run_analysis
 from tmi_tf.config import Config
-from tmi_tf.invocation import compute_deadline, mark_child, open_invocation
+from tmi_tf.invocation import (
+    all_reported,
+    close_invocation,
+    compute_deadline,
+    lock_for,
+    mark_child,
+    open_invocation,
+    outcome_of,
+)
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueMessage, QueueProvider
 from tmi_tf.repo_analyzer import repository_name
@@ -53,6 +61,7 @@ class WorkerPool:
         self.max_concurrent = config.max_concurrent_jobs
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
         self._active_jobs: dict[str, Job] = {}
+        self._watchdogs: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         self._running = False
 
     async def start(self) -> None:
@@ -111,7 +120,10 @@ class WorkerPool:
                 except Exception as e:
                     logger.error(f"Failed to delete timed-out message: {e}")
                 # Best-effort status updates
-                await self._fire_and_forget_status(job, "failed", "Job timed out")
+                if job.is_child:
+                    await self._finish_child(job, "failed")
+                else:
+                    await self._fire_and_forget_status(job, "failed", "Job timed out")
             finally:
                 self._active_jobs.pop(job.job_id, None)
                 if job.temp_dir and job.temp_dir.exists():
@@ -125,7 +137,8 @@ class WorkerPool:
         callback = None
         if job.callback_url and self.config.webhook_secret:
             callback = AddonCallback(job.callback_url, self.config.webhook_secret)
-            callback.send_status("in_progress")
+            if not job.is_child:
+                callback.send_status("in_progress")
 
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
@@ -145,19 +158,16 @@ class WorkerPool:
                     callback=callback,
                     environment=job.environment,
                 )
-                if result.success:
-                    if callback:
-                        callback.send_status("completed")
-                else:
-                    if callback:
-                        callback.send_status("failed", "; ".join(result.errors))
+                await self._finish_child(job, "success" if result.success else "failed")
             else:
                 await self._run_parent(job, tmi_client, callback)
             # Delete message on completion
             await asyncio.to_thread(self.queue_client.delete, receipt)
         except Exception as e:
             logger.error(f"Job exception: job_id={job.job_id}, error={e}")
-            if callback:
+            if job.is_child:
+                await self._finish_child(job, "failed")
+            elif callback:
                 callback.send_status("failed", str(e))
             # Don't delete — let visibility timeout handle retry
 
@@ -228,6 +238,41 @@ class WorkerPool:
         logger.info("Parent job %s: %s", job.job_id, summary)
         if callback:
             callback.send_status("in_progress", summary)
+
+    async def _finish_child(self, job: Job, outcome: str) -> None:
+        """Mark a child done; the last sibling closes the invocation."""
+        siblings = job.siblings or [job.job_id]
+        try:
+            tmi_client = TMIClient.create_authenticated(self.config)
+            async with lock_for(job.threat_model_id):
+                state = await asyncio.to_thread(
+                    mark_child, tmi_client, job.threat_model_id, job.job_id, outcome
+                )
+                if not state.open or not all_reported(state, siblings):
+                    return
+                failed = sorted(
+                    j for j in siblings if outcome_of(state, j) != "success"
+                )
+                ok = len(siblings) - len(failed)
+                summary = f"{ok} succeeded, {len(failed)} failed"
+                if failed:
+                    summary += f" ({', '.join(failed)})"
+                await asyncio.to_thread(
+                    close_invocation,
+                    tmi_client,
+                    job.threat_model_id,
+                    f"Invocation complete: {summary}",
+                )
+            wd = self._watchdogs.pop(job.threat_model_id, None)
+            if wd:
+                wd.cancel()
+            if job.callback_url and self.config.webhook_secret:
+                cb = AddonCallback(job.callback_url, self.config.webhook_secret)
+                await asyncio.to_thread(
+                    cb.send_status, "completed" if not failed else "failed", summary
+                )
+        except Exception as e:
+            logger.error(f"Completion bookkeeping failed for {job.job_id}: {e}")
 
     async def _fire_and_forget_status(
         self, job: Job, status: str, message: str

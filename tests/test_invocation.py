@@ -76,6 +76,14 @@ def test_mark_child_and_all_reported():
     assert inv.all_reported(state, ["a", "b"]) is True
 
 
+def test_outcome_of_returns_marked_outcome_for_sanitized_job_id():
+    tmi = FakeTMI()
+    inv.open_invocation(tmi, "tm1", "inv1", ["p1:env (x)"], NOW)
+    state = inv.mark_child(tmi, "tm1", "p1:env (x)", "success")
+    assert inv.outcome_of(state, "p1:env (x)") == "success"
+    assert inv.outcome_of(state, "p1:other") is None
+
+
 def test_close_sets_open_false_and_writes_summary():
     tmi = FakeTMI()
     inv.open_invocation(tmi, "tm1", "inv1", ["a"], NOW)

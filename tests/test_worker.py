@@ -6,6 +6,7 @@ from unittest.mock import ANY, MagicMock, patch
 
 from tmi_tf.analyzer import AnalysisResult, FanoutTarget
 from tmi_tf.config import Config
+from tmi_tf.invocation import InvocationState
 from tmi_tf.job import Job
 from tmi_tf.providers.memory import MemoryQueueProvider
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME
@@ -80,6 +81,16 @@ def _job(**kw):
     }
     defaults.update(kw)
     return Job(**defaults)
+
+
+def _child(job_id, siblings, **kw):
+    return _job(
+        job_id=job_id,
+        environment=job_id.split(":")[1],
+        siblings=siblings,
+        deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        **kw,
+    )
 
 
 class TestFanout:
@@ -196,6 +207,10 @@ class TestFanout:
                 "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
             ) as ra,
             patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
         ):
             asyncio.run(
                 pool._run_job(
@@ -221,8 +236,134 @@ class TestFanout:
                 "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
             ),
             patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
         ):
             asyncio.run(
                 pool._run_job(_job(environment="", repo_name="o_r"), receipt="rc")
             )
         assert tmi.status_note_name == f"{STATUS_NOTE_NAME} - o_r"
+
+
+class TestCompletion:
+    def _run_child(self, pool, job, result_success=True, raise_exc=None):
+        tmi = MagicMock()
+        result = AnalysisResult(
+            success=result_success, errors=["boom"] if not result_success else []
+        )
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=result, side_effect=raise_exc
+            ),
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            asyncio.run(pool._run_job(job, receipt="rc"))
+        return cb_cls.return_value
+
+    def test_all_children_succeed_sends_completed_once(self):
+        pool, _queue = _pool()
+        sibs = ["p1:aws", "p1:gcp"]
+        states = iter(
+            [
+                InvocationState("p1", True, None, {"p1:aws": "success"}),
+                InvocationState(
+                    "p1", True, None, {"p1:aws": "success", "p1:gcp": "success"}
+                ),
+            ]
+        )
+        with (
+            patch(
+                "tmi_tf.worker.mark_child", side_effect=lambda *a: next(states)
+            ) as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+            cb1 = self._run_child(pool, _child("p1:aws", sibs))
+            cb2 = self._run_child(pool, _child("p1:gcp", sibs))
+        mark.assert_any_call(ANY, "tm1", "p1:aws", "success")
+        mark.assert_any_call(ANY, "tm1", "p1:gcp", "success")
+        close.assert_called_once_with(
+            ANY, "tm1", "Invocation complete: 2 succeeded, 0 failed"
+        )
+        cb1.send_status.assert_not_called()  # first child: not complete yet
+        cb2.send_status.assert_called_once_with("completed", "2 succeeded, 0 failed")
+
+    def test_one_child_fails_sends_failed_with_environment(self):
+        pool, _queue = _pool()
+        sibs = ["p1:aws", "p1:gcp"]
+        states = iter(
+            [
+                InvocationState("p1", True, None, {"p1:aws": "failed"}),
+                InvocationState(
+                    "p1", True, None, {"p1:aws": "failed", "p1:gcp": "success"}
+                ),
+            ]
+        )
+        with (
+            patch("tmi_tf.worker.mark_child", side_effect=lambda *a: next(states)),
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+            self._run_child(pool, _child("p1:aws", sibs), result_success=False)
+            cb = self._run_child(pool, _child("p1:gcp", sibs))
+        close.assert_called_once_with(
+            ANY, "tm1", "Invocation complete: 1 succeeded, 1 failed (p1:aws)"
+        )
+        cb.send_status.assert_called_once_with(
+            "failed", "1 succeeded, 1 failed (p1:aws)"
+        )
+
+    def test_late_mark_after_close_sends_nothing(self):
+        pool, _queue = _pool()
+        sibs = ["p1:aws"]
+        closed = InvocationState("p1", False, None, {"p1:aws": "success"})
+        with (
+            patch("tmi_tf.worker.mark_child", return_value=closed),
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+            cb = self._run_child(pool, _child("p1:aws", sibs))
+        close.assert_not_called()
+        cb.send_status.assert_not_called()
+
+    def test_exception_marks_failed_and_keeps_message(self):
+        pool, queue = _pool()
+        queue.delete = MagicMock()
+        state = InvocationState("p1", True, None, {"p1:aws": "failed"})
+        with (
+            patch("tmi_tf.worker.mark_child", return_value=state) as mark,
+            patch("tmi_tf.worker.close_invocation"),
+        ):
+            self._run_child(
+                pool,
+                _child("p1:aws", ["p1:aws", "p1:gcp"]),
+                raise_exc=RuntimeError("x"),
+            )
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "failed")
+        queue.delete.assert_not_called()
+
+    def test_timeout_marks_failed(self):
+        pool, queue = _pool()
+        pool.config.job_timeout = 0.01  # type: ignore[assignment]
+        job = _child("p1:aws", ["p1:aws"])
+
+        async def slow(*a, **k):
+            await asyncio.sleep(1)
+
+        with (
+            patch.object(pool, "_run_job", side_effect=slow),
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {"p1:aws": "failed"}),
+            ) as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback"),
+        ):
+            queue.publish(job.to_queue_message())
+            msg = queue.consume(max_messages=1)[0]
+            asyncio.run(pool._handle_message(msg))
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "failed")
+        close.assert_called_once()

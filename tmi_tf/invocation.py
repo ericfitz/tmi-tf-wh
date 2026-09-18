@@ -142,6 +142,10 @@ def mark_child(
     return read_state(tmi, threat_model_id)
 
 
+def outcome_of(state: InvocationState, job_id: str) -> str | None:
+    return state.children.get(child_key(job_id)[len(CHILD_PREFIX) :])
+
+
 def all_reported(state: InvocationState, siblings: list[str]) -> bool:
     marked = {child_key(j) for j in state.children}
     return all(child_key(s) in marked for s in siblings)
