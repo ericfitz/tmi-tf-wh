@@ -913,6 +913,16 @@ class TMIClient:
             )
         )
 
+    def delete_note_metadata(
+        self, threat_model_id: str, note_id: str, key: str
+    ) -> None:
+        """Delete a single metadata key from a note."""
+        self._call_with_retry(
+            lambda: self.sub_resources_api.delete_note_metadata_by_key(
+                threat_model_id=threat_model_id, note_id=note_id, key=key
+            )
+        )
+
     def append_status_line(self, threat_model_id: str, message: str) -> None:
         """Append a timestamped line to the parent status note without resetting it.
 

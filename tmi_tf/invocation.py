@@ -35,6 +35,9 @@ class TMILike(Protocol):
     def upsert_note_metadata(
         self, threat_model_id: str, note_id: str, metadata: dict[str, str], /
     ) -> None: ...
+    def delete_note_metadata(
+        self, threat_model_id: str, note_id: str, key: str, /
+    ) -> None: ...
 
 
 KEY_INVOCATION = "tf_invocation"
@@ -91,18 +94,17 @@ def open_invocation(
     note_id = _note_id(tmi, threat_model_id)
     if note_id is None:
         raise RuntimeError("status note missing after append_status_line")
-    # Old child marks would make a fresh invocation look complete; blank them
-    # (the metadata API has no delete-by-prefix, upsert to "-" instead).
-    stale = {
-        k: "-"
-        for k in tmi.get_note_metadata(threat_model_id, note_id)
-        if k.startswith(CHILD_PREFIX)
-    }
+    # Old child marks would make a fresh invocation look complete; delete them
+    # rather than blanking, so the note's metadata count doesn't grow unbounded
+    # (parent job ids are per-delivery, so every invocation would otherwise add
+    # ~N new keys and eventually hit TMI's metadata cap).
+    for key in tmi.get_note_metadata(threat_model_id, note_id):
+        if key.startswith(CHILD_PREFIX):
+            tmi.delete_note_metadata(threat_model_id, note_id, key)
     tmi.upsert_note_metadata(
         threat_model_id,
         note_id,
         {
-            **stale,
             KEY_INVOCATION: invocation_id,
             KEY_OPEN: "true",
             KEY_DEADLINE: deadline.isoformat(),

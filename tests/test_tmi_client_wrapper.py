@@ -36,6 +36,14 @@ def test_upsert_note_metadata_sends_key_value_pairs():
     assert [(m.key, m.value) for m in sent] == [("tf_open", "false")]
 
 
+def test_delete_note_metadata_sends_key():
+    client = _client()
+    client.delete_note_metadata("tm1", "n1", "tf_child:old")
+    client.sub_resources_api.delete_note_metadata_by_key.assert_called_once_with(
+        threat_model_id="tm1", note_id="n1", key="tf_child:old"
+    )
+
+
 def test_append_status_line_updates_existing_note():
     client = _client()
     existing = MagicMock(id="note-1", content="old content")

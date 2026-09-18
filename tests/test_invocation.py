@@ -29,6 +29,10 @@ class FakeTMI:
         assert note_id == "note-1"
         self.metadata.update(metadata)
 
+    def delete_note_metadata(self, tm, note_id, key):
+        assert note_id == "note-1"
+        self.metadata.pop(key, None)
+
 
 NOW = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
 
@@ -59,6 +63,7 @@ def test_open_clears_previous_child_marks():
     tmi.metadata = {"tf_child:old": "success", "tf_open": "false"}
     inv.open_invocation(tmi, "tm1", "inv2", ["a"], NOW)
     assert inv.read_state(tmi, "tm1").children == {}
+    assert "tf_child:old" not in tmi.metadata
 
 
 def test_mark_child_and_all_reported():
