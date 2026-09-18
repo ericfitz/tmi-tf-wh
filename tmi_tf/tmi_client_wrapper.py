@@ -893,6 +893,57 @@ class TMIClient:
             logger.error(f"Failed to set note metadata: {e}")
             raise
 
+    def get_note_metadata(self, threat_model_id: str, note_id: str) -> dict[str, str]:
+        """Return a note's metadata as a key -> value dict."""
+        items = self._call_with_retry(
+            lambda: self.sub_resources_api.get_note_metadata(
+                threat_model_id=threat_model_id, note_id=note_id
+            )
+        )
+        return {m.key: m.value for m in items}
+
+    def upsert_note_metadata(
+        self, threat_model_id: str, note_id: str, metadata: dict[str, str]
+    ) -> None:
+        """Create or update the given metadata keys on a note (merge)."""
+        objects = [Metadata(key=k, value=v) for k, v in metadata.items()]
+        self._call_with_retry(
+            lambda: self.sub_resources_api.bulk_upsert_note_metadata(
+                threat_model_id=threat_model_id, note_id=note_id, metadata=objects
+            )
+        )
+
+    def append_status_line(self, threat_model_id: str, message: str) -> None:
+        """Append a timestamped line to the parent status note without resetting it.
+
+        Unlike update_status_note, this never overwrites existing content and does
+        not touch this client's first-call state; safe from a fresh client.
+        """
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        line = f"[{timestamp}] {message}"
+
+        try:
+            note = self.find_note_by_name(threat_model_id, STATUS_NOTE_NAME)
+            if note:
+                self.update_note(
+                    threat_model_id=threat_model_id,
+                    note_id=note.id,
+                    name=STATUS_NOTE_NAME,
+                    content=f"{note.content}\n{line}",
+                    description="Tracks tmi-tf analysis progress",
+                )
+            else:
+                self.create_note(
+                    threat_model_id=threat_model_id,
+                    name=STATUS_NOTE_NAME,
+                    content=line,
+                    description="Tracks tmi-tf analysis progress",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to append status line: {e}")
+
     def set_diagram_metadata(
         self,
         threat_model_id: str,
