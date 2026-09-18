@@ -472,6 +472,37 @@ class TestWatchdog:
             "failed", "1 succeeded, 1 failed (p1:gcp)"
         )
 
+    def test_watchdog_closes_and_calls_back_when_mark_fails(self):
+        pool, _ = _pool()
+        state = InvocationState("p1", True, None, {"p1:aws": "success"})
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.read_state", return_value=state),
+            patch("tmi_tf.worker.mark_child", side_effect=Exception("(500)")),
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+
+            async def go():
+                pool._arm_watchdog(
+                    "tm1",
+                    "p1",
+                    ["p1:aws", "p1:gcp"],
+                    datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                    "https://cb",
+                )
+                await asyncio.sleep(0.2)
+
+            asyncio.run(go())
+        close.assert_called_once_with(
+            ANY, "tm1", "Invocation timed out: 1 succeeded, 1 failed (p1:gcp)"
+        )
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "failed", "1 succeeded, 1 failed (p1:gcp)"
+        )
+
     def test_watchdog_sends_completed_when_all_succeeded(self):
         """A close attempt that failed earlier (all children already succeeded,
         note still open) should report completed, not failed, on timeout."""

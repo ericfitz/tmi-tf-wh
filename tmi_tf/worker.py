@@ -344,9 +344,14 @@ class WorkerPool:
                     return
                 for j in siblings:
                     if outcome_of(state, j) is None:
-                        state = await asyncio.to_thread(
-                            mark_child, tmi_client, threat_model_id, j, "failed"
-                        )
+                        # A mark failure must not block the close or the callback;
+                        # an unmarked sibling already counts as failed below.
+                        try:
+                            state = await asyncio.to_thread(
+                                mark_child, tmi_client, threat_model_id, j, "failed"
+                            )
+                        except Exception as e:
+                            logger.warning(f"Watchdog could not mark {j} failed: {e}")
                 failed = sorted(
                     j for j in siblings if outcome_of(state, j) != "success"
                 )

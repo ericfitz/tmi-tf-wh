@@ -46,8 +46,11 @@ def test_delete_note_metadata_sends_key():
 
 def test_append_status_line_updates_existing_note():
     client = _client()
-    existing = MagicMock(id="note-1", content="old content")
-    client.find_note_by_name = MagicMock(return_value=existing)
+    # The list endpoint returns NoteListItem, which has no content (#70).
+    client.find_note_by_name = MagicMock(
+        return_value=MagicMock(spec=["id"], id="note-1")
+    )
+    client.get_note = MagicMock(return_value=MagicMock(content="old content"))
     client.update_note = MagicMock()
     client.create_note = MagicMock()
 
