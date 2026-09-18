@@ -75,6 +75,7 @@ All configuration is managed through the `.env` file:
 | `ANALYSIS_NOTE_NAME` | Base name for the generated note | `Terraform Analysis Report` |
 | `DIAGRAM_NAME` | Base name for the generated diagram | `Infrastructure Data Flow Diagram` |
 | `LATEST_COMMIT_DEPTH` | Commit window used by the `latest` scope, and the sparse-clone pull depth | `200` |
+| `DEDUP_DEBOUNCE_SECONDS` | Triggers for the same threat model within this window are dropped (`0` disables) | `30` |
 
 **Note:** The model name is automatically appended to note and diagram names (e.g., "Terraform Analysis Report (claude-sonnet-4-5)").
 
@@ -181,6 +182,32 @@ matched" if scope resolved to zero targets).
 **Operator setup**: register the addon in TMI with a string parameter named
 `environments`, default `latest`, described as accepting `latest`, `all`, or a
 comma-separated list of environment names/globs.
+
+### Invocation tracking
+
+The parent job tracks its fan-out on the `TMI-TF Analysis Status` note's
+metadata: `tf_invocation` (invocation id), `tf_open` (`true` while children
+are outstanding), `tf_deadline` (ISO timestamp), and one `tf_child:<job_id>`
+key per child recording its outcome. The deadline is set when children are
+enqueued to `enqueue_time + ceil(N / MAX_CONCURRENT_JOBS) * JOB_TIMEOUT +
+300s`, where N is the number of child jobs. The addon callback fires
+`in_progress` with "enqueued N of M environment jobs" when children are
+enqueued, then a single `completed` or `failed` callback, sent by whichever
+child finishes last or, if children never all report, by a deadline
+watchdog. While an invocation is open, a duplicate trigger for the same
+threat model returns HTTP 200 `{"status": "deduplicated"}` without
+enqueueing new work, and for an `addon.invoked` trigger also sends a
+`failed` callback, "analysis already running". An invocation left with
+`tf_open=true` past its `tf_deadline` is treated as closed for dedup
+purposes. This tracking assumes a single service replica: the per-threat-model
+lock that serializes the read-modify-write is in-process.
+
+**Aborting a run (last resort)**: purge the SQS jobs queue
+(`aws sqs purge-queue --queue-url <jobs queue url>`), then restart the
+deployment (`kubectl -n tmi-tf rollout restart deploy/tmi-tf-wh`). This kills
+every in-flight job; the open invocation is not closed by a callback, only
+later by dedup's deadline rule once `tf_deadline` passes. A more targeted,
+per-invocation abort is tracked in issue #54.
 
 ## Project Structure
 

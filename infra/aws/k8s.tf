@@ -121,6 +121,10 @@ resource "kubernetes_deployment_v1" "this" {
             value = tostring(var.max_concurrent_jobs)
           }
           env {
+            name  = "DEDUP_DEBOUNCE_SECONDS"
+            value = "30"
+          }
+          env {
             name  = "WEBHOOK_SUBSCRIPTION_ID"
             value = var.webhook_subscription_id
           }
