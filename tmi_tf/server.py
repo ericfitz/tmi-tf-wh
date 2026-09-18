@@ -10,9 +10,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, FastAPI, Request  # ty:ignore[unresolved-import]
 from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-import]
 
+from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.config import get_config
+from tmi_tf.invocation import Debouncer, InvocationState, is_open, read_state
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueProvider, get_queue_provider
+from tmi_tf.tmi_client_wrapper import TMIClient
 from tmi_tf.webhook_handler import (
     extract_job_id,
     handle_challenge,
@@ -29,6 +32,7 @@ logger = logging.getLogger(__name__)
 queue_client: QueueProvider | None = None
 worker_pool: WorkerPool | None = None
 _worker_task: asyncio.Task | None = None  # type: ignore[type-arg]
+debouncer: Debouncer = Debouncer(30)
 
 
 @asynccontextmanager
@@ -36,7 +40,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     """Startup: load vault secrets, init queue client, start worker pool.
     Shutdown: stop worker pool.
     """
-    global queue_client, worker_pool, _worker_task
+    global queue_client, worker_pool, _worker_task, debouncer
 
     # Configure structured JSON logging
     logging.basicConfig(
@@ -58,6 +62,8 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
         tmi_tf.config._config = None
         config = get_config()
+
+    debouncer = Debouncer(config.dedup_debounce_seconds)
 
     # Initialize queue client
     if config.queue_provider != "none":
@@ -86,6 +92,45 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
 app = FastAPI(lifespan=lifespan)
 router = APIRouter()
+
+
+async def _is_duplicate(threat_model_id: str) -> bool:
+    """Drop triggers while an invocation is open (fails open on TMI errors)."""
+    if not debouncer.accept(threat_model_id):
+        return True
+    try:
+        tmi = TMIClient.create_authenticated(get_config())
+        state: InvocationState = await asyncio.to_thread(
+            read_state, tmi, threat_model_id
+        )
+    except Exception as e:
+        logger.warning("Dedup lookup failed for %s; accepting: %s", threat_model_id, e)
+        return False
+    return is_open(state, datetime.now(timezone.utc))
+
+
+async def _report_duplicate(parsed: dict, event_type: str, job_id: str) -> None:  # type: ignore[type-arg]
+    config = get_config()
+    tm = parsed["threat_model_id"]
+    logger.info(
+        "Duplicate trigger %s for %s dropped (job_id=%s)", event_type, tm, job_id
+    )
+    try:
+        tmi = TMIClient.create_authenticated(config)
+        await asyncio.to_thread(
+            tmi.append_status_line,
+            tm,
+            f"Trigger {event_type} ignored: analysis already running",
+        )
+    except Exception as e:
+        logger.warning("Could not record duplicate on status note: %s", e)
+    if (
+        event_type == "addon.invoked"
+        and parsed.get("callback_url")
+        and config.webhook_secret
+    ):
+        cb = AddonCallback(parsed["callback_url"], config.webhook_secret)
+        await asyncio.to_thread(cb.send_status, "failed", "analysis already running")
 
 
 @router.post("/webhook")
@@ -173,6 +218,10 @@ async def webhook(request: Request) -> Response:
         logger.info("Ignoring event type %r for job_id=%s", event_type, job_id)
         return JSONResponse(content={"status": "ignored", "job_id": job_id})
 
+    if await _is_duplicate(parsed["threat_model_id"]):
+        await _report_duplicate(parsed, event_type, job_id)
+        return JSONResponse(content={"status": "deduplicated", "job_id": job_id})
+
     # Build job and enqueue
     job = Job(
         job_id=job_id,
@@ -186,7 +235,11 @@ async def webhook(request: Request) -> Response:
     )
 
     if queue_client is not None:
-        queue_client.publish(job.to_queue_message())
+        try:
+            queue_client.publish(job.to_queue_message())
+        except Exception:
+            debouncer.forget(parsed["threat_model_id"])
+            raise
         logger.info("Job enqueued: job_id=%s", job_id)
     else:
         logger.warning(

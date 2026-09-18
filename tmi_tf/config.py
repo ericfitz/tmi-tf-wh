@@ -99,6 +99,9 @@ class Config:
         # Server configuration
         self.max_concurrent_jobs: int = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
         self.job_timeout: int = int(os.getenv("JOB_TIMEOUT", "3600"))
+        self.dedup_debounce_seconds: float = float(
+            os.getenv("DEDUP_DEBOUNCE_SECONDS", "30")
+        )
         self.max_message_age_hours: int = int(os.getenv("MAX_MESSAGE_AGE_HOURS", "24"))
         self.server_port: int = int(os.getenv("SERVER_PORT", "8080"))
         self.webhook_secret: str | None = os.getenv("WEBHOOK_SECRET") or None

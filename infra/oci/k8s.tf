@@ -124,6 +124,11 @@ resource "kubernetes_deployment_v1" "tmi_tf_wh" {
             value = tostring(var.max_concurrent_jobs)
           }
 
+          env {
+            name  = "DEDUP_DEBOUNCE_SECONDS"
+            value = "30"
+          }
+
           liveness_probe {
             http_get {
               path = "/health"

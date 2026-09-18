@@ -31,18 +31,28 @@ def _make_config(**overrides):
 
 @pytest.fixture()
 def client():
+    from tmi_tf.invocation import Debouncer, InvocationState
+
     mock_queue = MagicMock()
     mock_config = _make_config()
 
     server_module.queue_client = mock_queue
     server_module.worker_pool = MagicMock()
+    server_module.debouncer = Debouncer(0)
 
-    with patch("tmi_tf.server.get_config", return_value=mock_config):
+    with (
+        patch("tmi_tf.server.get_config", return_value=mock_config),
+        patch(
+            "tmi_tf.server.read_state", return_value=InvocationState(None, False, None)
+        ),
+        patch("tmi_tf.server.TMIClient"),
+    ):
         yield TestClient(server_module.app, raise_server_exceptions=False)
 
     # Clean up
     server_module.queue_client = None
     server_module.worker_pool = None
+    server_module.debouncer = Debouncer(0)
 
 
 class TestWebhookEndpoint:
@@ -242,3 +252,128 @@ class TestIgnoredEvents:
         assert response.json()["status"] == "accepted"
         message = server_module.queue_client.publish.call_args.args[0]  # type: ignore[union-attr]
         assert message["event_type"] == "addon.invoked"
+
+
+def _post(client, invocation_id="inv-001", event="addon.invoked", callback=True):
+    payload = {
+        "type": event,
+        "threat_model_id": "tm-001",
+        "invocation_id": invocation_id,
+    }
+    if callback:
+        payload["callback_url"] = "https://api.tmi.dev/cb"
+    body = json.dumps(payload).encode()
+    return client.post(
+        "/webhook",
+        content=body,
+        headers={
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": _make_sig(body, "test-secret"),
+            "X-Webhook-Event": event,
+            "X-Invocation-Id": invocation_id,
+            "X-Webhook-Delivery-Id": "del-" + invocation_id,
+        },
+    )
+
+
+class TestDedup:
+    def test_second_trigger_in_debounce_window_is_dropped(self, client):
+        from tmi_tf.invocation import Debouncer, InvocationState
+
+        server_module.debouncer = Debouncer(30)
+        with (
+            patch(
+                "tmi_tf.server.read_state",
+                return_value=InvocationState(None, False, None),
+            ),
+            patch("tmi_tf.server.TMIClient"),
+        ):
+            assert _post(client, "a").json()["status"] == "accepted"
+            r = _post(client, "b")
+        assert r.status_code == 200
+        assert r.json()["status"] == "deduplicated"
+        assert server_module.queue_client.publish.call_count == 1  # type: ignore[union-attr]
+
+    def test_open_invocation_drops_and_calls_back(self, client):
+        from datetime import datetime, timedelta, timezone
+
+        from tmi_tf.invocation import Debouncer, InvocationState
+
+        server_module.debouncer = Debouncer(0)
+        state = InvocationState(
+            "x", True, datetime.now(timezone.utc) + timedelta(hours=1), {}
+        )
+        tmi = MagicMock()
+        with (
+            patch("tmi_tf.server.read_state", return_value=state),
+            patch("tmi_tf.server.TMIClient.create_authenticated", return_value=tmi),
+            patch("tmi_tf.server.AddonCallback") as cb_cls,
+        ):
+            r = _post(client, "c")
+        assert r.json()["status"] == "deduplicated"
+        server_module.queue_client.publish.assert_not_called()  # type: ignore[union-attr]
+        tmi.append_status_line.assert_called_once()
+        assert "already running" in tmi.append_status_line.call_args.args[1]
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "failed", "analysis already running"
+        )
+
+    def test_open_but_past_deadline_is_accepted(self, client):
+        from datetime import datetime, timedelta, timezone
+
+        from tmi_tf.invocation import Debouncer, InvocationState
+
+        server_module.debouncer = Debouncer(0)
+        state = InvocationState(
+            "x", True, datetime.now(timezone.utc) - timedelta(seconds=1), {}
+        )
+        with (
+            patch("tmi_tf.server.read_state", return_value=state),
+            patch("tmi_tf.server.TMIClient"),
+        ):
+            assert _post(client, "d").json()["status"] == "accepted"
+
+    def test_tmi_lookup_failure_accepts(self, client):
+        from tmi_tf.invocation import Debouncer
+
+        server_module.debouncer = Debouncer(0)
+        with (
+            patch("tmi_tf.server.read_state", side_effect=RuntimeError("tmi down")),
+            patch("tmi_tf.server.TMIClient"),
+        ):
+            assert _post(client, "e").json()["status"] == "accepted"
+
+    def test_threat_model_updated_drop_has_no_callback(self, client):
+        from datetime import datetime, timedelta, timezone
+
+        from tmi_tf.invocation import Debouncer, InvocationState
+
+        server_module.debouncer = Debouncer(0)
+        state = InvocationState(
+            "x", True, datetime.now(timezone.utc) + timedelta(hours=1), {}
+        )
+        with (
+            patch("tmi_tf.server.read_state", return_value=state),
+            patch(
+                "tmi_tf.server.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.server.AddonCallback") as cb_cls,
+        ):
+            r = _post(client, "f", event="threat_model.updated", callback=False)
+        assert r.json()["status"] == "deduplicated"
+        cb_cls.assert_not_called()
+
+    def test_publish_failure_releases_debounce(self, client):
+        from tmi_tf.invocation import Debouncer
+
+        server_module.debouncer = Debouncer(30)
+        server_module.queue_client.publish.side_effect = [  # type: ignore[union-attr]
+            RuntimeError("sqs down"),
+            None,
+        ]
+        r1 = _post(client, "g")
+        assert r1.status_code != 200
+        r2 = _post(client, "h")
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "accepted"
+        assert server_module.queue_client.publish.call_count == 2  # type: ignore[union-attr]
