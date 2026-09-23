@@ -28,6 +28,11 @@ class Job:
         """A child job analyzes exactly one environment ("" = whole repo)."""
         return self.environment is not None
 
+    @property
+    def invocation_key(self) -> str:
+        """Parent job id: children are "<parent>:<env>"."""
+        return self.job_id.rsplit(":", 1)[0] if self.is_child else self.job_id
+
     def to_queue_message(self) -> dict:
         """Serialize to dict for OCI Queue message body."""
         return {

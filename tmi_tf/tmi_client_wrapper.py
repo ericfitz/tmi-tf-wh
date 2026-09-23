@@ -6,6 +6,7 @@ import logging
 import os as _os
 import re
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -124,6 +125,14 @@ ALLOWED_ATTRIBUTES = {
 }  # fmt: skip
 
 STATUS_NOTE_NAME = "TMI-TF Analysis Status"
+
+
+class AnalysisAborted(BaseException):
+    """Raised from update_status_note when the job's cancel event is set.
+
+    BaseException on purpose: analyzer.py catches Exception per repository
+    and would otherwise carry on to the next LLM call.
+    """
 
 
 def _escape_template_patterns(content: str, exempt_code: bool = True) -> str:
@@ -262,6 +271,8 @@ def sanitize_content_for_api(content: str, exempt_code: bool = True) -> str:
 class TMIClient:
     """Wrapper around TMI API client with authentication."""
 
+    cancel_event: threading.Event | None = None
+
     def __init__(self, config: Config, auth_token: str | None = None):
         """
         Initialize TMI client.
@@ -307,6 +318,7 @@ class TMIClient:
         self._status_note_initialized: bool = False
         self._status_note_content: str = ""
         self.status_note_name: str = STATUS_NOTE_NAME
+        self.cancel_event = None
 
         logger.info(f"TMI client initialized for {config.tmi_server_url}")
 
@@ -571,6 +583,9 @@ class TMIClient:
             threat_model_id: Threat model UUID
             message: Status message to record
         """
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise AnalysisAborted(f"aborted before: {message}")
+
         from datetime import datetime, timezone
 
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

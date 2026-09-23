@@ -1,8 +1,11 @@
 """Tests for TMIClient note-metadata helpers."""
 
+import threading
 from unittest.mock import MagicMock
 
-from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, TMIClient
+import pytest
+
+from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, AnalysisAborted, TMIClient
 
 
 def _client():
@@ -79,3 +82,21 @@ def test_append_status_line_creates_note_when_missing():
     assert call.kwargs["name"] == STATUS_NOTE_NAME
     assert call.kwargs["content"].endswith("] hello")
     client.update_note.assert_not_called()
+
+
+def test_update_status_note_raises_when_cancelled():
+    client = _client()
+    client._status_note_initialized = True
+    client._status_note_id = "n1"
+    client._status_note_content = ""
+    client.status_note_name = "x"
+    client.update_note = MagicMock()
+    client.cancel_event = threading.Event()
+    client.cancel_event.set()
+    with pytest.raises(AnalysisAborted):
+        client.update_status_note("tm1", "Phase 2 started")
+    client.update_note.assert_not_called()
+
+
+def test_analysis_aborted_is_not_an_exception():
+    assert not issubclass(AnalysisAborted, Exception)
