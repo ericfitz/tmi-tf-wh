@@ -213,6 +213,12 @@ every in-flight job; the open invocation is not closed by a callback, only
 later by dedup's deadline rule once `tf_deadline` passes. A more targeted,
 per-invocation abort is tracked in issue #54.
 
+`WorkerPool.abort(invocation_id, reason)` exists but has no external trigger
+yet; PR 3 wires it to TMI delivery cancel (tmi issue #913, shipped in TMI
+1.14.0: `DELETE /webhook-deliveries/{id}` -> `cancelled`, polled via
+`GET /webhook-deliveries/{id}` at phase boundaries). Until then, purge +
+restart remains the runbook.
+
 ## Project Structure
 
 ```
