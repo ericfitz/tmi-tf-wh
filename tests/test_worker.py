@@ -1,6 +1,7 @@
 """Tests for the async worker pool."""
 
 import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 from unittest.mock import ANY, MagicMock, patch
 
@@ -12,7 +13,7 @@ from tmi_tf.config import Config
 from tmi_tf.invocation import InvocationState
 from tmi_tf.job import Job
 from tmi_tf.providers.memory import MemoryQueueProvider
-from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME
+from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, AnalysisAborted
 from tmi_tf.worker import WorkerPool, _is_message_expired
 
 
@@ -588,3 +589,82 @@ class TestWatchdog:
             asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
         arm.assert_called_once()
         assert arm.call_args.args[:3] == ("tm1", "p1", ["p1:aws"])
+
+
+class TestAbort:
+    def test_abort_running_child(self):
+        pool, queue = _pool()
+        queue.delete = MagicMock()
+        started = threading.Event()
+        tmi = MagicMock()
+
+        def fake_run_analysis(**kw):
+            started.set()
+            kw["tmi_client"].cancel_event.wait(5)
+            raise AnalysisAborted("x")
+
+        state_after = InvocationState("p1", True, None, {"p1:aws": "aborted"})
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch("tmi_tf.worker.run_analysis", side_effect=fake_run_analysis),
+            patch("tmi_tf.worker.mark_child", return_value=state_after) as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            job = _child("p1:aws", ["p1:aws"])
+
+            async def go():
+                queue.publish(job.to_queue_message())
+                msg = queue.consume(max_messages=1)[0]
+                t = asyncio.create_task(pool._handle_message(msg))
+                await asyncio.to_thread(started.wait, 5)
+                n = await pool.abort("p1", "operator")
+                await asyncio.sleep(0.2)
+                return n, t
+
+            n, _ = asyncio.run(go())
+        assert n == 1
+        assert tmi.cancel_event.is_set()
+        queue.delete.assert_called_once()
+        mark.assert_any_call(ANY, "tm1", "p1:aws", "aborted")
+        close.assert_called_once_with(ANY, "tm1", "Aborted: operator")
+        cb_cls.return_value.send_status.assert_called_with(
+            "failed", "aborted: operator"
+        )
+        assert not job.temp_dir or not job.temp_dir.exists()
+
+    def test_queued_child_of_aborted_invocation_is_dropped(self):
+        pool, queue = _pool()
+        queue.delete = MagicMock(wraps=queue.delete)
+        pool._cancelled.add("p1")
+        state = InvocationState("p1", False, None, {"p1:aws": "aborted"})
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.run_analysis") as run,
+            patch("tmi_tf.worker.mark_child", return_value=state) as mark,
+            patch("tmi_tf.worker.close_invocation"),
+        ):
+            job = _child("p1:aws", ["p1:aws", "p1:gcp"])
+            queue.publish(job.to_queue_message())
+            msg = queue.consume(max_messages=1)[0]
+            asyncio.run(pool._handle_message(msg))
+        run.assert_not_called()
+        queue.delete.assert_called_once_with(msg.receipt)
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "aborted")
+
+    def test_abort_unknown_invocation_returns_zero(self):
+        pool, _ = _pool()
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch(
+                "tmi_tf.worker.read_state",
+                return_value=InvocationState(None, False, None),
+            ),
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+            assert asyncio.run(pool.abort("nope", "r")) == 0
+        close.assert_not_called()

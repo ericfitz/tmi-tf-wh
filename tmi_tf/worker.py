@@ -4,6 +4,7 @@ import asyncio
 import logging
 import shutil
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from tmi_tf.invocation import (
 from tmi_tf.job import Job
 from tmi_tf.providers import QueueMessage, QueueProvider
 from tmi_tf.repo_analyzer import repository_name
-from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, TMIClient
+from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, AnalysisAborted, TMIClient
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,10 @@ class WorkerPool:
         self._active_jobs: dict[str, Job] = {}
         self._watchdogs: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         self._running = False
+        self._cancelled: set[str] = set()
+        self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
+        self._cancel_events: dict[str, threading.Event] = {}
+        self._receipts: dict[str, str] = {}
 
     async def start(self) -> None:
         """Start polling loop."""
@@ -104,6 +109,13 @@ class WorkerPool:
             return
 
         job = Job.from_queue_message(msg.body)
+        if job.invocation_key in self._cancelled:
+            logger.info("Dropping queued job %s: invocation aborted", job.job_id)
+            await asyncio.to_thread(self.queue_client.delete, msg.receipt)
+            if job.is_child:
+                await self._finish_child(job, "aborted")
+            return
+
         job.temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{job.job_id}-"))
         if job.is_child and job.siblings and job.deadline:
             self._arm_watchdog(
@@ -116,6 +128,9 @@ class WorkerPool:
 
         async with self._semaphore:
             self._active_jobs[job.job_id] = job
+            self._receipts[job.job_id] = msg.receipt
+            self._cancel_events[job.job_id] = threading.Event()
+            self._tasks[job.job_id] = asyncio.current_task()  # type: ignore[assignment]
             try:
                 await asyncio.wait_for(
                     self._run_job(job, msg.receipt),
@@ -133,8 +148,14 @@ class WorkerPool:
                     await self._finish_child(job, "failed")
                 else:
                     await self._fire_and_forget_status(job, "failed", "Job timed out")
+            except asyncio.CancelledError:
+                logger.info("Job cancelled: %s", job.job_id)
+                # Do not re-raise; the abort path already did the bookkeeping.
             finally:
                 self._active_jobs.pop(job.job_id, None)
+                self._receipts.pop(job.job_id, None)
+                self._cancel_events.pop(job.job_id, None)
+                self._tasks.pop(job.job_id, None)
                 if job.temp_dir and job.temp_dir.exists():
                     try:
                         shutil.rmtree(job.temp_dir)
@@ -151,6 +172,7 @@ class WorkerPool:
 
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
+            tmi_client.cancel_event = self._cancel_events.get(job.job_id)
             if job.is_child:
                 # Unique per (repository, environment) so two repos with the
                 # same environment name do not overwrite each other (#56).
@@ -172,6 +194,8 @@ class WorkerPool:
                 await self._run_parent(job, tmi_client, callback)
             # Delete message on completion
             await asyncio.to_thread(self.queue_client.delete, receipt)
+        except AnalysisAborted:
+            logger.info("Job %s aborted", job.job_id)
         except Exception as e:
             logger.error(f"Job exception: job_id={job.job_id}, error={e}")
             if job.is_child:
@@ -266,6 +290,58 @@ class WorkerPool:
         logger.info("Parent job %s: %s", job.job_id, summary)
         if callback:
             callback.send_status("in_progress", summary)
+
+    async def abort(self, invocation_id: str, reason: str) -> int:
+        """Stop every job of an invocation; queued children are dropped when dequeued."""
+        self._cancelled.add(invocation_id)
+        victims = [
+            j
+            for j in list(self._active_jobs.values())
+            if j.invocation_key == invocation_id
+        ]
+        for job in victims:
+            ev = self._cancel_events.get(job.job_id)
+            if ev:
+                ev.set()
+            task = self._tasks.get(job.job_id)
+            if task:
+                task.cancel()
+            receipt = self._receipts.get(job.job_id)
+            if receipt:
+                try:
+                    await asyncio.to_thread(self.queue_client.delete, receipt)
+                except Exception as e:
+                    logger.error(f"Failed to delete message for {job.job_id}: {e}")
+            if job.temp_dir and job.temp_dir.exists():
+                shutil.rmtree(job.temp_dir, ignore_errors=True)
+        wd = self._watchdogs.pop(next((j.threat_model_id for j in victims), ""), None)
+        if wd:
+            wd.cancel()
+        threat_model_id = victims[0].threat_model_id if victims else None
+        callback_url = next((j.callback_url for j in victims if j.callback_url), None)
+        try:
+            tmi_client = TMIClient.create_authenticated(self.config)
+            if threat_model_id is None:
+                return 0
+            async with lock_for(threat_model_id):
+                for job in victims:
+                    if job.is_child:
+                        await asyncio.to_thread(
+                            mark_child,
+                            tmi_client,
+                            threat_model_id,
+                            job.job_id,
+                            "aborted",
+                        )
+                await asyncio.to_thread(
+                    close_invocation, tmi_client, threat_model_id, f"Aborted: {reason}"
+                )
+            if callback_url and self.config.webhook_secret:
+                cb = AddonCallback(callback_url, self.config.webhook_secret)
+                await asyncio.to_thread(cb.send_status, "failed", f"aborted: {reason}")
+        except Exception as e:
+            logger.error(f"Abort bookkeeping failed for {invocation_id}: {e}")
+        return len(victims)
 
     async def _finish_child(self, job: Job, outcome: str) -> None:
         """Mark a child done; the last sibling closes the invocation."""
