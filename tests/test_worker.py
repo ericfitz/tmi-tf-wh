@@ -761,3 +761,90 @@ class TestAbort:
         run.assert_not_called()
         mark.assert_called_once_with(ANY, "tm1", "p1:aws", "aborted")
         assert pool._active_jobs == {}
+        # The invocation was already aborted before the job cleared the
+        # semaphore, so it must never have recorded _invocations or armed a
+        # watchdog for it.
+        assert "p1" not in pool._invocations
+        assert "tm1" not in pool._watchdogs
+
+    def test_abort_running_parent_sends_failed_callback(self):
+        """A parent still in resolve_fanout_targets (invocation not opened
+        yet) must still get its "aborted" callback when cancelled, even
+        though there is nothing to mark or close."""
+        pool, queue = _pool()
+        queue.delete = MagicMock()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_resolve(*a, **kw):
+            started.set()
+            release.wait(5)
+            return []
+
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.resolve_fanout_targets", side_effect=blocking_resolve),
+            patch(
+                "tmi_tf.worker.read_state",
+                return_value=InvocationState(None, False, None),
+            ),
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            job = _job(scope="all")
+
+            async def go():
+                queue.publish(job.to_queue_message())
+                msg = queue.consume(max_messages=1)[0]
+                t = asyncio.create_task(pool._handle_message(msg))
+                await asyncio.to_thread(started.wait, 5)
+                n = await pool.abort("p1", "operator")
+                release.set()
+                await t
+                return n
+
+            n = asyncio.run(go())
+        assert n == 1
+        close.assert_not_called()
+        queue.delete.assert_called_once()
+        cb_cls.return_value.send_status.assert_called_with(
+            "failed", "aborted: operator"
+        )
+
+    def test_abort_of_stale_invocation_leaves_current_watchdog_armed(self):
+        """_watchdogs is keyed by threat_model_id; abort() of a superseded
+        invocation id on that threat model must not cancel the watchdog for
+        whatever invocation is actually open there."""
+        pool, _ = _pool()
+
+        async def go():
+            pool._arm_watchdog(
+                "tm1",
+                "p2",
+                ["p2:aws"],
+                datetime.now(timezone.utc) + timedelta(hours=1),
+                None,
+            )
+            wd = pool._watchdogs["tm1"]
+            pool._invocations["p1"] = ("tm1", None)
+            with (
+                patch(
+                    "tmi_tf.worker.TMIClient.create_authenticated",
+                    return_value=MagicMock(),
+                ),
+                patch(
+                    "tmi_tf.worker.read_state",
+                    return_value=InvocationState("p2", True, None, {}),
+                ),
+                patch("tmi_tf.worker.close_invocation") as close,
+            ):
+                n = await pool.abort("p1", "stale")
+            assert n == 0
+            close.assert_not_called()
+            assert not wd.cancelled()
+            assert pool._watchdogs.get("tm1") is wd
+            wd.cancel()  # cleanup so the loop doesn't complain on teardown
+
+        asyncio.run(go())

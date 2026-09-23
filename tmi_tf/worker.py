@@ -124,23 +124,14 @@ class WorkerPool:
             return
 
         job.temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{job.job_id}-"))
-        if job.is_child and job.siblings and job.deadline:
-            self._invocations[job.invocation_key] = (
-                job.threat_model_id,
-                job.callback_url,
-            )
-            self._arm_watchdog(
-                job.threat_model_id,
-                job.job_id.rsplit(":", 1)[0],
-                job.siblings,
-                job.deadline,
-                job.callback_url,
-            )
 
         async with self._semaphore:
             try:
                 # A job can sit here a while behind a full pool; the invocation
-                # may have been aborted since the first check above.
+                # may have been aborted since the first check above. Re-check
+                # before recording anything about it (_invocations, the
+                # watchdog) or running it, so a dropped child leaves no trace
+                # of an invocation we're trying to forget.
                 if job.invocation_key in self._cancelled:
                     logger.info(
                         "Dropping job %s after semaphore wait: invocation aborted",
@@ -150,6 +141,18 @@ class WorkerPool:
                     if job.is_child:
                         await self._finish_child(job, "aborted")
                     return
+                if job.is_child and job.siblings and job.deadline:
+                    self._invocations[job.invocation_key] = (
+                        job.threat_model_id,
+                        job.callback_url,
+                    )
+                    self._arm_watchdog(
+                        job.threat_model_id,
+                        job.job_id.rsplit(":", 1)[0],
+                        job.siblings,
+                        job.deadline,
+                        job.callback_url,
+                    )
                 self._active_jobs[job.job_id] = job
                 self._receipts[job.job_id] = msg.receipt
                 self._cancel_events[job.job_id] = threading.Event()
@@ -175,7 +178,11 @@ class WorkerPool:
                         )
                 except asyncio.CancelledError:
                     logger.info("Job cancelled: %s", job.job_id)
-                    # Do not re-raise; the abort path already did the bookkeeping.
+                    # Do not re-raise; the abort path already did the
+                    # bookkeeping. Safe to swallow because only abort()
+                    # cancels handler tasks today — stop() just flips
+                    # _running and lets in-flight jobs finish. Revisit this
+                    # if shutdown is ever changed to cancel tasks too.
             finally:
                 self._active_jobs.pop(job.job_id, None)
                 self._receipts.pop(job.job_id, None)
@@ -220,6 +227,12 @@ class WorkerPool:
             # Delete message on completion
             await asyncio.to_thread(self.queue_client.delete, receipt)
         except AnalysisAborted:
+            # In practice unreachable today: abort() both sets the cancel
+            # event AND cancels this task, and the task cancellation wins the
+            # race (see abort()), turning this into asyncio.CancelledError in
+            # _handle_message instead. This becomes the live path if a future
+            # caller (e.g. PR 3's TMI delivery-cancel poll) sets the event
+            # without cancelling the task.
             logger.info("Job %s aborted", job.job_id)
         except Exception as e:
             logger.error(f"Job exception: job_id={job.job_id}, error={e}")
@@ -326,7 +339,10 @@ class WorkerPool:
 
         Returns the number of running jobs cancelled, regardless of whether
         the TMI bookkeeping below (marking children, closing the invocation)
-        finds anything to do.
+        finds anything to do. Cancelling a task only requests cancellation:
+        the underlying worker thread (blocked in an LLM/TMI call) keeps
+        running until its next phase boundary, so effective concurrency can
+        briefly exceed max_concurrent while cancelled jobs wind down.
         """
         self._cancelled.add(invocation_id)
         victims = [
@@ -349,9 +365,6 @@ class WorkerPool:
                     logger.error(f"Failed to delete message for {job.job_id}: {e}")
             if job.temp_dir and job.temp_dir.exists():
                 shutil.rmtree(job.temp_dir, ignore_errors=True)
-        wd = self._watchdogs.pop(next((j.threat_model_id for j in victims), ""), None)
-        if wd:
-            wd.cancel()
 
         if victims:
             threat_model_id = victims[0].threat_model_id
@@ -367,25 +380,39 @@ class WorkerPool:
         if threat_model_id is None:
             return len(victims)
 
+        closed = False
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
             async with lock_for(threat_model_id):
                 state = await asyncio.to_thread(read_state, tmi_client, threat_model_id)
-                if not state.open or state.invocation_id != invocation_id:
-                    return len(victims)
-                for job in victims:
-                    if job.is_child:
-                        await asyncio.to_thread(
-                            mark_child,
-                            tmi_client,
-                            threat_model_id,
-                            job.job_id,
-                            "aborted",
-                        )
-                await asyncio.to_thread(
-                    close_invocation, tmi_client, threat_model_id, f"Aborted: {reason}"
-                )
-            if callback_url and self.config.webhook_secret:
+                if state.open and state.invocation_id == invocation_id:
+                    for job in victims:
+                        if job.is_child:
+                            await asyncio.to_thread(
+                                mark_child,
+                                tmi_client,
+                                threat_model_id,
+                                job.job_id,
+                                "aborted",
+                            )
+                    await asyncio.to_thread(
+                        close_invocation,
+                        tmi_client,
+                        threat_model_id,
+                        f"Aborted: {reason}",
+                    )
+                    closed = True
+                    # Only cancel the watchdog once we've confirmed it belongs
+                    # to *this* invocation — _watchdogs is keyed by threat
+                    # model, so aborting a superseded invocation_id on the
+                    # same threat model must not touch the current one's.
+                    wd = self._watchdogs.pop(threat_model_id, None)
+                    if wd:
+                        wd.cancel()
+            # A running victim always gets its "aborted" callback, even if
+            # the invocation had not been opened yet (e.g. a parent still in
+            # resolve_fanout_targets) and there was nothing to close.
+            if (victims or closed) and callback_url and self.config.webhook_secret:
                 cb = AddonCallback(callback_url, self.config.webhook_secret)
                 await asyncio.to_thread(cb.send_status, "failed", f"aborted: {reason}")
         except Exception as e:
