@@ -184,3 +184,24 @@ def test_create_threat_survives_metadata_failure():
         client.create_threat(
             "tm1", "n", "Spoofing", metadata=[{"key": "k", "value": "v"}]
         )
+
+
+def test_update_status_note_sends_heartbeat_after_cancel_check():
+    client, get, _, _ = _polling_client(status="in_progress")
+    beats: list[str] = []
+    client.status_heartbeat = beats.append
+    with patch("tmi_tf.tmi_client_wrapper.requests.get", get):
+        client.update_status_note("tm1", "Phase 2 started")
+    assert beats == ["Phase 2 started"]
+
+
+def test_no_heartbeat_once_cancelled():
+    client, get, _, _ = _polling_client(status="cancelled")
+    beats: list[str] = []
+    client.status_heartbeat = beats.append
+    with (
+        patch("tmi_tf.tmi_client_wrapper.requests.get", get),
+        pytest.raises(AnalysisAborted),
+    ):
+        client.update_status_note("tm1", "Phase 2 started")
+    assert beats == []

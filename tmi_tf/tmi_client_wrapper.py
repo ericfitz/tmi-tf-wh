@@ -277,6 +277,9 @@ class TMIClient:
     # TMI webhook delivery polled for a `cancelled` status (#54); worker only.
     delivery_id: str | None = None
     _last_cancel_poll: float | None = None
+    # Called with each status line; the worker sends it as an `in_progress`
+    # callback so TMI's 15-minute stale sweep doesn't fail long runs.
+    status_heartbeat: Callable[[str], None] | None = None
 
     def __init__(self, config: Config, auth_token: str | None = None):
         """
@@ -625,6 +628,8 @@ class TMIClient:
         ):
             self.cancel_event.set()
             raise AnalysisAborted(f"aborted before: {message}")
+        if self.status_heartbeat is not None:
+            self.status_heartbeat(message)
 
         from datetime import datetime, timezone
 

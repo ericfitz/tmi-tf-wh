@@ -88,6 +88,8 @@ class TestWebhookEndpoint:
             message["callback_url"]
             == "https://tmi.example/webhook-deliveries/del-001/status"
         )
+        # Keeps the TMI delivery open (in_progress) for our status callbacks.
+        assert response.headers["X-TMI-Callback"] == "async"
 
     def test_addon_user_data_environments_sets_scope(self, client):
         payload = {
@@ -294,7 +296,7 @@ class TestDedup:
         assert r.json()["status"] == "deduplicated"
         assert server_module.queue_client.publish.call_count == 1  # type: ignore[union-attr]
 
-    def test_open_invocation_drops_and_calls_back(self, client):
+    def test_open_invocation_drops_without_callback(self, client):
         from datetime import datetime, timedelta, timezone
 
         from tmi_tf.invocation import Debouncer, InvocationState
@@ -307,19 +309,13 @@ class TestDedup:
         with (
             patch("tmi_tf.server.read_state", return_value=state),
             patch("tmi_tf.server.TMIClient.create_authenticated", return_value=tmi),
-            patch("tmi_tf.server.AddonCallback") as cb_cls,
         ):
             r = _post(client, "c")
         assert r.json()["status"] == "deduplicated"
         server_module.queue_client.publish.assert_not_called()  # type: ignore[union-attr]
         tmi.append_status_line.assert_called_once()
         assert "already running" in tmi.append_status_line.call_args.args[1]
-        cb_cls.assert_called_once_with(
-            "https://tmi.example/webhook-deliveries/del-c/status", "test-secret"
-        )
-        cb_cls.return_value.send_status.assert_called_once_with(
-            "failed", "analysis already running"
-        )
+        assert "X-TMI-Callback" not in r.headers
 
     def test_open_but_past_deadline_is_accepted(self, client):
         from datetime import datetime, timedelta, timezone
@@ -360,11 +356,9 @@ class TestDedup:
             patch(
                 "tmi_tf.server.TMIClient.create_authenticated", return_value=MagicMock()
             ),
-            patch("tmi_tf.server.AddonCallback") as cb_cls,
         ):
             r = _post(client, "f", event="threat_model.updated")
         assert r.json()["status"] == "deduplicated"
-        cb_cls.assert_not_called()
 
     def test_publish_failure_releases_debounce(self, client):
         from tmi_tf.invocation import Debouncer
@@ -421,3 +415,8 @@ def test_non_addon_event_gets_no_callback_url(client):
     _post(client, "g", event="threat_model.updated")
     message = server_module.queue_client.publish.call_args.args[0]  # type: ignore[union-attr]
     assert message["callback_url"] is None
+
+
+def test_non_addon_event_is_not_async(client):
+    r = _post(client, "h", event="threat_model.updated")
+    assert "X-TMI-Callback" not in r.headers

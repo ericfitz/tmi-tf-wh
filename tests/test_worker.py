@@ -706,6 +706,26 @@ class TestAbort:
         )
         assert not pool._active_jobs and not pool._tasks
 
+    def test_child_checkpoints_send_in_progress_heartbeat(self):
+        """TMI fails in_progress deliveries after 15 min without a status POST."""
+        pool, _ = _pool()
+        tmi = MagicMock()
+
+        def fake_run_analysis(**kw):
+            kw["tmi_client"].status_heartbeat("Phase 1 started")
+            return AnalysisResult(success=True)
+
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch("tmi_tf.worker.run_analysis", side_effect=fake_run_analysis),
+            patch.object(pool, "_finish_child"),
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            asyncio.run(pool._run_job(_child("p1:aws", ["p1:aws"]), receipt="r"))
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "in_progress", "Phase 1 started"
+        )
+
     def test_abort_after_invocation_closed_sends_no_failed_callback(self):
         """Last child already closed the invocation (and sent "completed")
         when abort() lands: no second, contradictory "failed" callback."""
