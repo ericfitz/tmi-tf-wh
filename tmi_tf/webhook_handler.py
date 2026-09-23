@@ -76,7 +76,7 @@ def parse_webhook_payload(payload: dict) -> dict:
     """Parse and extract fields from a webhook payload.
 
     Extracts: event_type, threat_model_id (required), repo_id (only when
-    resource_type == "repository"), callback_url, and invocation_id.
+    resource_type == "repository"), and invocation_id.
 
     Raises ValueError if threat_model_id is missing.
     """
@@ -91,10 +91,6 @@ def parse_webhook_payload(payload: dict) -> dict:
 
     if payload.get("resource_type") == "repository":
         result["repo_id"] = payload.get("resource_id")
-
-    callback_url = payload.get("callback_url")
-    if callback_url is not None:
-        result["callback_url"] = callback_url
 
     invocation_id = payload.get("invocation_id")
     if invocation_id is not None:

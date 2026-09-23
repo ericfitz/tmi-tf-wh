@@ -128,11 +128,7 @@ async def _report_duplicate(parsed: dict, event_type: str, job_id: str) -> None:
         )
     except Exception as e:
         logger.warning("Could not record duplicate on status note: %s", e)
-    if (
-        event_type == "addon.invoked"
-        and parsed.get("callback_url")
-        and config.webhook_secret
-    ):
+    if parsed.get("callback_url") and config.webhook_secret:
         cb = AddonCallback(parsed["callback_url"], config.webhook_secret)
         await asyncio.to_thread(cb.send_status, "failed", "analysis already running")
 
@@ -221,6 +217,14 @@ async def webhook(request: Request) -> Response:
     if not event_type or not is_trigger_event(event_type):
         logger.info("Ignoring event type %r for job_id=%s", event_type, job_id)
         return JSONResponse(content={"status": "ignored", "job_id": job_id})
+
+    # Only addon invocations report status back, to TMI's delivery-status
+    # endpoint (the payload has carried no callback_url since TMI #194).
+    if event_type == "addon.invoked" and delivery_id:
+        parsed["callback_url"] = (
+            f"{config.tmi_server_url.rstrip('/')}/webhook-deliveries/"
+            f"{delivery_id}/status"
+        )
 
     if await _is_duplicate(parsed["threat_model_id"]):
         await _report_duplicate(parsed, event_type, job_id)
