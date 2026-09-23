@@ -21,7 +21,7 @@ building a parallel platform.
 | Ingress | AWS Load Balancer Controller v2.17.1; `api.tmi.dev` is an internet-facing ALB Ingress with ACM cert + Route53 CNAME |
 | IAM | IRSA OIDC provider exists; TMI's `tmi-api` ServiceAccount uses it |
 | DNS | Route53 hosted zone `tmi.dev` in the same account |
-| State | S3 `tmi-tfstate-967218005408` + DynamoDB lock table `tmi-tf-locks` |
+| State | S3 `tmi-tfstate-967218005408`, S3-native locking (`use_lockfile`) |
 | Headroom | ~1.2 vCPU / ~2 GiB unrequested across the two nodes |
 
 Two facts constrain the design:
@@ -94,7 +94,14 @@ known follow-up, not built now.
 ### Terraform: `infra/aws/`
 
 Backend: S3 `tmi-tfstate-967218005408`, key `tmi-tf-wh/aws/terraform.tfstate`,
-DynamoDB `tmi-tf-locks`, bucket/table supplied via `-backend-config` like TMI.
+S3-native lock file (`use_lockfile = true`, lock object `<key>.tflock`), bucket
+supplied via `-backend-config` like TMI.
+
+**Decision (Eric, 2026-09-23):** state locking moved from the DynamoDB table
+`tmi-tf-locks` to S3 lock files. The S3 backend's `dynamodb_table` is
+deprecated, and the shared table is being deleted once tmi-ux and tmi-tf-wh
+have both switched (tmi did the same in its PR #942). Same bucket and key, so
+no state migration; `terraform init -reconfigure -backend-config=backend.hcl`.
 
 Providers: `aws` (profile `tmi`, region `us-east-1`), `kubernetes` (exec auth
 via `aws eks get-token`, same as TMI's module).

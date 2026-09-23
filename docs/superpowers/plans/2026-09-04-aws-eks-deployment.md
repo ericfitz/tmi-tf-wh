@@ -17,7 +17,7 @@
 - Container image: `linux/amd64` (nodes are x86_64).
 - Hostname: `webhook.tmi.dev`. URL prefix for this app: `/tf`. IngressGroup name: `tmi-webhooks`. HTTPS only, no port 80 listener.
 - LLM: `LLM_PROVIDER=anthropic`, `LLM_MODEL=claude-fable-5-1`.
-- Terraform state: S3 bucket `tmi-tfstate-967218005408`, key `tmi-tf-wh/aws/terraform.tfstate`, lock table `tmi-tf-locks`.
+- Terraform state: S3 bucket `tmi-tfstate-967218005408`, key `tmi-tf-wh/aws/terraform.tfstate`, S3-native locking (`use_lockfile = true`; was DynamoDB `tmi-tf-locks` until 2026-09-23).
 - Lint/type/test gates before every commit: `uv run ruff check tmi_tf/ tests/`, `uv run ruff format --check tmi_tf/ tests/`, `uv run pyright`, `uv run pytest tests/`.
 - Terraform gates: `terraform fmt -check -recursive infra/` and `terraform -chdir=<dir> validate` (after `init -backend=false`).
 - Commit trailer on every commit:
@@ -1318,7 +1318,7 @@ output "pod_role_arn" {
 ```hcl
 bucket         = "tmi-tfstate-967218005408"
 region         = "us-east-1"
-dynamodb_table = "tmi-tf-locks"
+use_lockfile   = true
 profile        = "tmi"
 ```
 
