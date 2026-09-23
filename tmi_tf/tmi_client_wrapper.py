@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TypeVar
 
 import nh3  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
+import requests  # ty:ignore[unresolved-import]
 
 _TMI_CLIENT_DEFAULT_ROOT = (
     Path.home() / "Projects" / "tmi-clients" / "python-client-generated"
@@ -125,6 +126,7 @@ ALLOWED_ATTRIBUTES = {
 }  # fmt: skip
 
 STATUS_NOTE_NAME = "TMI-TF Analysis Status"
+CANCEL_POLL_SECONDS = 30
 
 
 class AnalysisAborted(BaseException):
@@ -272,6 +274,9 @@ class TMIClient:
     """Wrapper around TMI API client with authentication."""
 
     cancel_event: threading.Event | None = None
+    # TMI webhook delivery polled for a `cancelled` status (#54); worker only.
+    delivery_id: str | None = None
+    _last_cancel_poll: float | None = None
 
     def __init__(self, config: Config, auth_token: str | None = None):
         """
@@ -573,6 +578,38 @@ class TMIClient:
                 return note
         return None
 
+    def _delivery_cancelled(self) -> bool:
+        """True if TMI reports this job's webhook delivery as cancelled.
+
+        Polls at most every CANCEL_POLL_SECONDS. Any error counts as not
+        cancelled: TMI's delivery records live in Redis and can vanish, and a
+        lost record must not kill a running job.
+        """
+        now = time.monotonic()
+        if not self.delivery_id or (
+            self._last_cancel_poll is not None
+            and now - self._last_cancel_poll < CANCEL_POLL_SECONDS
+        ):
+            return False
+        self._last_cancel_poll = now
+        try:
+            resp = requests.get(
+                f"{self.config.tmi_server_url}/webhook-deliveries/{self.delivery_id}",
+                headers={
+                    "Authorization": self.api_client.configuration.get_api_key_with_prefix(
+                        "bearerAuth"
+                    )
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json().get("status") == "cancelled"
+        except Exception as e:
+            logger.warning(f"Delivery status poll failed for {self.delivery_id}: {e}")
+            # Retry at the next checkpoint (e.g. after a 401 re-auth).
+            self._last_cancel_poll = None
+            return False
+
     def update_status_note(self, threat_model_id: str, message: str) -> None:
         """Update the analysis status tracking note.
 
@@ -583,7 +620,10 @@ class TMIClient:
             threat_model_id: Threat model UUID
             message: Status message to record
         """
-        if self.cancel_event is not None and self.cancel_event.is_set():
+        if self.cancel_event is not None and (
+            self.cancel_event.is_set() or self._delivery_cancelled()
+        ):
+            self.cancel_event.set()
             raise AnalysisAborted(f"aborted before: {message}")
 
         from datetime import datetime, timezone

@@ -1,7 +1,7 @@
 """Tests for TMIClient note-metadata helpers."""
 
 import threading
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -100,3 +100,58 @@ def test_update_status_note_raises_when_cancelled():
 
 def test_analysis_aborted_is_not_an_exception():
     assert not issubclass(AnalysisAborted, Exception)
+
+
+def _polling_client(status=None, exc=None):
+    client = _client()
+    client._status_note_initialized = True
+    client._status_note_id = "n1"
+    client._status_note_content = ""
+    client.status_note_name = "x"
+    client.update_note = update_note = MagicMock()
+    client.config = MagicMock(tmi_server_url="https://tmi")
+    client.api_client = MagicMock()
+    client.api_client.configuration.get_api_key_with_prefix.return_value = "Bearer t"
+    client.cancel_event = event = threading.Event()
+    client.delivery_id = "d1"
+    resp = MagicMock()
+    resp.json.return_value = {"status": status}
+    get = MagicMock(return_value=resp, side_effect=exc)
+    return client, get, update_note, event
+
+
+def test_update_status_note_aborts_when_delivery_cancelled_in_tmi():
+    client, get, update_note, event = _polling_client(status="cancelled")
+    with (
+        patch("tmi_tf.tmi_client_wrapper.requests.get", get),
+        pytest.raises(AnalysisAborted),
+    ):
+        client.update_status_note("tm1", "Phase 2 started")
+    assert get.call_args.args[0] == "https://tmi/webhook-deliveries/d1"
+    assert event.is_set()
+    update_note.assert_not_called()
+
+
+def test_update_status_note_continues_when_poll_fails():
+    client, get, update_note, event = _polling_client(exc=RuntimeError("boom"))
+    with patch("tmi_tf.tmi_client_wrapper.requests.get", get):
+        client.update_status_note("tm1", "Phase 2 started")
+    update_note.assert_called_once()
+    assert not event.is_set()
+    assert client._last_cancel_poll is None  # retried at the next checkpoint
+
+
+def test_delivery_poll_is_rate_limited():
+    client, get, _, _ = _polling_client(status="in_progress")
+    with patch("tmi_tf.tmi_client_wrapper.requests.get", get):
+        client.update_status_note("tm1", "a")
+        client.update_status_note("tm1", "b")
+    get.assert_called_once()
+
+
+def test_no_poll_without_delivery_id():
+    client, get, _, _ = _polling_client(status="cancelled")
+    client.delivery_id = None
+    with patch("tmi_tf.tmi_client_wrapper.requests.get", get):
+        client.update_status_note("tm1", "a")
+    get.assert_not_called()

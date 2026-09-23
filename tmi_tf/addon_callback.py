@@ -51,6 +51,14 @@ class AddonCallback:
                 headers=headers,
                 timeout=CALLBACK_TIMEOUT_SECONDS,
             )
+            if response.status_code == 409:
+                # TMI rejects callbacks once the delivery is terminal
+                # (cancelled, or a final status was already sent).
+                logger.info(
+                    "Addon callback status=%r ignored: delivery already terminal",
+                    status,
+                )
+                return
             response.raise_for_status()
         except Exception:
             logger.exception(
