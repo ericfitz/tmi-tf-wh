@@ -102,7 +102,7 @@ Assign severity based on the CVSS 4.0 base score:
 
 # CWE Classification
 
-Include one or more applicable CWE identifiers. You MUST only use IDs from the CWE-699 (Software Development) view, excluding category entries. Any IDs outside this set will be rejected.
+Include one or more applicable CWE identifiers. You MUST only use IDs from the CWE-699 (Software Development) view, excluding category entries, or from category CWE-1446 (Weaknesses Specific to AI/ML Technology). The complete list of allowed IDs is under "Allowed CWE IDs" at the end of this prompt; any ID not on that list will be rejected. If the best match is a Class-level weakness that is not on the list, choose its most specific child that is.
 
 Common infrastructure-relevant CWE-699 IDs:
 - CWE-276: Incorrect Default Permissions

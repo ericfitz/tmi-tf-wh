@@ -14,9 +14,14 @@ logger = logging.getLogger(__name__)
 
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
 
+# Members of category CWE-1446 (AI/ML-specific weaknesses), allowed alongside
+# the CWE-699 view. https://cwe.mitre.org/data/definitions/1446.html
+CWE_1446_IDS: frozenset[int] = frozenset({1039, 1426, 1427, 1434})
+ALLOWED_CWE_IDS: frozenset[int] = CWE_699_IDS | CWE_1446_IDS
+
 
 def filter_valid_cwe_ids(cwe_ids: list[str]) -> list[str]:
-    """Filter CWE IDs to only those in the CWE-699 (non-category) view.
+    """Filter CWE IDs to ALLOWED_CWE_IDS (CWE-699 non-category + CWE-1446).
 
     Invalid or unrecognised IDs are logged and dropped.
     """
@@ -27,8 +32,8 @@ def filter_valid_cwe_ids(cwe_ids: list[str]) -> list[str]:
             logger.warning("Dropping malformed CWE identifier: %s", cid)
             continue
         num = int(m.group(1))
-        if num not in CWE_699_IDS:
-            logger.warning("Dropping CWE-%d: not in CWE-699 view", num)
+        if num not in ALLOWED_CWE_IDS:
+            logger.warning("Dropping CWE-%d: not in CWE-699 or CWE-1446", num)
             continue
         valid.append(cid)
     return valid
