@@ -22,6 +22,7 @@ from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
+from tmi_tf.threat_processor import ALLOWED_CWE_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +149,14 @@ class LLMAnalyzer:
             "threat_identification_user.txt"
         )
         # Phase 3b: Per-threat analysis (STRIDE, CVSS 4.0, CWE, mitigation)
-        self.threat_analysis_system = self._load_prompt("threat_analysis_system.txt")
+        # The full allowlist: naming the view alone still let models pick
+        # Class-level CWEs outside it (#79).
+        self.threat_analysis_system = (
+            self._load_prompt("threat_analysis_system.txt")
+            + "\n\n# Allowed CWE IDs\n\n"
+            + ", ".join(str(i) for i in sorted(ALLOWED_CWE_IDS))
+            + "\n"
+        )
         self.threat_analysis_user_template = self._load_prompt(
             "threat_analysis_user.txt"
         )

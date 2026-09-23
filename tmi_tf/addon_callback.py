@@ -10,6 +10,7 @@ import requests  # ty:ignore[unresolved-import]
 logger = logging.getLogger(__name__)
 
 CALLBACK_TIMEOUT_SECONDS = 10
+STATUS_MESSAGE_MAX = 1024  # UpdateWebhookDeliveryStatusRequest.status_message
 
 
 class AddonCallback:
@@ -38,7 +39,9 @@ class AddonCallback:
             return
 
         try:
-            payload = {"status": status, "message": message}
+            payload = {"status": status}
+            if message:
+                payload["status_message"] = message[:STATUS_MESSAGE_MAX]
             body = json.dumps(payload).encode()
             signature = self._sign(body)
             headers = {

@@ -207,6 +207,9 @@ class WorkerPool:
             tmi_client = TMIClient.create_authenticated(self.config)
             tmi_client.cancel_event = self._cancel_events.get(job.job_id)
             tmi_client.delivery_id = job.invocation_key
+            if callback is not None:
+                cb = callback
+                tmi_client.status_heartbeat = lambda m: cb.send_status("in_progress", m)
             if job.is_child:
                 # Unique per (repository, environment) so two repos with the
                 # same environment name do not overwrite each other (#56).

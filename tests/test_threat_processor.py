@@ -1,5 +1,7 @@
 """Tests for CWE validation in tmi_tf.threat_processor."""
 
+import re
+
 from tmi_tf.threat_processor import SecurityThreat, filter_valid_cwe_ids
 
 
@@ -62,3 +64,23 @@ class TestSecurityThreatCweValidation:
             cwe_id=None,
         )
         assert threat.cwe_id == []
+
+
+def test_cwe_1446_ai_ml_ids_are_allowed():
+    assert filter_valid_cwe_ids(["CWE-1039", "CWE-1426", "CWE-1427", "CWE-1434"]) == [
+        "CWE-1039",
+        "CWE-1426",
+        "CWE-1427",
+        "CWE-1434",
+    ]
+
+
+def test_threat_analysis_prompt_lists_every_allowed_id():
+    from unittest.mock import MagicMock
+
+    from tmi_tf.llm_analyzer import LLMAnalyzer
+    from tmi_tf.threat_processor import ALLOWED_CWE_IDS
+
+    prompt = LLMAnalyzer(MagicMock()).threat_analysis_system
+    listed = prompt[prompt.index("# Allowed CWE IDs") :]
+    assert {int(x) for x in re.findall(r"\b\d+\b", listed)} == set(ALLOWED_CWE_IDS)

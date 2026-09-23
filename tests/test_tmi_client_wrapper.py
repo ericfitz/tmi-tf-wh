@@ -155,3 +155,53 @@ def test_no_poll_without_delivery_id():
     with patch("tmi_tf.tmi_client_wrapper.requests.get", get):
         client.update_status_note("tm1", "a")
     get.assert_not_called()
+
+
+def test_create_threat_sets_metadata_after_create():
+    """TMI drops ThreatInput.metadata on create (#77); set it separately."""
+    client = _client()
+    client.sub_resources_api.create_threat_model_threat.return_value = MagicMock(
+        id="t1"
+    )
+    with patch("tmi_tf.tmi_client_wrapper.ThreatInput") as ti:
+        client.create_threat(
+            "tm1", "n", "Spoofing", metadata=[{"key": "llm-profile", "value": "p"}]
+        )
+    assert ti.call_args.kwargs.get("metadata") is None
+    call = client.sub_resources_api.bulk_create_threat_metadata.call_args
+    assert call.kwargs["threat_model_id"] == "tm1"
+    assert call.kwargs["threat_id"] == "t1"
+    assert [(m.key, m.value) for m in call.kwargs["metadata"]] == [("llm-profile", "p")]
+
+
+def test_create_threat_survives_metadata_failure():
+    client = _client()
+    client.sub_resources_api.create_threat_model_threat.return_value = MagicMock(
+        id="t1"
+    )
+    client.sub_resources_api.bulk_create_threat_metadata.side_effect = RuntimeError()
+    with patch("tmi_tf.tmi_client_wrapper.ThreatInput"):
+        client.create_threat(
+            "tm1", "n", "Spoofing", metadata=[{"key": "k", "value": "v"}]
+        )
+
+
+def test_update_status_note_sends_heartbeat_after_cancel_check():
+    client, get, _, _ = _polling_client(status="in_progress")
+    beats: list[str] = []
+    client.status_heartbeat = beats.append
+    with patch("tmi_tf.tmi_client_wrapper.requests.get", get):
+        client.update_status_note("tm1", "Phase 2 started")
+    assert beats == ["Phase 2 started"]
+
+
+def test_no_heartbeat_once_cancelled():
+    client, get, _, _ = _polling_client(status="cancelled")
+    beats: list[str] = []
+    client.status_heartbeat = beats.append
+    with (
+        patch("tmi_tf.tmi_client_wrapper.requests.get", get),
+        pytest.raises(AnalysisAborted),
+    ):
+        client.update_status_note("tm1", "Phase 2 started")
+    assert beats == []

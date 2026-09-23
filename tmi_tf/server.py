@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, FastAPI, Request  # ty:ignore[unresolved-import]
 from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-import]
 
-from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.config import get_config
 from tmi_tf.invocation import Debouncer, InvocationState, is_open, read_state
 from tmi_tf.job import Job
@@ -128,13 +127,8 @@ async def _report_duplicate(parsed: dict, event_type: str, job_id: str) -> None:
         )
     except Exception as e:
         logger.warning("Could not record duplicate on status note: %s", e)
-    if (
-        event_type == "addon.invoked"
-        and parsed.get("callback_url")
-        and config.webhook_secret
-    ):
-        cb = AddonCallback(parsed["callback_url"], config.webhook_secret)
-        await asyncio.to_thread(cb.send_status, "failed", "analysis already running")
+    # No status callback: TMI marks the delivery `delivered` once it gets our
+    # 200, so a callback sent before then would be overwritten.
 
 
 @router.post("/webhook")
@@ -222,6 +216,14 @@ async def webhook(request: Request) -> Response:
         logger.info("Ignoring event type %r for job_id=%s", event_type, job_id)
         return JSONResponse(content={"status": "ignored", "job_id": job_id})
 
+    # Only addon invocations report status back, to TMI's delivery-status
+    # endpoint (the payload has carried no callback_url since TMI #194).
+    if event_type == "addon.invoked" and delivery_id:
+        parsed["callback_url"] = (
+            f"{config.tmi_server_url.rstrip('/')}/webhook-deliveries/"
+            f"{delivery_id}/status"
+        )
+
     if await _is_duplicate(parsed["threat_model_id"]):
         await _report_duplicate(parsed, event_type, job_id)
         return JSONResponse(content={"status": "deduplicated", "job_id": job_id})
@@ -251,7 +253,17 @@ async def webhook(request: Request) -> Response:
             "No queue client configured; job not enqueued: job_id=%s", job_id
         )
 
-    return JSONResponse(content={"status": "accepted", "job_id": job_id})
+    # X-TMI-Callback: async keeps the TMI delivery `in_progress` so our status
+    # callbacks (and cancellation) apply; without it TMI marks it `delivered`
+    # (terminal) and every callback gets 409.
+    headers = (
+        {"X-TMI-Callback": "async"}
+        if job.callback_url and queue_client is not None and config.webhook_secret
+        else None
+    )
+    return JSONResponse(
+        content={"status": "accepted", "job_id": job_id}, headers=headers
+    )
 
 
 @router.get("/health")

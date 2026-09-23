@@ -92,13 +92,11 @@ class TestParseWebhookPayload:
         payload = {
             "type": "threat_model.created",
             "threat_model_id": "tm-001",
-            "callback_url": "https://api.tmi.dev/cb",
             "invocation_id": "inv-001",
         }
         result = parse_webhook_payload(payload)
         assert result["event_type"] == "threat_model.created"
         assert result["threat_model_id"] == "tm-001"
-        assert result["callback_url"] == "https://api.tmi.dev/cb"
         assert result["invocation_id"] == "inv-001"
         assert "repo_id" not in result
 
@@ -120,14 +118,12 @@ class TestParseWebhookPayload:
             "threat_model_id": "tm-003",
             "resource_type": "addon",
             "resource_id": "addon-7",
-            "callback_url": "https://api.tmi.dev/invocations/inv-2/status",
             "invocation_id": "inv-2",
         }
         result = parse_webhook_payload(payload)
         assert result["event_type"] == "addon.invoked"
         assert result["threat_model_id"] == "tm-003"
         assert "repo_id" not in result
-        assert result["callback_url"] == "https://api.tmi.dev/invocations/inv-2/status"
         assert result["invocation_id"] == "inv-2"
 
     def test_missing_threat_model_id(self):

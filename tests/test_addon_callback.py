@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 from unittest.mock import MagicMock, patch
 
 import requests  # ty:ignore[unresolved-import]
@@ -38,6 +39,10 @@ class TestAddonCallback:
             call_kwargs = mock_post.call_args
             # Verify URL
             assert call_kwargs[0][0] == callback_url
+            assert json.loads(call_kwargs[1]["data"]) == {
+                "status": "completed",
+                "status_message": "Job finished successfully",
+            }
             # Verify signature header is present
             headers = call_kwargs[1]["headers"]
             assert "X-Webhook-Signature" in headers
@@ -73,3 +78,14 @@ def test_send_status_409_is_logged_not_raised(caplog):
         cb.send_status("failed", "aborted")
     mock_post.return_value.raise_for_status.assert_not_called()
     assert not any(r.exc_info for r in caplog.records)
+
+
+def test_send_status_omits_empty_message_and_caps_length():
+    """TMI's UpdateWebhookDeliveryStatusRequest: status_message maxLength 1024."""
+    cb = AddonCallback(callback_url="https://example.com/cb", secret="s")
+    with patch("tmi_tf.addon_callback.requests.post") as mock_post:
+        cb.send_status("in_progress")
+        cb.send_status("failed", "x" * 2000)
+    bodies = [json.loads(c.kwargs["data"]) for c in mock_post.call_args_list]
+    assert bodies[0] == {"status": "in_progress"}
+    assert len(bodies[1]["status_message"]) == 1024

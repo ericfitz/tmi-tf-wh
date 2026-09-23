@@ -26,6 +26,7 @@ def _make_config(**overrides):
     cfg.job_timeout = overrides.get("job_timeout", 3600)
     cfg.max_message_age_hours = overrides.get("max_message_age_hours", 24)
     cfg.queue_provider = overrides.get("queue_provider", "oci")
+    cfg.tmi_server_url = overrides.get("tmi_server_url", "https://tmi.example/")
     return cfg
 
 
@@ -62,7 +63,6 @@ class TestWebhookEndpoint:
             "threat_model_id": "tm-001",
             "resource_type": "addon",
             "resource_id": "addon-1",
-            "callback_url": "https://api.tmi.dev/cb",
             "invocation_id": "inv-001",
         }
         body = json.dumps(payload).encode()
@@ -83,8 +83,13 @@ class TestWebhookEndpoint:
         data = response.json()
         assert data["status"] == "accepted"
         assert data["job_id"] == "inv-001"
-        # Verify publish was called
-        assert server_module.queue_client.publish.called  # type: ignore[union-attr]
+        message = server_module.queue_client.publish.call_args.args[0]  # type: ignore[union-attr]
+        assert (
+            message["callback_url"]
+            == "https://tmi.example/webhook-deliveries/del-001/status"
+        )
+        # Keeps the TMI delivery open (in_progress) for our status callbacks.
+        assert response.headers["X-TMI-Callback"] == "async"
 
     def test_addon_user_data_environments_sets_scope(self, client):
         payload = {
@@ -92,7 +97,6 @@ class TestWebhookEndpoint:
             "threat_model_id": "tm-001",
             "resource_type": "addon",
             "resource_id": "addon-1",
-            "callback_url": "https://api.tmi.dev/cb",
             "invocation_id": "inv-001",
             "data": {"user_data": {"environments": "aws-*, oci-public"}},
         }
@@ -254,14 +258,12 @@ class TestIgnoredEvents:
         assert message["event_type"] == "addon.invoked"
 
 
-def _post(client, invocation_id="inv-001", event="addon.invoked", callback=True):
+def _post(client, invocation_id="inv-001", event="addon.invoked"):
     payload = {
         "type": event,
         "threat_model_id": "tm-001",
         "invocation_id": invocation_id,
     }
-    if callback:
-        payload["callback_url"] = "https://api.tmi.dev/cb"
     body = json.dumps(payload).encode()
     return client.post(
         "/webhook",
@@ -294,7 +296,7 @@ class TestDedup:
         assert r.json()["status"] == "deduplicated"
         assert server_module.queue_client.publish.call_count == 1  # type: ignore[union-attr]
 
-    def test_open_invocation_drops_and_calls_back(self, client):
+    def test_open_invocation_drops_without_callback(self, client):
         from datetime import datetime, timedelta, timezone
 
         from tmi_tf.invocation import Debouncer, InvocationState
@@ -307,16 +309,13 @@ class TestDedup:
         with (
             patch("tmi_tf.server.read_state", return_value=state),
             patch("tmi_tf.server.TMIClient.create_authenticated", return_value=tmi),
-            patch("tmi_tf.server.AddonCallback") as cb_cls,
         ):
             r = _post(client, "c")
         assert r.json()["status"] == "deduplicated"
         server_module.queue_client.publish.assert_not_called()  # type: ignore[union-attr]
         tmi.append_status_line.assert_called_once()
         assert "already running" in tmi.append_status_line.call_args.args[1]
-        cb_cls.return_value.send_status.assert_called_once_with(
-            "failed", "analysis already running"
-        )
+        assert "X-TMI-Callback" not in r.headers
 
     def test_open_but_past_deadline_is_accepted(self, client):
         from datetime import datetime, timedelta, timezone
@@ -357,11 +356,9 @@ class TestDedup:
             patch(
                 "tmi_tf.server.TMIClient.create_authenticated", return_value=MagicMock()
             ),
-            patch("tmi_tf.server.AddonCallback") as cb_cls,
         ):
-            r = _post(client, "f", event="threat_model.updated", callback=False)
+            r = _post(client, "f", event="threat_model.updated")
         assert r.json()["status"] == "deduplicated"
-        cb_cls.assert_not_called()
 
     def test_publish_failure_releases_debounce(self, client):
         from tmi_tf.invocation import Debouncer
@@ -412,3 +409,14 @@ class TestLifespanProfiles:
         assert "LLM profile gpt56cyber: missing key T_LIFESPAN_ABSENT_KEY" in (
             caplog.text
         )
+
+
+def test_non_addon_event_gets_no_callback_url(client):
+    _post(client, "g", event="threat_model.updated")
+    message = server_module.queue_client.publish.call_args.args[0]  # type: ignore[union-attr]
+    assert message["callback_url"] is None
+
+
+def test_non_addon_event_is_not_async(client):
+    r = _post(client, "h", event="threat_model.updated")
+    assert "X-TMI-Callback" not in r.headers
