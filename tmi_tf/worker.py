@@ -206,6 +206,7 @@ class WorkerPool:
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
             tmi_client.cancel_event = self._cancel_events.get(job.job_id)
+            tmi_client.delivery_id = job.invocation_key
             if job.is_child:
                 # Unique per (repository, environment) so two repos with the
                 # same environment name do not overwrite each other (#56).
@@ -232,13 +233,15 @@ class WorkerPool:
             # Delete message on completion
             await asyncio.to_thread(self.queue_client.delete, receipt)
         except AnalysisAborted:
-            # In practice unreachable today: abort() both sets the cancel
-            # event AND cancels this task, and the task cancellation wins the
-            # race (see abort()), turning this into asyncio.CancelledError in
-            # _handle_message instead. This becomes the live path if a future
-            # caller (e.g. PR 3's TMI delivery-cancel poll) sets the event
-            # without cancelling the task.
+            # Reached when the delivery poll saw `cancelled` in TMI. (A local
+            # abort() also cancels this task, which usually surfaces as
+            # asyncio.CancelledError in _handle_message instead.)
             logger.info("Job %s aborted", job.job_id)
+            if job.invocation_key not in self._cancelled:
+                # Drop our own task first so abort() doesn't cancel the
+                # coroutine that is running it.
+                self._tasks.pop(job.job_id, None)
+                await self.abort(job.invocation_key, "cancelled in TMI")
         except Exception as e:
             logger.error(f"Job exception: job_id={job.job_id}, error={e}")
             if job.is_child:
@@ -397,10 +400,12 @@ class WorkerPool:
             return len(victims)
 
         closed = False
+        already_closed = False
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
             async with lock_for(threat_model_id):
                 state = await asyncio.to_thread(read_state, tmi_client, threat_model_id)
+                already_closed = state.invocation_id == invocation_id and not state.open
                 if state.open and state.invocation_id == invocation_id:
                     for job in victims:
                         if job.is_child:
@@ -427,8 +432,14 @@ class WorkerPool:
                         wd.cancel()
             # A running victim always gets its "aborted" callback, even if
             # the invocation had not been opened yet (e.g. a parent still in
-            # resolve_fanout_targets) and there was nothing to close.
-            if (victims or closed) and callback_url and self.config.webhook_secret:
+            # resolve_fanout_targets) and there was nothing to close — unless
+            # the invocation was already closed, whose closer sent the final
+            # status (e.g. abort racing the last child's "completed").
+            if (
+                (closed or (victims and not already_closed))
+                and callback_url
+                and self.config.webhook_secret
+            ):
                 cb = AddonCallback(callback_url, self.config.webhook_secret)
                 await asyncio.to_thread(cb.send_status, "failed", f"aborted: {reason}")
         except Exception as e:

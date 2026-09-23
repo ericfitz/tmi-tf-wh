@@ -63,3 +63,13 @@ class TestAddonCallback:
         with patch("tmi_tf.addon_callback.requests.post") as mock_post:
             cb.send_status("completed", "Done")
             mock_post.assert_not_called()
+
+
+def test_send_status_409_is_logged_not_raised(caplog):
+    """TMI returns 409 once a delivery is terminal (cancelled/completed)."""
+    cb = AddonCallback(callback_url="https://example.com/callback", secret="s")
+    with patch("tmi_tf.addon_callback.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=409)
+        cb.send_status("failed", "aborted")
+    mock_post.return_value.raise_for_status.assert_not_called()
+    assert not any(r.exc_info for r in caplog.records)
