@@ -51,7 +51,7 @@ class TestPhase3Decomposition:
             "threat_type": "Information Disclosure",
             "severity": "High",
             "cvss_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
-            "cwe_id": ["CWE-284"],
+            "cwe_id": ["CWE-276"],
             "mitigation": "Enable S3 Block Public Access",
             "category": "Public Exposure",
         }
@@ -72,7 +72,7 @@ class TestPhase3Decomposition:
         finding = result.security_findings[0]
         assert finding["name"] == "Public S3 Bucket"
         assert finding["threat_type"] == "Information Disclosure"
-        assert finding["cwe_id"] == ["CWE-284"]
+        assert finding["cwe_id"] == ["CWE-276"]
         assert finding["score"] is not None
         assert len(finding["cvss"]) == 1
 
@@ -103,7 +103,7 @@ class TestPhase3Decomposition:
             "threat_type": "Tampering",
             "severity": "Medium",
             "cvss_vector": "CVSS:4.0/AV:N/AC:H/AT:N/PR:L/UI:N/VC:N/VI:L/VA:N/SC:N/SI:N/SA:N",
-            "cwe_id": ["CWE-345"],
+            "cwe_id": ["CWE-353"],
             "mitigation": "Add integrity checks",
             "category": "Best Practices",
         }
@@ -133,7 +133,7 @@ class TestPhase3Decomposition:
             "threat_type": "Spoofing",
             "severity": "High",
             "cvss_vector": "CVSS:4.0/AV:INVALID",
-            "cwe_id": ["CWE-287"],
+            "cwe_id": ["CWE-306"],
             "mitigation": "Fix auth",
             "category": "Authentication/Authorization",
         }
@@ -212,3 +212,41 @@ class TestPhase1Retry:
         assert provider.complete.call_count == 2
         assert "Phase 1" in result.error_message
         assert "2 attempts" in result.error_message
+
+
+class TestCweRedirect:
+    """#79: one corrective turn when phase 3b maps to a disallowed CWE."""
+
+    def _run(self, *analyses):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps({"components": [], "services": []})),
+            _make_llm_response(json.dumps({"relationships": []})),
+            _make_llm_response(
+                json.dumps(
+                    [{"name": "T", "description": "d", "affected_components": []}]
+                )
+            ),
+            *(_make_llm_response(json.dumps(a)) for a in analyses),
+        ]
+        return provider, LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+    def test_allowed_cwe_needs_no_retry(self):
+        provider, result = self._run({"cwe_id": ["CWE-306"]})
+        assert provider.complete.call_count == 4
+        assert result.security_findings[0]["cwe_id"] == ["CWE-306"]
+
+    def test_disallowed_cwe_triggers_redirect(self):
+        provider, result = self._run(
+            {"cwe_id": ["CWE-862", "CWE-306"]}, {"cwe_id": ["CWE-306"]}
+        )
+        assert provider.complete.call_count == 5
+        retry_user = provider.complete.call_args_list[4].args[1]
+        assert "CWE-862 not allowed" in retry_user
+        assert "CWE-699 or CWE-1446" in retry_user
+        assert result.security_findings[0]["cwe_id"] == ["CWE-306"]
+
+    def test_unparseable_redirect_keeps_first_answer(self):
+        provider, result = self._run({"cwe_id": ["CWE-862"]}, "not json")
+        assert provider.complete.call_count == 5
+        assert result.security_findings[0]["cwe_id"] == ["CWE-862"]

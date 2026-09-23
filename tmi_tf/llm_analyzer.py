@@ -22,7 +22,7 @@ from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
-from tmi_tf.threat_processor import ALLOWED_CWE_IDS
+from tmi_tf.threat_processor import ALLOWED_CWE_IDS, disallowed_cwe_ids
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +362,49 @@ class LLMAnalyzer:
                         )
                         continue
 
+                    # One corrective turn if any CWE is outside the allowlist
+                    # (#79); leftovers are dropped later by SecurityThreat.
+                    cwe_ids = analysis_result.get("cwe_id") or []
+                    if isinstance(cwe_ids, str):
+                        cwe_ids = [cwe_ids]
+                    bad_cwes = disallowed_cwe_ids(cwe_ids)
+                    if bad_cwes:
+                        logger.warning(
+                            "Phase 3b: '%s' mapped to disallowed CWEs %s; "
+                            "asking the LLM to redo the mapping",
+                            threat_name,
+                            bad_cwes,
+                        )
+                        retry_user = (
+                            threat_analysis_user
+                            + "\n\n# Your previous answer\n\n"
+                            + json.dumps(analysis_result)
+                            + "\n\n# Correction required\n\n"
+                            + f"{', '.join(bad_cwes)} not allowed. You may only "
+                            "map a threat to CWE IDs that are descendants of "
+                            'CWE-699 or CWE-1446, i.e. IDs in the "Allowed CWE '
+                            'IDs" list. Redo the CWE mapping using only allowed '
+                            "IDs and return the complete JSON object again."
+                        )
+                        retry_result, r_in, r_out, r_cost = self._call_llm_json(
+                            system_prompt=self.threat_analysis_system,
+                            user_prompt=retry_user,
+                            phase_name=f"threat_analysis_{i}_cwe_retry",
+                            max_tokens=4000,
+                            timeout=120.0,
+                        )
+                        sec_tokens_in += r_in
+                        sec_tokens_out += r_out
+                        sec_cost += r_cost
+                        total_input_tokens += r_in
+                        total_output_tokens += r_out
+                        total_cost += r_cost
+                        if retry_result:
+                            analysis_result = retry_result
+                            cwe_ids = analysis_result.get("cwe_id") or []
+                            if isinstance(cwe_ids, str):
+                                cwe_ids = [cwe_ids]
+
                     # Validate and score CVSS vector
                     cvss_vector = analysis_result.get("cvss_vector", "")
                     cvss_list: list[dict[str, Any]] = []
@@ -397,7 +440,7 @@ class LLMAnalyzer:
                         "severity": severity,
                         "score": score,
                         "cvss": cvss_list,
-                        "cwe_id": analysis_result.get("cwe_id", []),
+                        "cwe_id": cwe_ids,
                         "mitigation": analysis_result.get("mitigation", ""),
                         "category": analysis_result.get("category", ""),
                     }

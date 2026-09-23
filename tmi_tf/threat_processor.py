@@ -20,6 +20,16 @@ CWE_1446_IDS: frozenset[int] = frozenset({1039, 1426, 1427, 1434})
 ALLOWED_CWE_IDS: frozenset[int] = CWE_699_IDS | CWE_1446_IDS
 
 
+def disallowed_cwe_ids(cwe_ids: list[str]) -> list[str]:
+    """Return the IDs that are malformed or not in ALLOWED_CWE_IDS."""
+    bad: list[str] = []
+    for cid in cwe_ids:
+        m = _CWE_RE.match(cid)
+        if not m or int(m.group(1)) not in ALLOWED_CWE_IDS:
+            bad.append(cid)
+    return bad
+
+
 def filter_valid_cwe_ids(cwe_ids: list[str]) -> list[str]:
     """Filter CWE IDs to ALLOWED_CWE_IDS (CWE-699 non-category + CWE-1446).
 
