@@ -19,6 +19,7 @@ from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
 from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
+from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.providers import get_llm_provider
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
@@ -212,6 +213,7 @@ def run_analysis(
     config: Config,
     threat_model_id: str,
     tmi_client: TMIClient,
+    profile: LLMProfile,
     repo_id: str | None = None,
     temp_dir: Path | None = None,
     callback: StatusCallback | None = None,
@@ -229,6 +231,7 @@ def run_analysis(
         config: Application configuration.
         threat_model_id: UUID of the threat model in TMI.
         tmi_client: Authenticated TMI client.
+        profile: Selected LLM profile (see tmi_tf.llm_profiles).
         repo_id: If given, only analyse the repository with this ID.
         temp_dir: Base temporary directory for clones.
         callback: Optional status callback (e.g. AddonCallback).
@@ -253,11 +256,14 @@ def run_analysis(
         # Initialize helpers
         logger.info("\n[1/7] Initializing clients...")
         repo_analyzer = RepositoryAnalyzer(config)
-        llm_provider = get_llm_provider(config)
+        llm_provider = get_llm_provider(profile)
         llm_analyzer = LLMAnalyzer(llm_provider)
         markdown_gen = MarkdownGenerator()
 
-        tmi_client.update_status_note(threat_model_id, "Analysis started")
+        tmi_client.update_status_note(
+            threat_model_id,
+            f"Analysis started (profile {profile.name}, {llm_provider.model})",
+        )
 
         # Get threat model
         logger.info("\n[2/7] Fetching threat model...")
@@ -476,6 +482,7 @@ def run_analysis(
             analyses=analyses,
             provider=llm_analyzer.provider,
             model=llm_analyzer.model,
+            profile=llm_provider.profile,
         )
         try:
             tmi_client.set_note_metadata(
@@ -573,6 +580,7 @@ def run_analysis(
                         input_tokens=dfd_generator.input_tokens,
                         output_tokens=dfd_generator.output_tokens,
                         cost_estimate_usd=dfd_generator.total_cost,
+                        profile=llm_provider.profile,
                     )
                     try:
                         tmi_client.set_diagram_metadata(
@@ -638,6 +646,7 @@ def run_analysis(
                         input_tokens=sec_input,
                         output_tokens=sec_output,
                         cost_estimate_usd=sec_cost,
+                        profile=llm_provider.profile,
                     )
                     created_threats = threat_processor.create_threats_in_tmi(
                         threats=all_threats,

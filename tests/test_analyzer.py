@@ -11,6 +11,9 @@ from tmi_tf.analyzer import (
     run_analysis,
 )
 from tmi_tf.config import Config
+from tmi_tf.llm_profiles import LLMProfile
+
+PROFILE = LLMProfile("t", "oci", "m", "oci")
 
 
 class TestAnalysisResult:
@@ -200,7 +203,9 @@ class TestRunAnalysisEnvironmentSelection:
             ),
         ):
             llm.return_value.analyze_repository = analyze
-            run_analysis(Config(), "tm1", tmi, skip_diagram=True, skip_threats=True)
+            run_analysis(
+                Config(), "tm1", tmi, PROFILE, skip_diagram=True, skip_threats=True
+            )
         assert analyze.call_args.args[0].environment_name == "b"
         assert analyze.call_count == 1
 
@@ -226,6 +231,7 @@ class TestRunAnalysisEnvironmentSelection:
                 Config(),
                 "tm1",
                 tmi,
+                PROFILE,
                 skip_diagram=True,
                 skip_threats=True,
                 environment="",
@@ -237,7 +243,7 @@ class TestRunAnalysisEnvironmentSelection:
         tmi = _tmi_with_repo()
         clone, gh, prov, llm_cls, md, val = self._patches(tree)
         with clone, gh, prov, llm_cls, md, val:
-            result = run_analysis(Config(), "tm1", tmi, environment="gone")
+            result = run_analysis(Config(), "tm1", tmi, PROFILE, environment="gone")
         assert result.success is True
         assert any("gone" in e for e in result.errors)
         assert result.analyses == []
@@ -249,7 +255,7 @@ class TestRunAnalysisEnvironmentSelection:
             patch("tmi_tf.analyzer.get_llm_provider"),
             patch("tmi_tf.analyzer.LLMAnalyzer"),
         ):
-            result = run_analysis(Config(), "tm1", tmi)
+            result = run_analysis(Config(), "tm1", tmi, PROFILE)
         assert result.success is False
 
 
@@ -267,9 +273,24 @@ class TestAllAnalysesFailed:
         with clone, gh, prov, llm_cls as llm, md, val:
             llm.return_value.analyze_repository = MagicMock(return_value=analysis)
             result = run_analysis(
-                Config(), "tm1", tmi, skip_diagram=True, skip_threats=True
+                Config(), "tm1", tmi, PROFILE, skip_diagram=True, skip_threats=True
             )
         assert result.success is False
         assert any("boom" in e for e in result.errors)
         last_note = tmi.update_status_note.call_args.args[1]
         assert "failed" in last_note.lower()
+
+
+class TestRunAnalysisProfile:
+    def test_provider_built_from_profile_and_named_in_status(self):
+        tmi = _tmi_with_repo()
+        with (
+            patch("tmi_tf.analyzer.GitHubClient.is_github_url", return_value=False),
+            patch("tmi_tf.analyzer.get_llm_provider") as get_provider,
+            patch("tmi_tf.analyzer.LLMAnalyzer"),
+        ):
+            get_provider.return_value.model = "oci/m"
+            run_analysis(Config(), "tm1", tmi, PROFILE)
+        get_provider.assert_called_once_with(PROFILE)
+        first_note = tmi.update_status_note.call_args_list[0].args[1]
+        assert first_note == "Analysis started (profile t, oci/m)"
