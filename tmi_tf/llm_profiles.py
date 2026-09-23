@@ -13,6 +13,8 @@ FUTURE_AUTHS = ("aws", "gcp", "azure_ad")
 APIS = ("chat", "responses")
 FIELDS = {"provider", "model", "auth", "api_key", "api", "base_url"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+# Values shipped in examples and vault seeds; treated as "not set".
+PLACEHOLDER_MARKERS = ("placeholder", "your_", "change_me")
 
 
 class ProfileError(Exception):
@@ -78,7 +80,10 @@ def _parse(name: str, raw: object) -> LLMProfile:
         )
     if auth != "api_key" and key is not None:
         raise ValueError(f"profile {name}: 'api_key' is only valid with auth api_key")
-    return LLMProfile(name, provider, raw["model"], auth, key, api, raw.get("base_url"))
+    base_url = raw.get("base_url")
+    if base_url is not None and not (isinstance(base_url, str) and base_url.strip()):
+        raise ValueError(f"profile {name}: 'base_url' must be a non-empty string")
+    return LLMProfile(name, provider, raw["model"], auth, key, api, base_url)
 
 
 def load_profiles(path: Path) -> dict[str, LLMProfile]:
@@ -97,7 +102,7 @@ def select_profile(
     profiles: dict[str, LLMProfile], requested: str | None, default: str | None
 ) -> LLMProfile:
     """The requested profile, else the default (LLM_PROFILE)."""
-    name = requested or default
+    name = (requested or default or "").strip()
     if not name:
         raise ProfileError("no LLM profile requested and LLM_PROFILE is not set")
     if name not in profiles:
@@ -112,8 +117,8 @@ def resolve_key(profile: LLMProfile) -> str | None:
     """The profile's API key; None for cloud auth. Errors name the var, never the value."""
     if profile.auth != "api_key":
         return None
-    value = os.environ.get(profile.api_key or "")
-    if not value or "placeholder" in value:
+    value = os.environ.get(profile.api_key or "", "").strip()
+    if not value or any(m in value.lower() for m in PLACEHOLDER_MARKERS):
         raise ProfileError(
             f'LLM profile "{profile.name}" needs {profile.api_key}, which is not set'
         )

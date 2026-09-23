@@ -93,6 +93,14 @@ class TestLoad:
                 "api",
             ),
             ("profiles:\n  x: [1, 2]", "mapping"),
+            (
+                "profiles:\n  x: {provider: oci, model: m, auth: oci, base_url: 123}",
+                "base_url",
+            ),
+            (
+                "profiles:\n  x: {provider: oci, model: m, auth: oci, base_url: ''}",
+                "base_url",
+            ),
             ("profiles: [unclosed", "p.yaml"),
         ],
     )
@@ -118,6 +126,10 @@ P = {
 class TestSelect:
     def test_requested_wins(self):
         assert select_profile(P, "b", "a").name == "b"
+
+    def test_whitespace_trimmed(self):
+        assert select_profile(P, " b ", None).name == "b"
+        assert select_profile(P, None, " a\n").name == "a"
 
     def test_default_used(self):
         assert select_profile(P, None, "a").name == "a"
@@ -146,7 +158,10 @@ class TestResolveKey:
         with patch.dict(os.environ, {"TEST_PROFILE_KEY": "sk-1"}):
             assert resolve_key(K) == "sk-1"
 
-    @pytest.mark.parametrize("val", [None, "", "placeholder"])
+    @pytest.mark.parametrize(
+        "val",
+        [None, "", "placeholder", "your_openai_api_key_here", "CHANGE_ME", "  "],
+    )
     def test_missing_empty_placeholder(self, val):
         env = {} if val is None else {"TEST_PROFILE_KEY": val}
         with patch.dict(os.environ, env):
