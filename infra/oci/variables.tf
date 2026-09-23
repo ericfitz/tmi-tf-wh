@@ -94,10 +94,16 @@ variable "k8s_namespace" {
   default     = "tmi-tf"
 }
 
-variable "llm_provider" {
-  description = "LLM provider to use (anthropic, openai, xai, gemini, oci)"
+variable "llm_profile" {
+  description = "Default LLM profile name (LLM_PROFILE); profiles live in llm-profiles.yaml"
   type        = string
-  default     = "oci"
+  default     = "gpt56cyber"
+}
+
+variable "llm_api_key_names" {
+  description = "Env var names of the LLM keys profiles reference; one vault secret each (values set out of band)"
+  type        = list(string)
+  default     = ["OPENAI_CYBER_API_KEY", "ANTHROPIC_API_KEY"]
 }
 
 variable "tmi_server_url" {

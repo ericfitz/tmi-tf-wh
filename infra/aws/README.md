@@ -20,8 +20,10 @@ cat > secrets.auto.tfvars <<'EOF'
 webhook_secret    = "<random 32+ char string>"
 tmi_client_id     = "<from TMI, see below>"
 tmi_client_secret = "<from TMI, see below>"
-llm_api_key       = "<Anthropic API key>"
 github_token      = ""
+llm_api_keys = {
+  OPENAI_CYBER_API_KEY = "<key>"   # names match api_key in llm-profiles.yaml
+}
 EOF
 
 terraform init -backend-config=backend.hcl
@@ -43,6 +45,21 @@ Verify:
 curl -s https://webhook.tmi.dev/tf/health
 kubectl --context tmi-eks -n tmi-tf get pods,ingress
 ```
+
+## LLM profiles
+
+The model is chosen per invocation from the named profiles in
+`llm-profiles.yaml` (built into the image): `{"environments": "aws",
+"profile": "gpt56cyber"}` in the addon invocation's `user_data`. With no
+`profile`, `llm_profile` (the pod's `LLM_PROFILE`) is used.
+
+- Keys: `llm_api_keys` in `secrets.auto.tfvars`, keyed by the env var names
+  the profiles reference (`api_key:`). Several keys can be deployed at once.
+- Override the profiles without a new image: set `llm_profiles_yaml` to the
+  full file content; it is mounted from a ConfigMap and replaces the image's
+  file. Changing only Secret/ConfigMap data does not restart the pod: run
+  `kubectl --context tmi-eks -n tmi-tf rollout restart deployment/tmi-tf`.
+- Startup logs one line per profile (`usable` or `missing key <VAR>`).
 
 ## TMI-side wiring (manual, once)
 

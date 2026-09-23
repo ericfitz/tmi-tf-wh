@@ -63,12 +63,9 @@ All configuration is managed through the `.env` file:
 |----------|-------------|---------|
 | `TMI_SERVER_URL` | TMI server URL | `https://api.tmi.dev` |
 | `TMI_OAUTH_IDP` | OAuth identity provider | `google` |
-| `LLM_PROVIDER` | LLM provider to use | `anthropic` |
-| `LLM_MODEL` | Model override (optional) | Provider default |
-| `ANTHROPIC_API_KEY` | Claude API key | Required if `LLM_PROVIDER=anthropic` |
-| `OPENAI_API_KEY` | OpenAI API key | Required if `LLM_PROVIDER=openai` |
-| `XAI_API_KEY` | x.ai API key | Required if `LLM_PROVIDER=xai` |
-| `GEMINI_API_KEY` | Google Gemini API key | Required if `LLM_PROVIDER=gemini` |
+| `LLM_PROFILE` | Default LLM profile (see [LLM profiles](#llm-profiles)) | *Required unless every run names one* |
+| `LLM_PROFILES_FILE` | Profiles file | `llm-profiles.yaml` in the project root |
+| *key vars* | API keys, under the names the profiles' `api_key` fields reference (e.g. `OPENAI_CYBER_API_KEY`) | Required for the profiles you use |
 | `GITHUB_TOKEN` | GitHub personal access token | *Optional* |
 | `MAX_REPOS` | Maximum repositories to analyze | `3` |
 | `CLONE_TIMEOUT` | Git clone timeout in seconds | `300` |
@@ -78,6 +75,37 @@ All configuration is managed through the `.env` file:
 | `DEDUP_DEBOUNCE_SECONDS` | Triggers for the same threat model within this window are dropped (`0` disables) | `30` |
 
 **Note:** The model name is automatically appended to note and diagram names (e.g., "Terraform Analysis Report (claude-sonnet-4-5)").
+
+## LLM profiles
+
+A profile names everything LiteLLM needs to run the analysis. Profiles live in
+`llm-profiles.yaml`:
+
+```yaml
+profiles:
+  gpt56cyber:
+    provider: openai
+    model: gpt-5.6-cyber
+    api: responses
+    auth: api_key
+    api_key: OPENAI_CYBER_API_KEY
+```
+
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `provider` | yes | `anthropic`, `openai`, `xai`, `gemini`, `oci` |
+| `model` | yes | Bare model name, no LiteLLM prefix |
+| `auth` | yes | `api_key`, or `oci` (OCI config file / resource principal and `OCI_COMPARTMENT_ID`) |
+| `api_key` | with `auth: api_key` | Name of the env var / secret holding the key, never the key itself |
+| `api` | no | `chat` (default) or `responses` (OpenAI Responses API; openai only) |
+| `base_url` | no | Send calls to a proxy or compatible gateway |
+
+The LiteLLM model string is built from these fields (`openai/responses/gpt-5.6-cyber`).
+Select a profile with `--profile` on the CLI or `"profile"` in the addon
+invocation's `user_data`, e.g. `{"environments": "aws", "profile": "gpt56cyber"}`;
+otherwise `LLM_PROFILE` is used. An unknown profile or a missing key fails the
+run before any clone or LLM call. `tmi-tf config-info` shows which profiles are
+usable.
 
 ## Usage
 
@@ -168,7 +196,8 @@ forms:
 | `all` | Every detected environment. |
 | Comma-separated names/globs, e.g. `aws-*,oci-public` | Environments whose short name matches any pattern (case-insensitive). |
 
-`scope` is read from the TMI addon invocation payload (`data.user_data.environments`).
+`scope` is read from the TMI addon invocation payload (`data.user_data.environments`);
+the LLM profile comes from `data.user_data.profile` (see [LLM profiles](#llm-profiles)).
 Any other webhook event always uses `latest`.
 
 Each matched environment becomes its own child job and writes its own set of

@@ -95,8 +95,8 @@ resource "kubernetes_deployment_v1" "tmi_tf_wh" {
           }
 
           env {
-            name  = "LLM_PROVIDER"
-            value = var.llm_provider
+            name  = "LLM_PROFILE"
+            value = var.llm_profile
           }
 
           env {
