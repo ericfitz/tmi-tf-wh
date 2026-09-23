@@ -377,3 +377,38 @@ class TestDedup:
         assert r2.status_code == 200
         assert r2.json()["status"] == "accepted"
         assert server_module.queue_client.publish.call_count == 2  # type: ignore[union-attr]
+
+
+class TestLifespanProfiles:
+    def test_loads_profile_secrets_and_logs_status(self, caplog):
+        import asyncio
+        import logging
+
+        from tmi_tf.llm_profiles import LLMProfile
+
+        cfg = _make_config(queue_provider="none")
+        cfg.secret_provider = "none"
+        cfg.dedup_debounce_seconds = 0
+        cfg.llm_profiles = {
+            "gpt56cyber": LLMProfile(
+                "gpt56cyber", "openai", "m", "api_key", "T_LIFESPAN_ABSENT_KEY"
+            )
+        }
+        secrets = MagicMock()
+
+        async def run():
+            async with server_module.lifespan(server_module.app):
+                pass
+
+        with (
+            patch("tmi_tf.server.get_config", return_value=cfg),
+            patch("tmi_tf.providers.get_secret_provider", return_value=secrets),
+            caplog.at_level(logging.INFO, logger="tmi_tf.server"),
+        ):
+            asyncio.run(run())
+        secret_map = secrets.load_secrets.call_args.args[0]
+        assert secret_map["t-lifespan-absent-key"] == "T_LIFESPAN_ABSENT_KEY"
+        assert secret_map["github-token"] == "GITHUB_TOKEN"
+        assert "LLM profile gpt56cyber: missing key T_LIFESPAN_ABSENT_KEY" in (
+            caplog.text
+        )

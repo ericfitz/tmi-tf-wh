@@ -22,6 +22,7 @@ class Job:
     repo_name: str | None = None
     siblings: list[str] | None = None
     deadline: datetime | None = None
+    profile: str | None = None
 
     @property
     def is_child(self) -> bool:
@@ -48,6 +49,7 @@ class Job:
             "repo_name": self.repo_name,
             "siblings": self.siblings,
             "deadline": self.deadline.isoformat() if self.deadline else None,
+            "profile": self.profile,
         }
 
     @classmethod
@@ -70,4 +72,5 @@ class Job:
                 if data.get("deadline")
                 else None
             ),
+            profile=data.get("profile"),
         )

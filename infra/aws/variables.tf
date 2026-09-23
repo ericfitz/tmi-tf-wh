@@ -67,16 +67,16 @@ variable "app_image_tag" {
   default     = "latest"
 }
 
-variable "llm_provider" {
-  description = "LLM provider (anthropic, openai, xai, gemini)"
+variable "llm_profile" {
+  description = "Default LLM profile name (LLM_PROFILE); profiles live in llm-profiles.yaml"
   type        = string
-  default     = "anthropic"
+  default     = "gpt56cyber"
 }
 
-variable "llm_model" {
-  description = "Model override passed as LLM_MODEL"
+variable "llm_profiles_yaml" {
+  description = "Optional llm-profiles.yaml content that replaces the image's file (mounted from a ConfigMap); empty = use the image's file"
   type        = string
-  default     = "claude-fable-5-1"
+  default     = ""
 }
 
 variable "tmi_server_url" {
@@ -117,10 +117,11 @@ variable "tmi_client_secret" {
   sensitive   = true
 }
 
-variable "llm_api_key" {
-  description = "API key for llm_provider (mapped to the provider's env var by the app)"
-  type        = string
+variable "llm_api_keys" {
+  description = "LLM API keys keyed by the env var name the profiles reference (e.g. OPENAI_CYBER_API_KEY)"
+  type        = map(string)
   sensitive   = true
+  default     = {}
 }
 
 variable "github_token" {

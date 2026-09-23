@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from tmi_tf.llm_profiles import LLMProfile
     from tmi_tf.providers import QueueMessage
 
 logger = logging.getLogger(__name__)
@@ -221,28 +222,23 @@ class OciQueueProvider:
 
 from tmi_tf.providers.llm_base import BaseLLMProvider
 
-OCI_DEFAULT_MODEL = "oci/xai.grok-4"
-
 
 class OciLLMProvider(BaseLLMProvider):
     """LLM provider for OCI Generative AI service."""
 
-    def __init__(self, model: str | None) -> None:
+    def __init__(self, profile: "LLMProfile") -> None:
         compartment_id = os.environ.get("OCI_COMPARTMENT_ID")
         if not compartment_id:
             raise ValueError(
-                "OCI_COMPARTMENT_ID required when LLM_PROVIDER=oci. "
+                "OCI_COMPARTMENT_ID required for auth oci. "
                 "Set it in your .env file or environment."
             )
 
         config_profile = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
 
-        if model:
-            resolved_model = model if "/" in model else f"oci/{model}"
-        else:
-            resolved_model = OCI_DEFAULT_MODEL
-
-        super().__init__(provider="oci", model=resolved_model)
+        super().__init__(
+            provider="oci", model=profile.litellm_model, profile=profile.name
+        )
 
         # Build completion kwargs
         oci_config_path = Path.home() / ".oci" / "config"
@@ -279,6 +275,6 @@ class OciLLMProvider(BaseLLMProvider):
 
         logger.info(
             "Initialized OCI LLM provider: model=%s, compartment=%s",
-            resolved_model,
+            self.model,
             compartment_id,
         )

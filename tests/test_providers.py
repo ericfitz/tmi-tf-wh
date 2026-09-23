@@ -43,7 +43,6 @@ class TestVaultSecretMap:
             "webhook-secret",
             "tmi-client-id",
             "tmi-client-secret",
-            "llm-api-key",
             "github-token",
         }
         assert set(VAULT_SECRET_MAP.keys()) == expected
@@ -52,7 +51,6 @@ class TestVaultSecretMap:
         assert VAULT_SECRET_MAP["webhook-secret"] == "WEBHOOK_SECRET"
         assert VAULT_SECRET_MAP["tmi-client-id"] == "TMI_CLIENT_ID"
         assert VAULT_SECRET_MAP["tmi-client-secret"] == "TMI_CLIENT_SECRET"
-        assert VAULT_SECRET_MAP["llm-api-key"] == "LLM_API_KEY"
         assert VAULT_SECRET_MAP["github-token"] == "GITHUB_TOKEN"
 
 
@@ -222,7 +220,7 @@ class TestOciSecretProvider:
             compartment_ocid="ocid1.compartment.oc1..test",
         )
         # Should not raise
-        provider.load_secrets({"llm-api-key": "LLM_API_KEY"})
+        provider.load_secrets({"github-token": "GITHUB_TOKEN"})
 
     @patch("tmi_tf.providers.oci.get_oci_signer")
     def test_vaults_client_uses_service_endpoint(self, mock_signer):

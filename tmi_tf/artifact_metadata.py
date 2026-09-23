@@ -19,6 +19,7 @@ class ArtifactMetadata:
     creation_timestamp: str = ""
     llm_provider: str = ""
     llm_model: str = ""
+    llm_profile: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     cost_estimate_usd: float = 0.0
@@ -40,6 +41,7 @@ class ArtifactMetadata:
             {"key": "creation-timestamp", "value": self.creation_timestamp},
             {"key": "llm-provider", "value": self.llm_provider},
             {"key": "llm-model", "value": self.llm_model},
+            {"key": "llm-profile", "value": self.llm_profile},
             {"key": "input-tokens", "value": str(self.input_tokens)},
             {"key": "output-tokens", "value": str(self.output_tokens)},
             {"key": "cost-estimate-usd", "value": f"{self.cost_estimate_usd:.3f}"},
@@ -64,6 +66,7 @@ def create_artifact_metadata(
     input_tokens: int = 0,
     output_tokens: int = 0,
     cost_estimate_usd: float = 0.0,
+    profile: str = "",
 ) -> ArtifactMetadata:
     """
     Create artifact metadata with the given LLM information.
@@ -74,6 +77,7 @@ def create_artifact_metadata(
         input_tokens: Number of input tokens used
         output_tokens: Number of output tokens generated
         cost_estimate_usd: Estimated cost in USD
+        profile: LLM profile name (e.g. 'gpt56cyber')
 
     Returns:
         ArtifactMetadata instance
@@ -83,6 +87,7 @@ def create_artifact_metadata(
         creation_timestamp=get_rfc3339_timestamp(),
         llm_provider=provider,
         llm_model=model,
+        llm_profile=profile,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_estimate_usd=cost_estimate_usd,
@@ -93,6 +98,7 @@ def aggregate_analysis_metadata(
     analyses: list,
     provider: str,
     model: str,
+    profile: str = "",
 ) -> ArtifactMetadata:
     """
     Create aggregated metadata from multiple analysis results.
@@ -101,6 +107,7 @@ def aggregate_analysis_metadata(
         analyses: List of TerraformAnalysis objects
         provider: LLM provider name
         model: LLM model name
+        profile: LLM profile name
 
     Returns:
         ArtifactMetadata with aggregated token counts and costs
@@ -120,6 +127,7 @@ def aggregate_analysis_metadata(
         creation_timestamp=get_rfc3339_timestamp(),
         llm_provider=provider,
         llm_model=model,
+        llm_profile=profile,
         input_tokens=total_input_tokens,
         output_tokens=total_output_tokens,
         cost_estimate_usd=total_cost,

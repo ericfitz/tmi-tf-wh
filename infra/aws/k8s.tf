@@ -26,13 +26,25 @@ resource "kubernetes_secret_v1" "this" {
     namespace = kubernetes_namespace_v1.this.metadata[0].name
   }
 
-  data = {
+  # LLM keys are exposed under the env var names the profiles reference.
+  data = merge({
     WEBHOOK_SECRET    = var.webhook_secret
     TMI_CLIENT_ID     = var.tmi_client_id
     TMI_CLIENT_SECRET = var.tmi_client_secret
-    LLM_API_KEY       = var.llm_api_key
     GITHUB_TOKEN      = var.github_token
+  }, var.llm_api_keys)
+}
+
+# Optional override of the image's llm-profiles.yaml.
+resource "kubernetes_config_map_v1" "llm_profiles" {
+  count = var.llm_profiles_yaml == "" ? 0 : 1
+
+  metadata {
+    name      = "${var.app_name}-llm-profiles"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
   }
+
+  data = { "llm-profiles.yaml" = var.llm_profiles_yaml }
 }
 
 resource "kubernetes_deployment_v1" "this" {
@@ -93,12 +105,23 @@ resource "kubernetes_deployment_v1" "this" {
             value = var.url_prefix
           }
           env {
-            name  = "LLM_PROVIDER"
-            value = var.llm_provider
+            name  = "LLM_PROFILE"
+            value = var.llm_profile
           }
-          env {
-            name  = "LLM_MODEL"
-            value = var.llm_model
+          dynamic "env" {
+            for_each = var.llm_profiles_yaml == "" ? [] : [1]
+            content {
+              name  = "LLM_PROFILES_FILE"
+              value = "/etc/tmi-tf/llm-profiles.yaml"
+            }
+          }
+          dynamic "volume_mount" {
+            for_each = var.llm_profiles_yaml == "" ? [] : [1]
+            content {
+              name       = "llm-profiles"
+              mount_path = "/etc/tmi-tf"
+              read_only  = true
+            }
           }
           env {
             name  = "TMI_SERVER_URL"
@@ -155,6 +178,16 @@ resource "kubernetes_deployment_v1" "this" {
             limits = {
               cpu    = "1"
               memory = "1Gi"
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = var.llm_profiles_yaml == "" ? [] : [1]
+          content {
+            name = "llm-profiles"
+            config_map {
+              name = kubernetes_config_map_v1.llm_profiles[0].metadata[0].name
             }
           }
         }

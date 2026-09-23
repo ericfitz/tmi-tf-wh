@@ -43,4 +43,4 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 
 ### LLM providers
 
-`LLM_PROVIDER` env var: `anthropic`, `openai`, `xai`, `gemini`, `oci`. All calls go through LiteLLM with provider-prefixed model names (e.g. `anthropic/claude-opus-4-6`).
+Named profiles in `llm-profiles.yaml` (`llm_profiles.py`) set provider, model, `auth`, the key's env var name, `api` (chat/responses), and optional `base_url`. `LLM_PROFILE` is the default; `--profile` / `user_data.profile` select per run. Providers: `anthropic`, `openai`, `xai`, `gemini`, `oci`; the LiteLLM model string is built from the profile (e.g. `openai/responses/gpt-5.6-cyber`). Keys are passed per call, never written to `os.environ`.

@@ -187,3 +187,22 @@ class TestIsTriggerEvent:
     )
     def test_non_trigger_events(self, event_type):
         assert not is_trigger_event(event_type)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (" gpt56cyber ", "gpt56cyber"),
+        ("", None),
+        ("   ", None),
+        (5, None),
+        (["a"], None),
+        (None, None),
+    ],
+)
+def test_user_data_profile(raw, expected):
+    payload = {
+        "threat_model_id": "tm",
+        "data": {"user_data": {"environments": "aws", "profile": raw}},
+    }
+    assert parse_webhook_payload(payload).get("profile") == expected

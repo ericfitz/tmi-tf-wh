@@ -17,9 +17,10 @@ litellm.drop_params = False  # type: ignore[assignment]
 class BaseLLMProvider:
     """Base class for LLM providers. Handles the litellm.completion() call."""
 
-    def __init__(self, provider: str, model: str) -> None:
+    def __init__(self, provider: str, model: str, profile: str = "") -> None:
         self._provider = provider
         self._model = model
+        self._profile = profile
         self._extra_kwargs: dict = {}  # type: ignore[type-arg]
 
     @property
@@ -29,6 +30,10 @@ class BaseLLMProvider:
     @property
     def provider(self) -> str:
         return self._provider
+
+    @property
+    def profile(self) -> str:
+        return self._profile
 
     def complete(
         self,

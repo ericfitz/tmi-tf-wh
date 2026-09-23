@@ -1,0 +1,26 @@
+# Named LLM profiles. Select one per invocation with user_data
+# {"profile": "<name>"}, per CLI run with --profile, or by default with
+# LLM_PROFILE. api_key names the env var / secret holding the key, never the
+# key itself. Fields and rules: docs/superpowers/specs/2026-09-22-llm-profiles-design.md
+profiles:
+  gpt56cyber:
+    provider: openai
+    model: gpt-5.6-cyber
+    api: responses
+    auth: api_key
+    api_key: OPENAI_CYBER_API_KEY
+  mythos5:
+    provider: anthropic
+    model: claude-mythos-5
+    auth: api_key
+    api_key: ANTHROPIC_API_KEY
+  fable5:
+    provider: anthropic
+    model: claude-fable-5
+    auth: api_key
+    api_key: ANTHROPIC_API_KEY
+  opus48:
+    provider: anthropic
+    model: claude-opus-4-8
+    auth: api_key
+    api_key: ANTHROPIC_API_KEY

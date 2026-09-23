@@ -14,6 +14,7 @@ from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.config import get_config
 from tmi_tf.invocation import Debouncer, InvocationState, is_open, read_state
 from tmi_tf.job import Job
+from tmi_tf.llm_profiles import profile_status, vault_secret_map
 from tmi_tf.providers import QueueProvider, get_queue_provider
 from tmi_tf.tmi_client_wrapper import TMIClient
 from tmi_tf.webhook_handler import (
@@ -54,7 +55,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     from tmi_tf.providers import VAULT_SECRET_MAP, get_secret_provider
 
     provider = get_secret_provider(config)
-    provider.load_secrets(VAULT_SECRET_MAP)
+    provider.load_secrets({**VAULT_SECRET_MAP, **vault_secret_map(config.llm_profiles)})
 
     if config.secret_provider != "none":
         # Reset config singleton so it re-reads env vars with provider secrets
@@ -62,6 +63,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
         tmi_tf.config._config = None
         config = get_config()
+
+    for line in profile_status(config.llm_profiles):
+        logger.info(line)
 
     debouncer = Debouncer(config.dedup_debounce_seconds)
 
@@ -232,6 +236,7 @@ async def webhook(request: Request) -> Response:
         callback_url=parsed.get("callback_url"),
         invocation_id=parsed.get("invocation_id"),
         scope=parsed.get("scope"),
+        profile=parsed.get("profile"),
     )
 
     if queue_client is not None:

@@ -71,11 +71,14 @@ resource "oci_vault_secret" "tmi_client_secret" {
   }
 }
 
-resource "oci_vault_secret" "llm_api_key" {
+# One secret per LLM key the profiles reference; the app maps
+# OPENAI_CYBER_API_KEY -> "openai-cyber-api-key" at startup.
+resource "oci_vault_secret" "llm_api_keys" {
+  for_each       = toset(var.llm_api_key_names)
   compartment_id = var.compartment_ocid
   vault_id       = oci_kms_vault.this.id
   key_id         = oci_kms_key.master.id
-  secret_name    = "llm-api-key"
+  secret_name    = lower(replace(each.key, "_", "-"))
 
   secret_content {
     content_type = "BASE64"

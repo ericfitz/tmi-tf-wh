@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
+from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.providers.oci import OciLLMProvider
+
+OCI = LLMProfile("grok-oci", "oci", "xai.grok-4", "oci")
 
 
 class TestOciLLMProvider:
@@ -27,7 +30,7 @@ class TestOciLLMProvider:
             patch("pathlib.Path.exists", return_value=True),
             patch("oci.config.from_file", return_value=mock_oci_config),
         ):
-            provider = OciLLMProvider(model=None)
+            provider = OciLLMProvider(OCI)
             assert (
                 provider._extra_kwargs["oci_compartment_id"]
                 == "ocid1.compartment.oc1..test"
@@ -38,7 +41,7 @@ class TestOciLLMProvider:
     def test_raises_when_no_compartment_id(self):
         os.environ.pop("OCI_COMPARTMENT_ID", None)
         with pytest.raises(ValueError, match="OCI_COMPARTMENT_ID"):
-            OciLLMProvider(model=None)
+            OciLLMProvider(OCI)
 
     @patch.dict(
         os.environ,
@@ -55,7 +58,7 @@ class TestOciLLMProvider:
                 return_value=mock_signer,
             ),
         ):
-            provider = OciLLMProvider(model=None)
+            provider = OciLLMProvider(OCI)
             assert provider._extra_kwargs["oci_signer"] is mock_signer
             assert provider._extra_kwargs["oci_region"] == "us-phoenix-1"
 
@@ -81,7 +84,7 @@ class TestOciLLMProvider:
                 "oci.config.from_file", return_value=mock_oci_config
             ) as mock_from_file,
         ):
-            OciLLMProvider(model=None)
+            OciLLMProvider(OCI)
             call_args = mock_from_file.call_args
             assert call_args[0][1] == "CUSTOM"
 
@@ -90,7 +93,7 @@ class TestOciLLMProvider:
         {"OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test"},
         clear=False,
     )
-    def test_default_model(self):
+    def test_model_and_profile_from_profile(self):
         mock_oci_config = {
             "region": "us-ashburn-1",
             "user": "u",
@@ -102,25 +105,6 @@ class TestOciLLMProvider:
             patch("pathlib.Path.exists", return_value=True),
             patch("oci.config.from_file", return_value=mock_oci_config),
         ):
-            provider = OciLLMProvider(model=None)
-            assert provider.model.startswith("oci/")
-
-    @patch.dict(
-        os.environ,
-        {"OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test"},
-        clear=False,
-    )
-    def test_custom_model_gets_prefix(self):
-        mock_oci_config = {
-            "region": "us-ashburn-1",
-            "user": "u",
-            "fingerprint": "f",
-            "tenancy": "t",
-            "key_file": "k",
-        }
-        with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("oci.config.from_file", return_value=mock_oci_config),
-        ):
-            provider = OciLLMProvider(model="xai.grok-4")
+            provider = OciLLMProvider(OCI)
             assert provider.model == "oci/xai.grok-4"
+            assert provider.profile == "grok-oci"

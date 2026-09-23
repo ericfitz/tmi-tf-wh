@@ -1,5 +1,5 @@
 # pyright: reportPrivateImportUsage=false
-"""Tests for Config class changes: LLM_API_KEY mapping, server config vars, OCI IMDS."""
+"""Tests for Config: LLM profiles, server config vars, OCI IMDS."""
 
 import os
 from unittest.mock import patch
@@ -31,65 +31,46 @@ def clear_config_singleton():
     reset_config()
 
 
-class TestLLMAPIKeyMapping:
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "anthropic", "LLM_API_KEY": "test-key-123"},
-        clear=False,
-    )
-    def test_maps_llm_api_key_to_anthropic(self):
-        Config()
-        assert os.environ.get("ANTHROPIC_API_KEY") == "test-key-123"
-
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "openai", "LLM_API_KEY": "test-key-456"},
-        clear=False,
-    )
-    def test_maps_llm_api_key_to_openai(self):
-        Config()
-        assert os.environ.get("OPENAI_API_KEY") == "test-key-456"
-
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "xai", "LLM_API_KEY": "test-key-xai"},
-        clear=False,
-    )
-    def test_maps_llm_api_key_to_xai(self):
-        Config()
-        assert os.environ.get("XAI_API_KEY") == "test-key-xai"
-
-    @patch.dict(
-        os.environ,
-        {"LLM_PROVIDER": "gemini", "LLM_API_KEY": "test-key-gemini"},
-        clear=False,
-    )
-    def test_maps_llm_api_key_to_gemini(self):
-        Config()
-        assert os.environ.get("GEMINI_API_KEY") == "test-key-gemini"
-
-    @patch.dict(
-        os.environ,
-        {
-            "LLM_PROVIDER": "oci",
-            "OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test",
-            "LLM_API_KEY": "irrelevant-key",
-        },
-        clear=False,
-    )
-    def test_oci_provider_no_key_map(self):
-        # OCI is not in the key_map, so LLM_API_KEY should not set any OCI env var
+class TestLLMProfiles:
+    @patch.dict(os.environ, {"LLM_PROFILE": "opus48"}, clear=False)
+    def test_default_profile_from_env(self):
         config = Config()
-        assert config.llm_provider == "oci"
-        # No OCI_API_KEY env var expected
-        assert os.environ.get("OCI_API_KEY") is None
+        assert config.llm_profile == "opus48"
+        assert "gpt56cyber" in config.llm_profiles
+
+    def test_no_default_profile(self):
+        os.environ.pop("LLM_PROFILE", None)
+        assert Config().llm_profile is None
+
+    def test_legacy_llm_vars_gone(self):
+        config = Config()
+        assert not hasattr(config, "llm_provider")
+        assert not hasattr(config, "llm_model")
+
+    @patch.dict(
+        os.environ,
+        {"LLM_API_KEY": "legacy-key", "LLM_PROVIDER": "anthropic"},
+        clear=False,
+    )
+    def test_llm_api_key_not_copied(self):
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        Config()
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
+
+    def test_bad_profiles_file_fails(self, tmp_path):
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("foo: 1")
+        with (
+            patch.dict(os.environ, {"LLM_PROFILES_FILE": str(bad)}),
+            pytest.raises(ValueError, match="bad.yaml"),
+        ):
+            Config()
 
 
 class TestServerConfigVars:
     @patch.dict(
         os.environ,
         {
-            "LLM_PROVIDER": "anthropic",
             "ANTHROPIC_API_KEY": "test",
             "MAX_CONCURRENT_JOBS": "5",
             "JOB_TIMEOUT": "1800",
@@ -111,7 +92,7 @@ class TestServerConfigVars:
 
     @patch.dict(
         os.environ,
-        {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+        {"ANTHROPIC_API_KEY": "test"},
         clear=False,
     )
     def test_server_config_defaults(self):
@@ -124,7 +105,6 @@ class TestServerConfigVars:
     @patch.dict(
         os.environ,
         {
-            "LLM_PROVIDER": "anthropic",
             "ANTHROPIC_API_KEY": "test",
             "QUEUE_OCID": "ocid1.queue.oc1..test",
             "VAULT_OCID": "ocid1.vault.oc1..test",
@@ -140,7 +120,7 @@ class TestServerConfigVars:
 
     @patch.dict(
         os.environ,
-        {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+        {"ANTHROPIC_API_KEY": "test"},
         clear=False,
     )
     def test_optional_server_config_none_defaults(self):
@@ -156,7 +136,6 @@ class TestServiceEndpointConfig:
     @patch.dict(
         os.environ,
         {
-            "LLM_PROVIDER": "anthropic",
             "ANTHROPIC_API_KEY": "test",
             "QUEUE_ENDPOINT": "https://cell-1.queue.oc1.us-ashburn-1.oci.oraclecloud.com",
             "VAULT_ENDPOINT": "https://vaults.us-ashburn-1.oci.oraclecloud.com",
@@ -180,7 +159,7 @@ class TestServiceEndpointConfig:
 
     @patch.dict(
         os.environ,
-        {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+        {"ANTHROPIC_API_KEY": "test"},
         clear=False,
     )
     def test_service_endpoints_default_none(self):
@@ -206,7 +185,7 @@ class TestDotenvIsolation:
 
         with patch.dict(
             os.environ,
-            {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+            {"ANTHROPIC_API_KEY": "test"},
             clear=False,
         ):
             os.environ.pop("TMI_SERVER_URL", None)
@@ -220,7 +199,7 @@ class TestDotenvIsolation:
 
         with patch.dict(
             os.environ,
-            {"LLM_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+            {"ANTHROPIC_API_KEY": "test"},
             clear=False,
         ):
             config = Config(env_file=env_file)

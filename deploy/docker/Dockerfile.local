@@ -52,6 +52,8 @@ COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSIO
 COPY --from=hashicorp/terraform:1.15 /bin/terraform /usr/local/bin/terraform
 COPY prompts/ /opt/tmi-tf/prompts/
 ENV PROMPTS_DIR=/opt/tmi-tf/prompts
+COPY llm-profiles.yaml /opt/tmi-tf/llm-profiles.yaml
+ENV LLM_PROFILES_FILE=/opt/tmi-tf/llm-profiles.yaml
 
 ENV HOME=/home/tmi-tf \
     TMI_CLIENT_PATH=/opt/tmi-client \

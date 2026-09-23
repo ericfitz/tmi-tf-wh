@@ -22,6 +22,7 @@ from tmi_tf.invocation import (
     read_state,
 )
 from tmi_tf.job import Job
+from tmi_tf.llm_profiles import ProfileError, resolve_key, select_profile
 from tmi_tf.providers import QueueMessage, QueueProvider
 from tmi_tf.repo_analyzer import repository_name
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, AnalysisAborted, TMIClient
@@ -211,11 +212,15 @@ class WorkerPool:
                 suffix = " - ".join(x for x in (job.repo_name, job.environment) if x)
                 if suffix:
                     tmi_client.status_note_name = f"{STATUS_NOTE_NAME} - {suffix}"
+                profile = select_profile(
+                    self.config.llm_profiles, job.profile, self.config.llm_profile
+                )
                 result = await asyncio.to_thread(
                     run_analysis,
                     config=self.config,
                     threat_model_id=job.threat_model_id,
                     tmi_client=tmi_client,
+                    profile=profile,
                     repo_id=job.repo_id,
                     temp_dir=job.temp_dir,
                     callback=callback,
@@ -246,6 +251,16 @@ class WorkerPool:
         self, job: Job, tmi_client: TMIClient, callback: AddonCallback | None
     ) -> None:
         """Resolve fan-out targets and enqueue one child job per environment."""
+        try:
+            profile = select_profile(
+                self.config.llm_profiles, job.profile, self.config.llm_profile
+            )
+            resolve_key(profile)
+        except ProfileError as e:
+            logger.error("Parent job %s: %s", job.job_id, e)
+            if callback:
+                callback.send_status("failed", str(e))
+            return
         targets = await asyncio.to_thread(
             resolve_fanout_targets,
             self.config,
@@ -276,6 +291,7 @@ class WorkerPool:
                 environment=t.environment,
                 repo_name=repository_name(t.repo_url),
                 deadline=deadline,
+                profile=profile.name,
             )
             for t in targets
         ]
