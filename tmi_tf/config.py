@@ -13,6 +13,8 @@ from dotenv import (
     load_dotenv,  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 )
 
+from tmi_tf.llm_profiles import LLMProfile, default_profiles_file, load_profiles
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,22 +61,11 @@ class Config:
         self.tmi_client_id: str | None = os.getenv("TMI_CLIENT_ID") or None
         self.tmi_client_secret: str | None = os.getenv("TMI_CLIENT_SECRET") or None
 
-        # LLM Provider Configuration
-        self.llm_provider: str = os.getenv("LLM_PROVIDER", "anthropic")
-        self.llm_model: str | None = os.getenv("LLM_MODEL")
-
-        # Map generic LLM_API_KEY to provider-specific env var
-        llm_api_key = os.getenv("LLM_API_KEY")
-        if llm_api_key:
-            key_map = {
-                "anthropic": "ANTHROPIC_API_KEY",
-                "openai": "OPENAI_API_KEY",
-                "xai": "XAI_API_KEY",
-                "gemini": "GEMINI_API_KEY",
-            }
-            target = key_map.get(self.llm_provider)
-            if target:
-                os.environ[target] = llm_api_key
+        # LLM profiles (llm-profiles.yaml); LLM_PROFILE names the default
+        self.llm_profile: str | None = os.getenv("LLM_PROFILE") or None
+        self.llm_profiles: dict[str, LLMProfile] = load_profiles(
+            default_profiles_file()
+        )
 
         # OCI Generative AI Configuration
         self.oci_compartment_id: str | None = os.getenv("OCI_COMPARTMENT_ID") or None
@@ -143,8 +134,7 @@ class Config:
     def __repr__(self) -> str:
         """Return string representation of config (without secrets)."""
         return (
-            f"Config(llm_provider={self.llm_provider}, "
-            f"llm_model={self.llm_model or 'default'}, "
+            f"Config(llm_profile={self.llm_profile}, "
             f"tmi_server_url={self.tmi_server_url}, "
             f"max_repos={self.max_repos}, "
             f"github_token={'***' if self.github_token else 'None'})"
