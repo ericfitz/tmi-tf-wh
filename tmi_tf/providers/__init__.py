@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from tmi_tf.config import Config
+    from tmi_tf.llm_profiles import LLMProfile
 
 
 @dataclass
@@ -63,6 +64,11 @@ class LLMProvider(Protocol):
         """Provider name (e.g. 'anthropic', 'openai', 'oci')."""
         ...
 
+    @property
+    def profile(self) -> str:
+        """Name of the LLM profile this provider was built from."""
+        ...
+
     def complete(
         self,
         system_prompt: str,
@@ -78,7 +84,6 @@ VAULT_SECRET_MAP = {
     "webhook-secret": "WEBHOOK_SECRET",
     "tmi-client-id": "TMI_CLIENT_ID",
     "tmi-client-secret": "TMI_CLIENT_SECRET",
-    "llm-api-key": "LLM_API_KEY",
     "github-token": "GITHUB_TOKEN",
 }
 
@@ -131,18 +136,12 @@ def get_queue_provider(config: "Config") -> QueueProvider:
         )
 
 
-def get_llm_provider(config: "Config") -> LLMProvider:
-    """Create an LLMProvider based on configuration."""
-    if config.llm_provider == "oci":
+def get_llm_provider(profile: "LLMProfile") -> LLMProvider:
+    """Create an LLMProvider for a validated profile."""
+    if profile.auth == "oci":
         from tmi_tf.providers.oci import OciLLMProvider
 
-        return OciLLMProvider(model=config.llm_model)
-    elif config.llm_provider in ("anthropic", "openai", "xai", "gemini"):
-        from tmi_tf.providers.api_key import ApiKeyLLMProvider
+        return OciLLMProvider(profile)
+    from tmi_tf.providers.api_key import ApiKeyLLMProvider
 
-        return ApiKeyLLMProvider(provider=config.llm_provider, model=config.llm_model)
-    else:
-        raise ValueError(
-            f"Unknown LLM provider: {config.llm_provider!r}. "
-            f"Must be 'anthropic', 'openai', 'xai', 'gemini', or 'oci'."
-        )
+    return ApiKeyLLMProvider(profile)

@@ -121,103 +121,72 @@ class TestBaseLLMProvider:
         assert result.text == "truncated"
 
 
-from tmi_tf.providers.api_key import DEFAULT_MODELS, ApiKeyLLMProvider
+from tmi_tf.llm_profiles import LLMProfile, ProfileError
+from tmi_tf.providers import get_llm_provider
+from tmi_tf.providers.api_key import ApiKeyLLMProvider
+
+CYBER = LLMProfile(
+    "gpt56cyber", "openai", "gpt-5.6-cyber", "api_key", "T_CYBER_KEY", "responses"
+)
+PROXIED = LLMProfile(
+    "px",
+    "anthropic",
+    "claude-opus-4-8",
+    "api_key",
+    "T_PX_KEY",
+    base_url="https://proxy/v1",
+)
 
 
 class TestApiKeyLLMProvider:
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test-key"}, clear=False)
-    def test_anthropic_provider_reads_env(self):
-        provider = ApiKeyLLMProvider(provider="anthropic", model=None)
-        assert provider.model == DEFAULT_MODELS["anthropic"]
-        assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-key"
+    @patch.dict(os.environ, {"T_CYBER_KEY": "sk-c"})
+    def test_model_and_key_from_profile(self):
+        before = dict(os.environ)
+        p = ApiKeyLLMProvider(CYBER)
+        assert p.model == "openai/responses/gpt-5.6-cyber"
+        assert p.provider == "openai"
+        assert p.profile == "gpt56cyber"
+        assert p._extra_kwargs == {"api_key": "sk-c"}
+        assert dict(os.environ) == before
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "sk-openai-key"}, clear=False)
-    def test_openai_provider_reads_env(self):
-        provider = ApiKeyLLMProvider(provider="openai", model="gpt-4o")
-        assert provider.model == "openai/gpt-4o"
+    @patch.dict(os.environ, {"T_PX_KEY": "sk-p"})
+    def test_base_url_becomes_api_base(self):
+        assert ApiKeyLLMProvider(PROXIED)._extra_kwargs == {
+            "api_key": "sk-p",
+            "api_base": "https://proxy/v1",
+        }
 
-    @patch.dict(os.environ, {"XAI_API_KEY": "xai-key"}, clear=False)
-    def test_xai_provider_reads_env(self):
-        provider = ApiKeyLLMProvider(provider="xai", model=None)
-        assert provider.model == DEFAULT_MODELS["xai"]
+    def test_missing_key_raises(self):
+        os.environ.pop("T_CYBER_KEY", None)
+        with pytest.raises(ProfileError, match="T_CYBER_KEY"):
+            ApiKeyLLMProvider(CYBER)
 
-    @patch.dict(os.environ, {"GEMINI_API_KEY": "gem-key"}, clear=False)
-    def test_gemini_provider_reads_env(self):
-        provider = ApiKeyLLMProvider(provider="gemini", model=None)
-        assert provider.model == DEFAULT_MODELS["gemini"]
-
-    @patch.dict(os.environ, {}, clear=False)
-    def test_raises_on_missing_api_key(self):
-        os.environ.pop("ANTHROPIC_API_KEY", None)
-        with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-            ApiKeyLLMProvider(provider="anthropic", model=None)
-
-    @patch.dict(
-        os.environ,
-        {"ANTHROPIC_API_KEY": "placeholder_anthropic_api_key"},
-        clear=False,
-    )
-    def test_raises_on_placeholder_api_key(self):
-        with pytest.raises(ValueError, match="placeholder"):
-            ApiKeyLLMProvider(provider="anthropic", model=None)
-
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-real-key"}, clear=False)
-    def test_model_with_prefix_kept_as_is(self):
-        provider = ApiKeyLLMProvider(
-            provider="anthropic", model="anthropic/claude-opus-4-6"
-        )
-        assert provider.model == "anthropic/claude-opus-4-6"
-
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-real-key"}, clear=False)
-    def test_model_without_prefix_gets_prefix(self):
-        provider = ApiKeyLLMProvider(provider="anthropic", model="claude-opus-4-6")
-        assert provider.model == "anthropic/claude-opus-4-6"
-
-    def test_raises_on_unknown_provider(self):
-        with pytest.raises(ValueError, match="Unknown API key provider"):
-            ApiKeyLLMProvider(provider="unknown", model=None)
-
-
-from types import SimpleNamespace
-
-from tmi_tf.providers import get_llm_provider
+    @patch.dict(os.environ, {"T_PX_KEY": "sk-p"})
+    def test_complete_passes_key_to_litellm(self):
+        with patch("tmi_tf.providers.llm_base.litellm") as ll:
+            ll.completion.return_value = iter([])
+            ll.stream_chunk_builder.return_value = _make_litellm_response("ok")
+            ApiKeyLLMProvider(PROXIED).complete("s", "u")
+            kw = ll.completion.call_args.kwargs
+        assert kw["api_key"] == "sk-p"
+        assert kw["api_base"] == "https://proxy/v1"
+        assert kw["model"] == "anthropic/claude-opus-4-8"
 
 
 class TestGetLLMProvider:
-    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=False)
-    def test_returns_api_key_provider_for_anthropic(self):
-        config = SimpleNamespace(llm_provider="anthropic", llm_model=None)
-        provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        assert provider.model.startswith("anthropic/")
+    @patch.dict(os.environ, {"T_CYBER_KEY": "sk-c"})
+    def test_api_key_profile(self):
+        assert isinstance(get_llm_provider(CYBER), ApiKeyLLMProvider)
 
-    @patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False)
-    def test_returns_api_key_provider_for_openai(self):
-        config = SimpleNamespace(llm_provider="openai", llm_model="gpt-4o")
-        provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-        assert provider.model == "openai/gpt-4o"
-
-    @patch.dict(
-        os.environ,
-        {"OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test"},
-        clear=False,
-    )
-    def test_returns_oci_provider(self):
-        mock_oci_config = {
-            "region": "us-ashburn-1",
-            "user": "u",
-            "fingerprint": "f",
-            "tenancy": "t",
-            "key_file": "k",
-        }
+    @patch.dict(os.environ, {"OCI_COMPARTMENT_ID": "ocid1.compartment.oc1..test"})
+    def test_oci_profile(self):
         with (
-            patch("pathlib.Path.exists", return_value=True),
-            patch("oci.config.from_file", return_value=mock_oci_config),
+            patch("pathlib.Path.exists", return_value=False),
+            patch(
+                "oci.auth.signers.get_resource_principals_signer",
+                return_value=MagicMock(region="r"),
+            ),
         ):
-            config = SimpleNamespace(llm_provider="oci", llm_model=None)
-            provider = get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
-            assert provider.model.startswith("oci/")
-
-    def test_raises_for_unknown_provider(self):
-        config = SimpleNamespace(llm_provider="unknown", llm_model=None)
-        with pytest.raises(ValueError, match="Unknown LLM provider"):
-            get_llm_provider(config)  # type: ignore[arg-type]  # ty:ignore[invalid-argument-type]
+            p = get_llm_provider(LLMProfile("g", "oci", "xai.grok-4", "oci"))
+        assert p.model == "oci/xai.grok-4"
+        assert p.profile == "g"
