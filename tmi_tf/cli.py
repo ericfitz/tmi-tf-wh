@@ -7,6 +7,12 @@ import click  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-im
 
 from tmi_tf.analyzer import AnalysisResult, run_analysis
 from tmi_tf.config import get_config
+from tmi_tf.llm_profiles import (
+    ProfileError,
+    profile_status,
+    resolve_key,
+    select_profile,
+)
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.tmi_client_wrapper import TMIClient
 
@@ -68,6 +74,13 @@ cli: click.Group = click.version_option(version="0.1.0")(click.group()(_cli_impl
     default=None,
     help="Pre-select a Terraform environment by name (skip interactive prompt)",
 )
+@click.option(
+    "--profile",
+    "-p",
+    type=str,
+    default=None,
+    help="LLM profile from llm-profiles.yaml (default: LLM_PROFILE)",
+)
 def analyze(
     threat_model_id: str,
     max_repos: int | None,
@@ -78,6 +91,7 @@ def analyze(
     skip_diagram: bool,
     skip_threats: bool,
     environment: str | None,
+    profile: str | None,
 ):
     """
     Analyze Terraform repositories for a threat model.
@@ -93,6 +107,16 @@ def analyze(
         config = get_config()
         if max_repos:
             config.max_repos = max_repos
+
+        # Fail on a bad profile or missing key before auth or any clone
+        try:
+            llm_profile = select_profile(
+                config.llm_profiles, profile, config.llm_profile
+            )
+            resolve_key(llm_profile)
+        except ProfileError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
 
         # Initialize TMI client (CLI handles auth concerns)
         tmi_client = TMIClient.create_authenticated(config, force_refresh=force_auth)
@@ -144,6 +168,7 @@ def analyze(
             config=config,
             threat_model_id=threat_model_id,
             tmi_client=tmi_client,
+            profile=llm_profile,
             environment=cli_environment,
             skip_diagram=skip_diagram or dry_run,
             skip_threats=skip_threats or dry_run,
@@ -263,8 +288,9 @@ def config_info():
         print(f"OAuth IDP: {config.tmi_oauth_idp}")
         print(f"Max Repositories: {config.max_repos}")
         print(f"Clone Timeout: {config.clone_timeout}s")
-        print(f"LLM Provider: {config.llm_provider}")
-        print(f"LLM Model: {config.llm_model or '(default)'}")
+        print(f"LLM Profile (default): {config.llm_profile or '(none)'}")
+        for line in profile_status(config.llm_profiles):
+            print(line)
         print(f"Timestamp: {config.timestamp}")
         print(
             f"GitHub Token: {'Configured' if config.github_token else 'Not configured'}"
