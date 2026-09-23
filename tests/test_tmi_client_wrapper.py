@@ -138,6 +138,7 @@ def test_update_status_note_continues_when_poll_fails():
         client.update_status_note("tm1", "Phase 2 started")
     update_note.assert_called_once()
     assert not event.is_set()
+    assert client._last_cancel_poll is None  # retried at the next checkpoint
 
 
 def test_delivery_poll_is_rate_limited():

@@ -660,6 +660,52 @@ class TestAbort:
         assert tmi.delivery_id == "p1"
         abort.assert_called_once_with("p1", "cancelled in TMI")
 
+    def test_cancel_seen_in_tmi_stops_running_sibling(self):
+        """End to end with the real abort(), run from inside the job's task."""
+        pool, queue = _pool()
+        queue.delete = MagicMock()
+        gcp_started = threading.Event()
+
+        def fake_run_analysis(**kw):
+            if kw["environment"] == "gcp":
+                gcp_started.set()
+                kw["tmi_client"].cancel_event.wait(5)
+                raise AnalysisAborted("x")
+            gcp_started.wait(5)
+            raise AnalysisAborted("delivery cancelled")
+
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated",
+                side_effect=lambda *_a, **_k: MagicMock(),
+            ),
+            patch("tmi_tf.worker.run_analysis", side_effect=fake_run_analysis),
+            patch("tmi_tf.worker.mark_child") as mark,
+            patch(
+                "tmi_tf.worker.read_state",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            siblings = ["p1:aws", "p1:gcp"]
+
+            async def go():
+                for j in siblings:
+                    queue.publish(_child(j, siblings).to_queue_message())
+                msgs = queue.consume(max_messages=2)
+                await asyncio.gather(*(pool._handle_message(m) for m in msgs))
+
+            asyncio.run(go())
+        assert "p1" in pool._cancelled
+        assert queue.delete.call_count == 2
+        close.assert_called_once_with(ANY, "tm1", "Aborted: cancelled in TMI")
+        assert {c.args[2] for c in mark.call_args_list} == set(siblings)
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "failed", "aborted: cancelled in TMI"
+        )
+        assert not pool._active_jobs and not pool._tasks
+
     def test_abort_after_invocation_closed_sends_no_failed_callback(self):
         """Last child already closed the invocation (and sent "completed")
         when abort() lands: no second, contradictory "failed" callback."""

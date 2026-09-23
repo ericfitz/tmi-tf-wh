@@ -606,6 +606,8 @@ class TMIClient:
             return resp.json().get("status") == "cancelled"
         except Exception as e:
             logger.warning(f"Delivery status poll failed for {self.delivery_id}: {e}")
+            # Retry at the next checkpoint (e.g. after a 401 re-auth).
+            self._last_cancel_poll = None
             return False
 
     def update_status_note(self, threat_model_id: str, message: str) -> None:
