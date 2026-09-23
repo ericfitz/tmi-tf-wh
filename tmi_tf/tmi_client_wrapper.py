@@ -900,7 +900,6 @@ class TMIClient:
                 status=status,
                 diagram_id=diagram_id,
                 cell_id=cell_id,
-                metadata=metadata_objects,
             )
             threat = self._call_with_retry(
                 lambda: self.sub_resources_api.create_threat_model_threat(
@@ -908,6 +907,18 @@ class TMIClient:
                 )
             )
             logger.info(f"Threat created successfully with ID: {threat.id}")
+            if metadata_objects:
+                # TMI accepts ThreatInput.metadata but does not persist it (#77).
+                try:
+                    self._call_with_retry(
+                        lambda: self.sub_resources_api.bulk_create_threat_metadata(
+                            threat_model_id=threat_model_id,
+                            threat_id=threat.id,
+                            metadata=metadata_objects,
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to set threat {threat.id} metadata: {e}")
             return threat.to_dict()
         except Exception as e:
             logger.error(f"Failed to create threat: {e}")
