@@ -271,6 +271,8 @@ def sanitize_content_for_api(content: str, exempt_code: bool = True) -> str:
 class TMIClient:
     """Wrapper around TMI API client with authentication."""
 
+    cancel_event: threading.Event | None = None
+
     def __init__(self, config: Config, auth_token: str | None = None):
         """
         Initialize TMI client.
@@ -316,7 +318,7 @@ class TMIClient:
         self._status_note_initialized: bool = False
         self._status_note_content: str = ""
         self.status_note_name: str = STATUS_NOTE_NAME
-        self.cancel_event: threading.Event | None = None
+        self.cancel_event = None
 
         logger.info(f"TMI client initialized for {config.tmi_server_url}")
 
@@ -581,8 +583,7 @@ class TMIClient:
             threat_model_id: Threat model UUID
             message: Status message to record
         """
-        cancel_event = getattr(self, "cancel_event", None)
-        if cancel_event is not None and cancel_event.is_set():
+        if self.cancel_event is not None and self.cancel_event.is_set():
             raise AnalysisAborted(f"aborted before: {message}")
 
         from datetime import datetime, timezone

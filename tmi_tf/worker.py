@@ -65,10 +65,17 @@ class WorkerPool:
         self._active_jobs: dict[str, Job] = {}
         self._watchdogs: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         self._running = False
+        # Per-process, never pruned (single replica; a restart clears it along
+        # with everything else in-memory).
         self._cancelled: set[str] = set()
         self._tasks: dict[str, asyncio.Task] = {}  # type: ignore[type-arg]
         self._cancel_events: dict[str, threading.Event] = {}
         self._receipts: dict[str, str] = {}
+        # invocation_id -> (threat_model_id, callback_url), so abort() can find
+        # an invocation with no running job (parent finished, children still
+        # queued). Written when the parent opens the invocation and again
+        # whenever a child is dequeued; never pruned (see _cancelled above).
+        self._invocations: dict[str, tuple[str, str | None]] = {}
 
     async def start(self) -> None:
         """Start polling loop."""
@@ -118,6 +125,10 @@ class WorkerPool:
 
         job.temp_dir = Path(tempfile.mkdtemp(prefix=f"tmi-tf-{job.job_id}-"))
         if job.is_child and job.siblings and job.deadline:
+            self._invocations[job.invocation_key] = (
+                job.threat_model_id,
+                job.callback_url,
+            )
             self._arm_watchdog(
                 job.threat_model_id,
                 job.job_id.rsplit(":", 1)[0],
@@ -127,30 +138,44 @@ class WorkerPool:
             )
 
         async with self._semaphore:
-            self._active_jobs[job.job_id] = job
-            self._receipts[job.job_id] = msg.receipt
-            self._cancel_events[job.job_id] = threading.Event()
-            self._tasks[job.job_id] = asyncio.current_task()  # type: ignore[assignment]
             try:
-                await asyncio.wait_for(
-                    self._run_job(job, msg.receipt),
-                    timeout=self.config.job_timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"Job timed out: job_id={job.job_id}")
-                # Delete message — don't retry timed out jobs
-                try:
+                # A job can sit here a while behind a full pool; the invocation
+                # may have been aborted since the first check above.
+                if job.invocation_key in self._cancelled:
+                    logger.info(
+                        "Dropping job %s after semaphore wait: invocation aborted",
+                        job.job_id,
+                    )
                     await asyncio.to_thread(self.queue_client.delete, msg.receipt)
-                except Exception as e:
-                    logger.error(f"Failed to delete timed-out message: {e}")
-                # Best-effort status updates
-                if job.is_child:
-                    await self._finish_child(job, "failed")
-                else:
-                    await self._fire_and_forget_status(job, "failed", "Job timed out")
-            except asyncio.CancelledError:
-                logger.info("Job cancelled: %s", job.job_id)
-                # Do not re-raise; the abort path already did the bookkeeping.
+                    if job.is_child:
+                        await self._finish_child(job, "aborted")
+                    return
+                self._active_jobs[job.job_id] = job
+                self._receipts[job.job_id] = msg.receipt
+                self._cancel_events[job.job_id] = threading.Event()
+                self._tasks[job.job_id] = asyncio.current_task()  # type: ignore[assignment]
+                try:
+                    await asyncio.wait_for(
+                        self._run_job(job, msg.receipt),
+                        timeout=self.config.job_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"Job timed out: job_id={job.job_id}")
+                    # Delete message — don't retry timed out jobs
+                    try:
+                        await asyncio.to_thread(self.queue_client.delete, msg.receipt)
+                    except Exception as e:
+                        logger.error(f"Failed to delete timed-out message: {e}")
+                    # Best-effort status updates
+                    if job.is_child:
+                        await self._finish_child(job, "failed")
+                    else:
+                        await self._fire_and_forget_status(
+                            job, "failed", "Job timed out"
+                        )
+                except asyncio.CancelledError:
+                    logger.info("Job cancelled: %s", job.job_id)
+                    # Do not re-raise; the abort path already did the bookkeeping.
             finally:
                 self._active_jobs.pop(job.job_id, None)
                 self._receipts.pop(job.job_id, None)
@@ -252,6 +277,7 @@ class WorkerPool:
             siblings,
             deadline,
         )
+        self._invocations[job.job_id] = (job.threat_model_id, job.callback_url)
         self._arm_watchdog(
             job.threat_model_id, job.job_id, siblings, deadline, job.callback_url
         )
@@ -292,7 +318,16 @@ class WorkerPool:
             callback.send_status("in_progress", summary)
 
     async def abort(self, invocation_id: str, reason: str) -> int:
-        """Stop every job of an invocation; queued children are dropped when dequeued."""
+        """Stop every job of an invocation; queued children are dropped when dequeued.
+
+        invocation_id is the parent job id (Job.invocation_key /
+        InvocationState.invocation_id) — not Job.invocation_id, which is the
+        addon's x-invocation-id delivery header.
+
+        Returns the number of running jobs cancelled, regardless of whether
+        the TMI bookkeeping below (marking children, closing the invocation)
+        finds anything to do.
+        """
         self._cancelled.add(invocation_id)
         victims = [
             j
@@ -317,13 +352,27 @@ class WorkerPool:
         wd = self._watchdogs.pop(next((j.threat_model_id for j in victims), ""), None)
         if wd:
             wd.cancel()
-        threat_model_id = victims[0].threat_model_id if victims else None
-        callback_url = next((j.callback_url for j in victims if j.callback_url), None)
+
+        if victims:
+            threat_model_id = victims[0].threat_model_id
+            callback_url = next(
+                (j.callback_url for j in victims if j.callback_url), None
+            )
+        else:
+            # No running job — e.g. the parent already finished and children
+            # are still queued. Fall back to what we recorded when the
+            # invocation was opened / a child was last dequeued.
+            cached = self._invocations.get(invocation_id)
+            threat_model_id, callback_url = cached if cached else (None, None)
+        if threat_model_id is None:
+            return len(victims)
+
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
-            if threat_model_id is None:
-                return 0
             async with lock_for(threat_model_id):
+                state = await asyncio.to_thread(read_state, tmi_client, threat_model_id)
+                if not state.open or state.invocation_id != invocation_id:
+                    return len(victims)
                 for job in victims:
                     if job.is_child:
                         await asyncio.to_thread(

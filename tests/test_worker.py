@@ -608,6 +608,10 @@ class TestAbort:
             patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
             patch("tmi_tf.worker.run_analysis", side_effect=fake_run_analysis),
             patch("tmi_tf.worker.mark_child", return_value=state_after) as mark,
+            patch(
+                "tmi_tf.worker.read_state",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
             patch("tmi_tf.worker.close_invocation") as close,
             patch("tmi_tf.worker.AddonCallback") as cb_cls,
         ):
@@ -619,7 +623,7 @@ class TestAbort:
                 t = asyncio.create_task(pool._handle_message(msg))
                 await asyncio.to_thread(started.wait, 5)
                 n = await pool.abort("p1", "operator")
-                await asyncio.sleep(0.2)
+                await t
                 return n, t
 
             n, _ = asyncio.run(go())
@@ -659,7 +663,7 @@ class TestAbort:
         with (
             patch(
                 "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
-            ),
+            ) as auth,
             patch(
                 "tmi_tf.worker.read_state",
                 return_value=InvocationState(None, False, None),
@@ -668,3 +672,92 @@ class TestAbort:
         ):
             assert asyncio.run(pool.abort("nope", "r")) == 0
         close.assert_not_called()
+        auth.assert_not_called()
+
+    def test_abort_closes_idle_invocation_with_no_running_job(self):
+        """Parent already opened the invocation and enqueued children, but no
+        child has been dequeued yet: abort() must still find the threat model
+        id (from the in-memory record made when the parent opened it) and
+        close the invocation. Then dequeuing the queued child must drop it
+        without a second close."""
+        pool, queue = _pool()
+        targets = [FanoutTarget("r1", "u", "aws")]
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets),
+            patch("tmi_tf.worker.AddonCallback"),
+            patch("tmi_tf.worker.open_invocation"),
+        ):
+            asyncio.run(pool._run_job(_job(scope="all"), receipt="rc"))
+        assert pool._invocations["p1"] == ("tm1", "https://cb")
+
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch(
+                "tmi_tf.worker.read_state",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            n = asyncio.run(pool.abort("p1", "operator"))
+        assert n == 0
+        close.assert_called_once_with(ANY, "tm1", "Aborted: operator")
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "failed", "aborted: operator"
+        )
+
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.run_analysis") as run,
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", False, None, {"p1:aws": "aborted"}),
+            ) as mark,
+            patch("tmi_tf.worker.close_invocation") as close2,
+        ):
+            msg = queue.consume(max_messages=1)[0]
+            asyncio.run(pool._handle_message(msg))
+        run.assert_not_called()
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "aborted")
+        close2.assert_not_called()
+
+    def test_dropped_if_cancelled_while_waiting_for_semaphore(self):
+        """A job already past the first _cancelled check (queued before the
+        abort) must be re-checked once it clears the semaphore, not just
+        dropped from _active_jobs after running."""
+        pool, queue = _pool()
+        pool._semaphore = asyncio.Semaphore(1)
+
+        async def go():
+            await pool._semaphore.acquire()  # occupy the only slot
+            job = _child("p1:aws", ["p1:aws"])
+            queue.publish(job.to_queue_message())
+            msg = queue.consume(max_messages=1)[0]
+            t = asyncio.create_task(pool._handle_message(msg))
+            await asyncio.sleep(0.05)  # let it block waiting for the semaphore
+            pool._cancelled.add("p1")
+            pool._semaphore.release()
+            await t
+
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.run_analysis") as run,
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", False, None, {"p1:aws": "aborted"}),
+            ) as mark,
+            patch("tmi_tf.worker.close_invocation"),
+        ):
+            asyncio.run(go())
+        run.assert_not_called()
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "aborted")
+        assert pool._active_jobs == {}
