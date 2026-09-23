@@ -105,5 +105,8 @@ def parse_webhook_payload(payload: dict) -> dict:
     scope = user_data.get("environments") if isinstance(user_data, dict) else None
     if isinstance(scope, str) and scope.strip():
         result["scope"] = scope.strip()
+    profile = user_data.get("profile") if isinstance(user_data, dict) else None
+    if isinstance(profile, str) and profile.strip():
+        result["profile"] = profile.strip()
 
     return result

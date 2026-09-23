@@ -12,6 +12,7 @@ from tmi_tf.analyzer import AnalysisResult, FanoutTarget
 from tmi_tf.config import Config
 from tmi_tf.invocation import InvocationState
 from tmi_tf.job import Job
+from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.providers.memory import MemoryQueueProvider
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME, AnalysisAborted
 from tmi_tf.worker import WorkerPool, _is_message_expired
@@ -71,6 +72,11 @@ class TestWorkerPool:
 def _pool():
     config = Config()
     config.webhook_secret = "s"
+    config.llm_profiles = {
+        "test": LLMProfile("test", "oci", "m", "oci"),
+        "other": LLMProfile("other", "oci", "m2", "oci"),
+    }
+    config.llm_profile = "test"
     queue = MemoryQueueProvider()
     return WorkerPool(queue, config), queue
 
@@ -848,3 +854,83 @@ class TestAbort:
             wd.cancel()  # cleanup so the loop doesn't complain on teardown
 
         asyncio.run(go())
+
+
+class TestProfiles:
+    def _run_parent(self, job):
+        pool, queue = _pool()
+        targets = [FanoutTarget("r1", "u", "aws-public")]
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.resolve_fanout_targets", return_value=targets) as rft,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+            patch("tmi_tf.worker.open_invocation"),
+            patch("tmi_tf.worker.mark_child"),
+        ):
+            asyncio.run(pool._run_job(job, receipt="rc"))
+        return queue, rft, cb_cls.return_value
+
+    def test_children_inherit_requested_profile(self):
+        queue, _, _ = self._run_parent(_job(profile="other"))
+        bodies = [m.body for m in queue.consume(max_messages=10)]
+        assert [b["profile"] for b in bodies] == ["other"]
+
+    def test_children_get_default_when_none_requested(self):
+        queue, _, _ = self._run_parent(_job())
+        assert queue.consume(max_messages=10)[0].body["profile"] == "test"
+
+    def test_unknown_profile_fails_before_fanout(self):
+        queue, rft, cb = self._run_parent(_job(profile="nope"))
+        rft.assert_not_called()
+        assert queue.consume(max_messages=10) == []
+        cb.send_status.assert_any_call(
+            "failed", 'unknown LLM profile "nope" (available: other, test)'
+        )
+
+    def test_missing_key_fails_before_fanout(self):
+        pool, _ = _pool()
+        pool.config.llm_profiles["keyed"] = LLMProfile(
+            "keyed", "anthropic", "m", "api_key", "T_WORKER_ABSENT_KEY"
+        )
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.resolve_fanout_targets") as rft,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+            asyncio.run(pool._run_job(_job(profile="keyed"), receipt="rc"))
+        rft.assert_not_called()
+        cb_cls.return_value.send_status.assert_any_call(
+            "failed",
+            'LLM profile "keyed" needs T_WORKER_ABSENT_KEY, which is not set',
+        )
+
+    def test_child_passes_profile_to_run_analysis(self):
+        pool, _ = _pool()
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
+            ) as ra,
+            patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+        ):
+            asyncio.run(
+                pool._run_job(
+                    _job(
+                        job_id="p1:aws-public",
+                        environment="aws-public",
+                        profile="other",
+                    ),
+                    receipt="rc",
+                )
+            )
+        assert ra.call_args.kwargs["profile"].name == "other"

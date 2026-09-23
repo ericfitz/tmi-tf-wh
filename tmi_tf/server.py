@@ -232,6 +232,7 @@ async def webhook(request: Request) -> Response:
         callback_url=parsed.get("callback_url"),
         invocation_id=parsed.get("invocation_id"),
         scope=parsed.get("scope"),
+        profile=parsed.get("profile"),
     )
 
     if queue_client is not None:

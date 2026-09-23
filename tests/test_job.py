@@ -121,3 +121,14 @@ def test_old_message_without_siblings_or_deadline():
     job = Job.from_queue_message(body)
     assert job.siblings is None
     assert job.deadline is None
+
+
+def test_profile_round_trips():
+    j = Job(
+        job_id="j",
+        threat_model_id="t",
+        event_type="e",
+        enqueued_at=datetime.now(timezone.utc),
+        profile="opus48",
+    )
+    assert Job.from_queue_message(j.to_queue_message()).profile == "opus48"
