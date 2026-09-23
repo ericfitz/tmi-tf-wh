@@ -430,7 +430,8 @@ def run_analysis(
 
         # Build artifact names (environment-aware)
         model_label = llm_analyzer.model
-        ts = config.timestamp
+        # Per run, not config.timestamp: the server reuses one Config for its lifetime.
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         if selected_env_name:
             inventory_note_name = (
                 f"Terraform Inventory - {selected_env_name} ({model_label}, {ts})"
