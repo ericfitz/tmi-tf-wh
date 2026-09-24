@@ -62,6 +62,15 @@ class AddonCallback:
                     status,
                 )
                 return
+            if response.status_code == 404:
+                # TMI drops active delivery records after 4 h; runs that
+                # outlive it can no longer report, so stop trying.
+                logger.warning(
+                    "Addon callback status=%r dropped: delivery expired in TMI",
+                    status,
+                )
+                self.callback_url = None
+                return
             response.raise_for_status()
         except Exception:
             logger.exception(

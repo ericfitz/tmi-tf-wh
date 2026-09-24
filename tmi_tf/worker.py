@@ -201,7 +201,7 @@ class WorkerPool:
         if job.callback_url and self.config.webhook_secret:
             callback = AddonCallback(job.callback_url, self.config.webhook_secret)
             if not job.is_child:
-                callback.send_status("in_progress")
+                await asyncio.to_thread(callback.send_status, "in_progress")
 
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
@@ -250,7 +250,7 @@ class WorkerPool:
             if job.is_child:
                 await self._finish_child(job, "failed")
             elif callback:
-                callback.send_status("failed", str(e))
+                await asyncio.to_thread(callback.send_status, "failed", str(e))
             # Don't delete — let visibility timeout handle retry
 
     async def _run_parent(
@@ -265,7 +265,7 @@ class WorkerPool:
         except ProfileError as e:
             logger.error("Parent job %s: %s", job.job_id, e)
             if callback:
-                callback.send_status("failed", str(e))
+                await asyncio.to_thread(callback.send_status, "failed", str(e))
             return
         targets = await asyncio.to_thread(
             resolve_fanout_targets,
@@ -279,7 +279,9 @@ class WorkerPool:
         if not targets:
             logger.info("Parent job %s: no environments matched", job.job_id)
             if callback:
-                callback.send_status("completed", "no environments matched")
+                await asyncio.to_thread(
+                    callback.send_status, "completed", "no environments matched"
+                )
             return
         now = datetime.now(timezone.utc)
         deadline = compute_deadline(
@@ -345,12 +347,12 @@ class WorkerPool:
                 wd.cancel()
             logger.info("Parent job %s: %s", job.job_id, summary)
             if callback:
-                callback.send_status("failed", summary)
+                await asyncio.to_thread(callback.send_status, "failed", summary)
             return
         summary = f"enqueued {enqueued} of {len(targets)} environment jobs"
         logger.info("Parent job %s: %s", job.job_id, summary)
         if callback:
-            callback.send_status("in_progress", summary)
+            await asyncio.to_thread(callback.send_status, "in_progress", summary)
 
     async def abort(self, invocation_id: str, reason: str) -> int:
         """Stop every job of an invocation; queued children are dropped when dequeued.

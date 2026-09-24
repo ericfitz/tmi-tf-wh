@@ -89,3 +89,15 @@ def test_send_status_omits_empty_message_and_caps_length():
     bodies = [json.loads(c.kwargs["data"]) for c in mock_post.call_args_list]
     assert bodies[0] == {"status": "in_progress"}
     assert len(bodies[1]["status_message"]) == 1024
+
+
+def test_send_status_404_stops_further_callbacks(caplog):
+    """TMI expires active deliveries after 4 h; later callbacks 404."""
+    cb = AddonCallback(callback_url="https://example.com/callback", secret="s")
+    with patch("tmi_tf.addon_callback.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=404)
+        cb.send_status("in_progress", "phase 2")
+        cb.send_status("completed", "done")
+    mock_post.assert_called_once()
+    mock_post.return_value.raise_for_status.assert_not_called()
+    assert not any(r.exc_info for r in caplog.records)
