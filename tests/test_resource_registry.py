@@ -5,22 +5,12 @@ from pathlib import Path
 
 import yaml  # pyright: ignore[reportMissingModuleSource]
 
+from tmi_tf.tf_filter import ALLOWED_CATEGORIES
+
 REGISTRY_PATH = (
     Path(__file__).parent.parent / "tmi_tf" / "data" / "resource_registry.yaml"
 )
 
-ALLOWED_CATEGORIES = {
-    "compute",
-    "storage",
-    "network",
-    "gateway",
-    "security_control",
-    "identity",
-    "monitoring",
-    "dns",
-    "cdn",
-    "other",
-}
 ATTR_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$")
 
 
