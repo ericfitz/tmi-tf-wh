@@ -130,7 +130,16 @@ def find_references(value: Any, exclude: str = "") -> list[str]:
                 walk(item)
         elif isinstance(v, str) and "${" in v:
             for m in _REF_RE.finditer(v):
-                refs.add(f"{m.group(1)}.{m.group(2)}")
+                first, second = m.group(1), m.group(2)
+                if second in ("value", "key") and not (
+                    first == "module" or first.startswith("data.")
+                ):
+                    # dynamic-block iterator (ebs_block_device.value / .key),
+                    # not a resource address -- unless it's a data./module.
+                    # address, where a resource can legitimately be named
+                    # "value" or "key".
+                    continue
+                refs.add(f"{first}.{second}")
 
     walk(value)
     refs.discard(exclude)

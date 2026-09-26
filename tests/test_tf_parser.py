@@ -55,6 +55,33 @@ class TestHelpers:
             "module.net",
         ]
 
+    def test_find_references_excludes_dynamic_iterator_value_key(self):
+        # Finding 2: `dynamic "ebs_block_device" { ... ebs_block_device.value.name
+        # ... }`-style iterator refs are phantoms, not resource addresses --
+        # unless the address is a data./module. address, where a resource
+        # legitimately named "value" or "key" is not a phantom.
+        value = {
+            "a": "${ebs_block_device.value.name}",
+            "b": "${authorized_networks.value}",
+            "c": "${cidr_blocks.key}",
+            "d": "${module.value}",
+            "e": "${data.aws_ip_ranges.value}",
+        }
+        assert find_references(value) == [
+            "data.aws_ip_ranges.value",
+            "module.value",
+        ]
+
+    def test_find_references_excludes_var_each_local_non_addresses(self):
+        # Pin (Task 1 review gap): var./each./local. never look like addresses
+        # since none matches the resource-type-with-underscore alternative.
+        value = {
+            "a": "${var.my_map.key}",
+            "b": "${each.value.id}",
+            "c": "${local.x.y}",
+        }
+        assert find_references(value) == []
+
 
 class TestParseTerraform:
     def test_resources_and_addresses(self):

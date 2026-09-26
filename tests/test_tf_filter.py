@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 
+import hcl2
 import pytest  # type: ignore
 
 from tmi_tf.tf_filter import (
@@ -176,6 +177,16 @@ class TestFilteredHcl:
         assert res.filtered_files["e.tf"] == ""
         assert res.prebuilt_inventory["components"] == []
 
+    def test_tfvars_object_list_round_trips_as_single_assignment(self, registry):
+        # Finding 3: a .tfvars attribute whose value is a list of objects must
+        # not be mistaken for a block list (which would render N separate
+        # `rules = [...]` assignments instead of one).
+        contents = {"x.tfvars": "rules = [{ port = 80 }, { port = 443 }]\n"}
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        text = res.filtered_files["x.tfvars"]
+        assert text.count("rules") == 1
+        assert hcl2.loads(text) == {"rules": [{"port": 80}, {"port": 443}]}
+
     def test_registry_attrs_absent_from_block(self, registry):
         contents = {"m.tf": 'resource "aws_kms_alias" "a" {\n  foo = 1\n  bar = 2\n}\n'}
         res = filter_terraform(parse_terraform(contents), contents, registry)
@@ -218,6 +229,43 @@ class TestFilteredHcl:
         assert oci["configuration"]["metadata"]["user_data"].startswith(
             "[script omitted: sha256:"
         )
+
+    def test_dynamic_block_is_kept_in_filtered_hcl_and_configuration(self, registry):
+        # Finding 1: hcl2 parses `dynamic "ingress" { ... }` under the key
+        # "dynamic", which is neither a registry attr nor a meta-arg, so it
+        # must be force-kept rather than dropped as a non-security attribute.
+        contents = {
+            "m.tf": (
+                'resource "aws_security_group" "web" {\n'
+                '  name   = "web"\n'
+                "  vpc_id = aws_vpc.main.id\n"
+                "\n"
+                '  dynamic "ingress" {\n'
+                "    for_each = var.rules\n"
+                "    content {\n"
+                "      from_port = ingress.value.from\n"
+                "      to_port   = ingress.value.to\n"
+                '      protocol  = "tcp"\n'
+                '      user_data = "echo hi"\n'
+                "    }\n"
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert 'dynamic "ingress"' in hcl
+        assert "for_each" in hcl
+        assert "from_port" in hcl
+        assert "non-security attributes omitted" not in hcl
+        assert "echo hi" not in hcl
+        assert "[script omitted: sha256:" in hcl
+        assert res.omitted_attributes == 0
+
+        cfg = _component(res, "aws_security_group.web")["configuration"]
+        assert "dynamic" in cfg
+        ingress = cfg["dynamic"][0]['"ingress"']
+        assert ingress["content"][0]["user_data"].startswith("[script omitted: sha256:")
 
     def test_module_input_scripts_are_hashed_everywhere(self, registry):
         contents = {

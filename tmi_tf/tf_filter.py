@@ -124,7 +124,10 @@ def _select(value: Any, tree: dict[str, Any]) -> Any:
             out[k] = v
         elif k in tree:
             out[k] = v if tree[k] is None else _select(v, tree[k])
-        elif find_references(v):
+        elif k == "dynamic" or find_references(v):
+            # hcl2 parses `dynamic "ingress" { ... }` under the key "dynamic",
+            # never under the real block name, so no registry path can ever
+            # name it -- always keep it whole.
             out[k] = v
     return out
 
@@ -189,6 +192,24 @@ def _render_resource(
     return text, omitted
 
 
+_TOP_LEVEL_BLOCK_TYPES = frozenset(
+    {
+        "resource",
+        "data",
+        "variable",
+        "output",
+        "module",
+        "provider",
+        "locals",
+        "terraform",
+        "moved",
+        "import",
+        "removed",
+        "check",
+    }
+)
+
+
 def _render_file(parsed: dict[str, Any], registry: Registry) -> tuple[str, int]:
     """Regenerate one file's HCL with resource bodies filtered."""
     chunks: list[str] = []
@@ -196,8 +217,10 @@ def _render_file(parsed: dict[str, Any], registry: Registry) -> tuple[str, int]:
     for block_type, items in parsed.items():
         if block_type.startswith("__"):
             continue  # __comments__ and friends
-        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
-            # top-level attribute (.tfvars); block lists are lists of dicts
+        if block_type not in _TOP_LEVEL_BLOCK_TYPES:
+            # top-level attribute (.tfvars) -- render as one assignment even
+            # when its value happens to be a list of objects (a list of
+            # dicts is not on its own evidence of a block list).
             chunks.append(hcl2.dumps({block_type: items}).rstrip())
             continue
         for item in items:
