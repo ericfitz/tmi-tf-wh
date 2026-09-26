@@ -94,6 +94,25 @@ class TestFilteredHcl:
         assert "region" not in hcl
         assert "# 1 non-security attributes omitted" in hcl
 
+    def test_nested_reference_kept_even_if_not_a_registry_path(self, registry):
+        # "snapshot_id" is not itself a registry security_attrs path for
+        # aws_instance (only ebs_block_device.encrypted/.kms_key_id are), but
+        # it holds a reference nested inside a registry-selected block.
+        contents = {
+            "m.tf": (
+                'resource "aws_instance" "w" {\n'
+                '  ami = "ami-1"\n'
+                "  ebs_block_device {\n"
+                "    encrypted   = true\n"
+                "    snapshot_id = aws_ebs_snapshot.s.id\n"
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "aws_ebs_snapshot.s.id" in hcl
+
     def test_escaped_quote_in_kept_attr_survives_round_trip(self, registry):
         # carried item: unquote_literal doesn't unescape \" -- confirm the
         # filtered HCL (re-emitted via hcl2.dumps) still parses back cleanly.
@@ -196,6 +215,24 @@ class TestFilteredHcl:
         assert oci["configuration"]["metadata"]["user_data"].startswith(
             "[script omitted: sha256:"
         )
+
+    def test_module_input_scripts_are_hashed_everywhere(self, registry):
+        contents = {
+            "m.tf": (
+                'module "m" {\n'
+                '  source    = "../mod"\n'
+                '  user_data = "#!/bin/bash\\necho MODSECRET"\n'
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        assert "MODSECRET" not in res.filtered_files["m.tf"]
+        assert "[script omitted: sha256:" in res.filtered_files["m.tf"]
+        mod = _component(res, "module.m")
+        assert mod["configuration"]["inputs"]["user_data"].startswith(
+            "[script omitted: sha256:"
+        )
+        assert "MODSECRET" not in json.dumps(res.prebuilt_inventory)
 
 
 class TestPrebuiltInventory:

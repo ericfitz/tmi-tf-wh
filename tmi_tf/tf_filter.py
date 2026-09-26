@@ -123,6 +123,8 @@ def _select(value: Any, tree: dict[str, Any]) -> Any:
             out[k] = v
         elif k in tree:
             out[k] = v if tree[k] is None else _select(v, tree[k])
+        elif find_references(v):
+            out[k] = v
     return out
 
 
@@ -206,6 +208,14 @@ def _render_file(parsed: dict[str, Any], registry: Registry) -> tuple[str, int]:
                         )
                         chunks.append(text)
                         omitted_total += omitted
+            elif block_type == "module":
+                # Module inputs aren't registry-filtered (no resource type to
+                # look up), but script-carrying inputs still must not leak.
+                item = {
+                    label: _hash_scripts(body, registry.hash_only_attrs, quoted=True)
+                    for label, body in item.items()
+                }
+                chunks.append(hcl2.dumps({block_type: [item]}).rstrip())
             else:
                 chunks.append(hcl2.dumps({block_type: [item]}).rstrip())
     return ("\n\n".join(chunks) + "\n") if chunks else "", omitted_total
@@ -274,6 +284,8 @@ def _prebuilt_inventory(
             )
         )
     for m in inventory.modules:
+        references = find_references({"inputs": _requote(m.inputs)})
+        inputs = _hash_scripts(m.inputs, registry.hash_only_attrs, quoted=False)
         components.append(
             _component(
                 f"module.{m.name}",
@@ -281,8 +293,8 @@ def _prebuilt_inventory(
                 "other",
                 None,
                 m.file,
-                {"source": m.source, "inputs": m.inputs},
-                find_references({"inputs": _requote(m.inputs)}),
+                {"source": m.source, "inputs": inputs},
+                references,
             )
         )
     variables = []
