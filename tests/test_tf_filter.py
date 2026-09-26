@@ -343,3 +343,174 @@ class TestRealModule:
         assert sum(map(len, res.filtered_files.values())) < sum(
             map(len, contents.values())
         )
+
+
+from tmi_tf.tf_filter import display_name, merge_phase1
+
+
+def _prebuilt() -> dict:
+    return {
+        "components": [
+            {
+                "id": "aws_instance.web_server",
+                "resource_type": "aws_instance",
+                "type": "compute",
+                "provider": "AWS",
+                "file": "main.tf",
+                "configuration": {"ami": "ami-1"},
+                "references": ["aws_subnet.private"],
+                "name": None,
+                "purpose": None,
+            },
+            {
+                "id": "mycorp_widget.custom",
+                "resource_type": "mycorp_widget",
+                "type": "other",
+                "provider": None,
+                "file": "main.tf",
+                "configuration": {"size": 3},
+                "references": [],
+                "name": None,
+                "purpose": None,
+            },
+        ],
+        "variables": [],
+        "outputs": [],
+        "modules": [],
+        "unparsed_files": [],
+    }
+
+
+class TestMergePhase1:
+    def test_display_name(self):
+        assert display_name("aws_instance.web_server") == "Web Server"
+        assert display_name("data.aws_ami.ubuntu") == "Ubuntu (data)"
+        assert display_name("module.dns") == "Dns (module)"
+        assert display_name("weird") == "Weird"
+
+    def test_merge_produces_current_schema(self):
+        semantic = {
+            "components": [
+                {"id": "aws_instance.web_server", "name": "Web", "purpose": "Serves"},
+                {
+                    "id": "mycorp_widget.custom",
+                    "name": "Widget",
+                    "purpose": "?",
+                    "type": "storage",
+                },
+                {"id": "aws_ghost.nope", "name": "Ghost", "purpose": "hallucinated"},
+            ],
+            "services": [
+                {
+                    "name": "web",
+                    "criteria": ["naming"],
+                    "compute_units": ["aws_instance.web_server"],
+                    "associated_resources": [],
+                }
+            ],
+            "dependencies": [
+                {
+                    "type": "cloud",
+                    "provider": "AWS",
+                    "service": "EC2",
+                    "dependent_components": ["aws_instance.web_server"],
+                }
+            ],
+        }
+        merged = merge_phase1(_prebuilt(), semantic)
+        assert set(merged) == {"components", "services", "dependencies"}
+        assert [c["id"] for c in merged["components"]] == [
+            "aws_instance.web_server",
+            "mycorp_widget.custom",
+        ]
+        web = merged["components"][0]
+        assert set(web) == {
+            "id",
+            "name",
+            "type",
+            "resource_type",
+            "configuration",
+            "purpose",
+            "dependencies",
+        }
+        assert web["name"] == "Web"
+        assert web["purpose"] == "Serves"
+        assert web["type"] == "compute"
+        assert web["configuration"] == {"ami": "ami-1"}
+        assert web["dependencies"] == [
+            {"type": "cloud", "provider": "AWS", "service": "EC2"}
+        ]
+        widget = merged["components"][1]
+        assert widget["type"] == "storage"  # reclassified from other
+        assert widget["dependencies"] == []
+        assert merged["services"] == semantic["services"]
+        assert merged["dependencies"] == semantic["dependencies"]
+
+    def test_merge_only_reclassifies_other(self):
+        semantic = {
+            "components": [
+                {
+                    "id": "aws_instance.web_server",
+                    "name": "W",
+                    "purpose": "p",
+                    "type": "storage",
+                },
+                {
+                    "id": "mycorp_widget.custom",
+                    "name": "X",
+                    "purpose": "p",
+                    "type": "bogus",
+                },
+            ]
+        }
+        merged = merge_phase1(_prebuilt(), semantic)
+        assert merged["components"][0]["type"] == "compute"
+        assert merged["components"][1]["type"] == "other"
+
+    def test_merge_fills_missing_names(self):
+        merged = merge_phase1(_prebuilt(), {})
+        assert merged["components"][0]["name"] == "Web Server"
+        assert merged["components"][0]["purpose"] == ""
+        assert merged["services"] == [] and merged["dependencies"] == []
+
+    def test_merge_tolerates_malformed_semantic_output(self):
+        semantic = {
+            "components": {"id": "aws_instance.web_server"},  # not a list
+            "services": "none",
+            "dependencies": [
+                {
+                    "type": "cloud",
+                    "provider": "AWS",
+                    "service": "EC2",
+                    "dependent_components": "aws_instance.web_server",
+                },
+                "garbage",
+                {
+                    "type": "saas",
+                    "provider": "GitHub",
+                    "service": "Actions",
+                    "dependent_components": ["aws_instance.web_server", 42],
+                },
+            ],
+        }
+        merged = merge_phase1(_prebuilt(), semantic)
+        assert merged["components"][0]["name"] == "Web Server"
+        assert merged["services"] == []
+        assert merged["dependencies"] == [
+            {
+                "type": "cloud",
+                "provider": "AWS",
+                "service": "EC2",
+                "dependent_components": ["aws_instance.web_server"],
+            },
+            {
+                "type": "saas",
+                "provider": "GitHub",
+                "service": "Actions",
+                "dependent_components": ["aws_instance.web_server"],
+            },
+        ]
+        assert merged["components"][0]["dependencies"] == [
+            {"type": "cloud", "provider": "AWS", "service": "EC2"},
+            {"type": "saas", "provider": "GitHub", "service": "Actions"},
+        ]

@@ -355,3 +355,84 @@ def filter_terraform(
         len(tf_contents),
     )
     return result
+
+
+# --- merge of the LLM's semantic answer ---------------------------------------
+
+
+def display_name(component_id: str) -> str:
+    """Fallback display name from an address: aws_instance.web_server -> Web Server."""
+    parts = component_id.split(".")
+    suffix = ""
+    if parts[0] in ("data", "module") and len(parts) > 1:
+        suffix = f" ({parts[0]})"
+    local = parts[-1].replace("_", " ").replace("-", " ").strip()
+    return f"{local.title()}{suffix}" if local else component_id
+
+
+def _as_dict_list(value: Any) -> list[dict[str, Any]]:
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def _id_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def merge_phase1(prebuilt: dict[str, Any], semantic: dict[str, Any]) -> dict[str, Any]:
+    """Static facts + LLM semantics -> the existing phase-1 inventory schema.
+
+    Static ``id``, ``resource_type``, ``configuration`` win; the LLM supplies
+    ``name``, ``purpose``, ``services``, ``dependencies`` and may only
+    reclassify components whose static type is ``other``.
+    """
+    by_id = {c["id"]: c for c in _as_dict_list(semantic.get("components")) if "id" in c}
+    dependencies = []
+    for d in _as_dict_list(semantic.get("dependencies")):
+        dependencies.append(
+            {
+                "type": d.get("type", ""),
+                "provider": d.get("provider", ""),
+                "service": d.get("service", ""),
+                "dependent_components": _id_list(d.get("dependent_components")),
+            }
+        )
+
+    components: list[dict[str, Any]] = []
+    for comp in prebuilt.get("components", []):
+        cid = comp["id"]
+        sem = by_id.pop(cid, {})
+        ctype = comp["type"]
+        if ctype == "other" and sem.get("type") in ALLOWED_CATEGORIES:
+            ctype = sem["type"]
+        components.append(
+            {
+                "id": cid,
+                "name": sem.get("name") or display_name(cid),
+                "type": ctype,
+                "resource_type": comp["resource_type"],
+                "configuration": comp["configuration"],
+                "purpose": sem.get("purpose") or "",
+                "dependencies": [
+                    {
+                        "type": d["type"],
+                        "provider": d["provider"],
+                        "service": d["service"],
+                    }
+                    for d in dependencies
+                    if cid in d["dependent_components"]
+                ],
+            }
+        )
+    if by_id:
+        logger.warning(
+            "Phase 1: LLM returned %d component id(s) not in the static inventory; ignored: %s",
+            len(by_id),
+            ", ".join(sorted(by_id)[:10]),
+        )
+    return {
+        "components": components,
+        "services": _as_dict_list(semantic.get("services")),
+        "dependencies": dependencies,
+    }

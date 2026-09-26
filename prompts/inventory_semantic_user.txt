@@ -1,0 +1,18 @@
+Repository: {repo_name}
+URL: {repo_url}
+
+## Pre-extracted inventory (authoritative)
+
+The ids, resource types, categories, configuration and references below were extracted by static analysis and must be preserved exactly. Fields set to null are for you to fill in.
+
+{inventory_json}
+
+## Filtered Terraform source (security-relevant attributes only)
+
+Non-security attributes were removed on purpose; "# N non-security attributes omitted" marks where. Files listed under "unparsed_files" in the inventory are shown unfiltered.
+
+{filtered_hcl}
+
+---
+
+Fill in name and purpose for every component, group compute components into services, list external dependencies, and reclassify "other" components where a better category is clear. Return ONLY the JSON object.
