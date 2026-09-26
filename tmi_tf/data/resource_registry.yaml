@@ -1,0 +1,1586 @@
+# Resource registry for static HCL analysis (issue #10).
+#
+# resources: Terraform resource type -> component category and the attributes
+#   worth showing an LLM for threat modeling (identity/IAM references,
+#   encryption, network placement, exposure, access control, logging, images).
+#   Dot paths reach into nested blocks or objects: ebs_block_device.encrypted.
+#   Everything not listed is stripped from the filtered HCL and replaced by a
+#   "# N non-security attributes omitted" comment. Meta-arguments (count,
+#   for_each, depends_on, provider, lifecycle) and any attribute holding a
+#   resource/data/module reference are always kept.
+# providers: resource type prefix -> provider label sent with each component.
+# defaults: unknown resource types get category `other` and keep ALL
+#   attributes (unknown_attrs: all); hash_only_attrs are script-carrying
+#   attributes (any nesting depth) replaced by a sha256 digest + size.
+#
+# Categories: compute, storage, network, gateway, security_control, identity,
+#             monitoring, dns, cdn, other
+
+providers:
+  aws_: { name: "AWS", type: "cloud" }
+  azurerm_: { name: "Microsoft Azure", type: "cloud" }
+  azuread_: { name: "Microsoft Entra ID", type: "cloud" }
+  google_: { name: "Google Cloud", type: "cloud" }
+  oci_: { name: "Oracle Cloud", type: "cloud" }
+  kubernetes_: { name: "Kubernetes", type: "platform" }
+  helm_: { name: "Helm", type: "platform" }
+  random_: { name: "Terraform random provider", type: "utility" }
+  null_: { name: "Terraform null provider", type: "utility" }
+  tls_: { name: "Terraform tls provider", type: "utility" }
+  time_: { name: "Terraform time provider", type: "utility" }
+  local_: { name: "Terraform local provider", type: "utility" }
+
+resources:
+  # ---------------------------------------------------------------- AWS compute
+  aws_instance:
+    category: compute
+    security_attrs: [ami, iam_instance_profile, vpc_security_group_ids, security_groups, subnet_id,
+      associate_public_ip_address, key_name, monitoring, metadata_options, user_data,
+      user_data_base64, root_block_device.encrypted, root_block_device.kms_key_id,
+      ebs_block_device.encrypted, ebs_block_device.kms_key_id]
+  aws_launch_template:
+    category: compute
+    security_attrs: [image_id, iam_instance_profile, vpc_security_group_ids,
+      network_interfaces.security_groups, network_interfaces.associate_public_ip_address,
+      network_interfaces.subnet_id, metadata_options, user_data, key_name, monitoring,
+      block_device_mappings.ebs.encrypted, block_device_mappings.ebs.kms_key_id]
+  aws_launch_configuration:
+    category: compute
+    security_attrs: [image_id, iam_instance_profile, security_groups, associate_public_ip_address,
+      user_data, user_data_base64, key_name, root_block_device.encrypted]
+  aws_autoscaling_group:
+    category: compute
+    security_attrs: [launch_template, launch_configuration, vpc_zone_identifier, target_group_arns,
+      min_size, max_size, desired_capacity, service_linked_role_arn]
+  aws_lambda_function:
+    category: compute
+    security_attrs: [role, runtime, handler, vpc_config, environment, kms_key_arn,
+      reserved_concurrent_executions, tracing_config, layers, image_uri, source_code_hash]
+  aws_lambda_permission:
+    category: security_control
+    security_attrs: [action, function_name, principal, source_arn, source_account]
+  aws_ecs_cluster:
+    category: compute
+    security_attrs: [setting, configuration]
+  aws_ecs_service:
+    category: compute
+    security_attrs: [cluster, task_definition, launch_type, network_configuration, load_balancer,
+      iam_role, desired_count]
+  aws_ecs_task_definition:
+    category: compute
+    security_attrs: [execution_role_arn, task_role_arn, network_mode, container_definitions,
+      requires_compatibilities]
+  aws_eks_cluster:
+    category: compute
+    security_attrs: [role_arn, version, vpc_config, encryption_config, enabled_cluster_log_types,
+      access_config, kubernetes_network_config]
+  aws_eks_node_group:
+    category: compute
+    security_attrs: [cluster_name, node_role_arn, subnet_ids, remote_access, launch_template,
+      scaling_config, ami_type, capacity_type]
+  aws_eks_addon:
+    category: compute
+    security_attrs: [cluster_name, addon_name, addon_version, service_account_role_arn]
+  aws_eks_fargate_profile:
+    category: compute
+    security_attrs: [cluster_name, pod_execution_role_arn, subnet_ids, selector]
+  aws_batch_compute_environment:
+    category: compute
+    security_attrs: [service_role, compute_resources]
+  aws_elastic_beanstalk_environment:
+    category: compute
+    security_attrs: [application, solution_stack_name, setting]
+  aws_apprunner_service:
+    category: compute
+    security_attrs: [source_configuration, instance_configuration, network_configuration,
+      encryption_configuration]
+  aws_lightsail_instance:
+    category: compute
+    security_attrs: [blueprint_id, key_pair_name, user_data]
+
+  # ---------------------------------------------------------------- AWS storage
+  aws_s3_bucket:
+    category: storage
+    security_attrs: [bucket, acl, force_destroy, versioning, server_side_encryption_configuration,
+      logging, policy, object_lock_enabled, website]
+  aws_s3_bucket_policy:
+    category: security_control
+    security_attrs: [bucket, policy]
+  aws_s3_bucket_public_access_block:
+    category: security_control
+    security_attrs: [bucket, block_public_acls, block_public_policy, ignore_public_acls,
+      restrict_public_buckets]
+  aws_s3_bucket_server_side_encryption_configuration:
+    category: security_control
+    security_attrs: [bucket, rule]
+  aws_s3_bucket_versioning:
+    category: storage
+    security_attrs: [bucket, versioning_configuration]
+  aws_s3_bucket_logging:
+    category: monitoring
+    security_attrs: [bucket, target_bucket, target_prefix]
+  aws_s3_bucket_acl:
+    category: security_control
+    security_attrs: [bucket, acl, access_control_policy]
+  aws_s3_bucket_ownership_controls:
+    category: security_control
+    security_attrs: [bucket, rule]
+  aws_s3_bucket_object_lock_configuration:
+    category: security_control
+    security_attrs: [bucket, rule]
+  aws_s3_bucket_lifecycle_configuration:
+    category: storage
+    security_attrs: [bucket, rule.id, rule.status, rule.expiration]
+  aws_s3_bucket_website_configuration:
+    category: storage
+    security_attrs: [bucket, index_document, redirect_all_requests_to]
+  aws_ebs_volume:
+    category: storage
+    security_attrs: [encrypted, kms_key_id, availability_zone, size]
+  aws_efs_file_system:
+    category: storage
+    security_attrs: [encrypted, kms_key_id]
+  aws_efs_mount_target:
+    category: storage
+    security_attrs: [file_system_id, subnet_id, security_groups]
+  aws_db_instance:
+    category: storage
+    security_attrs: [engine, engine_version, instance_class, publicly_accessible, storage_encrypted,
+      kms_key_id, vpc_security_group_ids, db_subnet_group_name, iam_database_authentication_enabled,
+      multi_az, backup_retention_period, deletion_protection, enabled_cloudwatch_logs_exports,
+      manage_master_user_password, master_user_secret_kms_key_id, parameter_group_name, port,
+      username, monitoring_role_arn, performance_insights_enabled, ca_cert_identifier]
+  aws_db_subnet_group:
+    category: network
+    security_attrs: [subnet_ids]
+  aws_db_parameter_group:
+    category: storage
+    security_attrs: [family, parameter]
+  aws_rds_cluster:
+    category: storage
+    security_attrs: [engine, engine_version, storage_encrypted, kms_key_id, vpc_security_group_ids,
+      db_subnet_group_name, iam_database_authentication_enabled, backup_retention_period,
+      deletion_protection, enabled_cloudwatch_logs_exports, master_username,
+      manage_master_user_password, port]
+  aws_rds_cluster_instance:
+    category: storage
+    security_attrs: [cluster_identifier, instance_class, publicly_accessible,
+      db_subnet_group_name, monitoring_role_arn, performance_insights_enabled]
+  aws_dynamodb_table:
+    category: storage
+    security_attrs: [server_side_encryption, point_in_time_recovery, deletion_protection_enabled,
+      billing_mode, stream_enabled]
+  aws_elasticache_cluster:
+    category: storage
+    security_attrs: [engine, subnet_group_name, security_group_ids, port, snapshot_retention_limit]
+  aws_elasticache_replication_group:
+    category: storage
+    security_attrs: [engine, at_rest_encryption_enabled, transit_encryption_enabled, kms_key_id,
+      auth_token, subnet_group_name, security_group_ids, port]
+  aws_redshift_cluster:
+    category: storage
+    security_attrs: [encrypted, kms_key_id, publicly_accessible, vpc_security_group_ids,
+      cluster_subnet_group_name, iam_roles, logging, master_username, port]
+  aws_opensearch_domain:
+    category: storage
+    security_attrs: [engine_version, encrypt_at_rest, node_to_node_encryption,
+      domain_endpoint_options, vpc_options, access_policies, advanced_security_options,
+      log_publishing_options]
+  aws_ecr_repository:
+    category: storage
+    security_attrs: [image_tag_mutability, image_scanning_configuration, encryption_configuration,
+      force_delete]
+  aws_ecr_repository_policy:
+    category: security_control
+    security_attrs: [repository, policy]
+  aws_backup_vault:
+    category: storage
+    security_attrs: [kms_key_arn]
+  aws_glacier_vault:
+    category: storage
+    security_attrs: [access_policy, notification]
+
+  # ---------------------------------------------------------------- AWS network
+  aws_vpc:
+    category: network
+    security_attrs: [cidr_block, enable_dns_support, enable_dns_hostnames, instance_tenancy]
+  aws_subnet:
+    category: network
+    security_attrs: [vpc_id, cidr_block, availability_zone, map_public_ip_on_launch]
+  aws_route_table:
+    category: network
+    security_attrs: [vpc_id, route]
+  aws_route:
+    category: network
+    security_attrs: [route_table_id, destination_cidr_block, gateway_id, nat_gateway_id,
+      transit_gateway_id, vpc_peering_connection_id]
+  aws_route_table_association:
+    category: network
+    security_attrs: [subnet_id, route_table_id, gateway_id]
+  aws_vpc_endpoint:
+    category: network
+    security_attrs: [vpc_id, service_name, vpc_endpoint_type, subnet_ids, security_group_ids,
+      policy, private_dns_enabled]
+  aws_vpc_peering_connection:
+    category: network
+    security_attrs: [vpc_id, peer_vpc_id, peer_owner_id, auto_accept]
+  aws_ec2_transit_gateway:
+    category: network
+    security_attrs: [default_route_table_association, default_route_table_propagation,
+      auto_accept_shared_attachments]
+  aws_ec2_transit_gateway_vpc_attachment:
+    category: network
+    security_attrs: [transit_gateway_id, vpc_id, subnet_ids]
+  aws_network_interface:
+    category: network
+    security_attrs: [subnet_id, security_groups, private_ips, source_dest_check]
+  aws_eip:
+    category: network
+    security_attrs: [domain, instance, network_interface, vpc]
+  aws_eip_association:
+    category: network
+    security_attrs: [allocation_id, instance_id, network_interface_id]
+  aws_flow_log:
+    category: monitoring
+    security_attrs: [vpc_id, subnet_id, traffic_type, log_destination, log_destination_type,
+      iam_role_arn]
+  aws_internet_gateway:
+    category: gateway
+    security_attrs: [vpc_id]
+  aws_nat_gateway:
+    category: gateway
+    security_attrs: [subnet_id, allocation_id, connectivity_type]
+  aws_lb:
+    category: gateway
+    security_attrs: [load_balancer_type, internal, security_groups, subnets, subnet_mapping,
+      access_logs, drop_invalid_header_fields, enable_deletion_protection]
+  aws_alb:
+    category: gateway
+    security_attrs: [load_balancer_type, internal, security_groups, subnets, access_logs,
+      enable_deletion_protection]
+  aws_elb:
+    category: gateway
+    security_attrs: [internal, security_groups, subnets, listener, access_logs]
+  aws_lb_listener:
+    category: gateway
+    security_attrs: [load_balancer_arn, port, protocol, ssl_policy, certificate_arn, default_action]
+  aws_lb_listener_rule:
+    category: gateway
+    security_attrs: [listener_arn, action, condition]
+  aws_lb_target_group:
+    category: network
+    security_attrs: [port, protocol, vpc_id, target_type, health_check]
+  aws_lb_target_group_attachment:
+    category: network
+    security_attrs: [target_group_arn, target_id, port]
+  aws_api_gateway_rest_api:
+    category: gateway
+    security_attrs: [endpoint_configuration, policy, disable_execute_api_endpoint]
+  aws_api_gateway_stage:
+    category: gateway
+    security_attrs: [rest_api_id, stage_name, access_log_settings, xray_tracing_enabled,
+      client_certificate_id]
+  aws_api_gateway_method:
+    category: gateway
+    security_attrs: [rest_api_id, http_method, authorization, authorizer_id, api_key_required]
+  aws_api_gateway_authorizer:
+    category: security_control
+    security_attrs: [rest_api_id, type, authorizer_uri, provider_arns]
+  aws_apigatewayv2_api:
+    category: gateway
+    security_attrs: [protocol_type, cors_configuration, disable_execute_api_endpoint]
+  aws_apigatewayv2_stage:
+    category: gateway
+    security_attrs: [api_id, access_log_settings, default_route_settings]
+  aws_apigatewayv2_authorizer:
+    category: security_control
+    security_attrs: [api_id, authorizer_type, jwt_configuration, authorizer_uri]
+  aws_cloudfront_distribution:
+    category: cdn
+    security_attrs: [enabled, origin, default_cache_behavior.viewer_protocol_policy,
+      viewer_certificate, restrictions, web_acl_id, logging_config, aliases]
+  aws_cloudfront_origin_access_control:
+    category: security_control
+    security_attrs: [origin_access_control_origin_type, signing_behavior, signing_protocol]
+  aws_route53_zone:
+    category: dns
+    security_attrs: [name, vpc]
+  aws_route53_record:
+    category: dns
+    security_attrs: [zone_id, name, type, alias, records]
+  aws_route53_resolver_endpoint:
+    category: dns
+    security_attrs: [direction, security_group_ids, ip_address]
+  aws_globalaccelerator_accelerator:
+    category: gateway
+    security_attrs: [enabled, ip_address_type, attributes]
+
+  # ------------------------------------------------------ AWS security controls
+  aws_security_group:
+    category: security_control
+    security_attrs: [name, vpc_id, ingress, egress]
+  aws_security_group_rule:
+    category: security_control
+    security_attrs: [security_group_id, type, from_port, to_port, protocol, cidr_blocks,
+      ipv6_cidr_blocks, source_security_group_id, self]
+  aws_vpc_security_group_ingress_rule:
+    category: security_control
+    security_attrs: [security_group_id, from_port, to_port, ip_protocol, cidr_ipv4, cidr_ipv6,
+      referenced_security_group_id, prefix_list_id]
+  aws_vpc_security_group_egress_rule:
+    category: security_control
+    security_attrs: [security_group_id, from_port, to_port, ip_protocol, cidr_ipv4, cidr_ipv6,
+      referenced_security_group_id, prefix_list_id]
+  aws_network_acl:
+    category: security_control
+    security_attrs: [vpc_id, subnet_ids, ingress, egress]
+  aws_network_acl_rule:
+    category: security_control
+    security_attrs: [network_acl_id, rule_number, egress, protocol, rule_action, cidr_block,
+      from_port, to_port]
+  aws_wafv2_web_acl:
+    category: security_control
+    security_attrs: [scope, default_action, rule.name, rule.action, rule.override_action,
+      visibility_config]
+  aws_wafv2_web_acl_association:
+    category: security_control
+    security_attrs: [resource_arn, web_acl_arn]
+  aws_kms_key:
+    category: security_control
+    security_attrs: [description, enable_key_rotation, deletion_window_in_days, policy,
+      key_usage, multi_region]
+  aws_kms_alias:
+    category: security_control
+    security_attrs: [name, target_key_id]
+  aws_secretsmanager_secret:
+    category: security_control
+    security_attrs: [name, kms_key_id, recovery_window_in_days, policy, replica]
+  aws_secretsmanager_secret_version:
+    category: security_control
+    security_attrs: [secret_id]
+  aws_secretsmanager_secret_rotation:
+    category: security_control
+    security_attrs: [secret_id, rotation_lambda_arn, rotation_rules]
+  aws_ssm_parameter:
+    category: security_control
+    security_attrs: [name, type, key_id, tier]
+  aws_acm_certificate:
+    category: security_control
+    security_attrs: [domain_name, subject_alternative_names, validation_method, key_algorithm]
+  aws_acm_certificate_validation:
+    category: security_control
+    security_attrs: [certificate_arn, validation_record_fqdns]
+  aws_shield_protection:
+    category: security_control
+    security_attrs: [resource_arn]
+  aws_guardduty_detector:
+    category: monitoring
+    security_attrs: [enable, finding_publishing_frequency, datasources]
+  aws_securityhub_account:
+    category: monitoring
+    security_attrs: [enable_default_standards, auto_enable_controls]
+  aws_accessanalyzer_analyzer:
+    category: monitoring
+    security_attrs: [analyzer_name, type]
+  aws_config_configuration_recorder:
+    category: monitoring
+    security_attrs: [role_arn, recording_group]
+  aws_inspector2_enabler:
+    category: monitoring
+    security_attrs: [account_ids, resource_types]
+
+  # --------------------------------------------------------------- AWS identity
+  aws_iam_role:
+    category: identity
+    security_attrs: [name, assume_role_policy, managed_policy_arns, inline_policy,
+      permissions_boundary, max_session_duration]
+  aws_iam_policy:
+    category: identity
+    security_attrs: [name, policy]
+  aws_iam_role_policy:
+    category: identity
+    security_attrs: [role, policy]
+  aws_iam_role_policy_attachment:
+    category: identity
+    security_attrs: [role, policy_arn]
+  aws_iam_policy_attachment:
+    category: identity
+    security_attrs: [policy_arn, roles, users, groups]
+  aws_iam_user:
+    category: identity
+    security_attrs: [name, permissions_boundary, force_destroy]
+  aws_iam_user_policy:
+    category: identity
+    security_attrs: [user, policy]
+  aws_iam_user_policy_attachment:
+    category: identity
+    security_attrs: [user, policy_arn]
+  aws_iam_access_key:
+    category: identity
+    security_attrs: [user, status, pgp_key]
+  aws_iam_group:
+    category: identity
+    security_attrs: [name]
+  aws_iam_group_policy_attachment:
+    category: identity
+    security_attrs: [group, policy_arn]
+  aws_iam_instance_profile:
+    category: identity
+    security_attrs: [name, role]
+  aws_iam_openid_connect_provider:
+    category: identity
+    security_attrs: [url, client_id_list, thumbprint_list]
+  aws_iam_saml_provider:
+    category: identity
+    security_attrs: [name]
+  aws_iam_account_password_policy:
+    category: identity
+    security_attrs: [minimum_password_length, require_symbols, require_numbers,
+      require_uppercase_characters, require_lowercase_characters, max_password_age,
+      password_reuse_prevention]
+  aws_cognito_user_pool:
+    category: identity
+    security_attrs: [name, mfa_configuration, password_policy, admin_create_user_config,
+      user_pool_add_ons, account_recovery_setting]
+  aws_cognito_user_pool_client:
+    category: identity
+    security_attrs: [user_pool_id, generate_secret, allowed_oauth_flows, callback_urls,
+      explicit_auth_flows, prevent_user_existence_errors]
+  aws_cognito_identity_pool:
+    category: identity
+    security_attrs: [allow_unauthenticated_identities, cognito_identity_providers]
+
+  # ------------------------------------------------------------- AWS monitoring
+  aws_cloudwatch_log_group:
+    category: monitoring
+    security_attrs: [name, retention_in_days, kms_key_id]
+  aws_cloudwatch_metric_alarm:
+    category: monitoring
+    security_attrs: [alarm_name, metric_name, namespace, alarm_actions, threshold]
+  aws_cloudwatch_event_rule:
+    category: monitoring
+    security_attrs: [name, event_pattern, schedule_expression, role_arn]
+  aws_cloudwatch_event_target:
+    category: monitoring
+    security_attrs: [rule, arn, role_arn]
+  aws_cloudtrail:
+    category: monitoring
+    security_attrs: [name, s3_bucket_name, is_multi_region_trail, enable_log_file_validation,
+      kms_key_id, cloud_watch_logs_group_arn, cloud_watch_logs_role_arn, include_global_service_events,
+      event_selector]
+  aws_sns_topic:
+    category: other
+    security_attrs: [name, kms_master_key_id, policy]
+  aws_sns_topic_subscription:
+    category: other
+    security_attrs: [topic_arn, protocol, endpoint]
+  aws_sns_topic_policy:
+    category: security_control
+    security_attrs: [arn, policy]
+  aws_sqs_queue:
+    category: other
+    security_attrs: [name, kms_master_key_id, sqs_managed_sse_enabled, policy,
+      redrive_policy, fifo_queue]
+  aws_sqs_queue_policy:
+    category: security_control
+    security_attrs: [queue_url, policy]
+  aws_kinesis_stream:
+    category: other
+    security_attrs: [name, encryption_type, kms_key_id, shard_count]
+  aws_mq_broker:
+    category: other
+    security_attrs: [engine_type, publicly_accessible, subnet_ids, security_groups,
+      encryption_options, logs]
+  aws_ses_domain_identity:
+    category: other
+    security_attrs: [domain]
+
+  # --------------------------------------------------------------- Azure compute
+  azurerm_linux_virtual_machine:
+    category: compute
+    security_attrs: [size, admin_username, disable_password_authentication, admin_ssh_key,
+      network_interface_ids, source_image_reference, source_image_id, identity, custom_data,
+      os_disk.disk_encryption_set_id, encryption_at_host_enabled, secure_boot_enabled,
+      vtpm_enabled]
+  azurerm_windows_virtual_machine:
+    category: compute
+    security_attrs: [size, admin_username, network_interface_ids, source_image_reference,
+      identity, custom_data, os_disk.disk_encryption_set_id, encryption_at_host_enabled]
+  azurerm_virtual_machine:
+    category: compute
+    security_attrs: [vm_size, network_interface_ids, storage_image_reference, identity,
+      os_profile.custom_data, os_profile_linux_config.disable_password_authentication,
+      storage_os_disk.encryption_settings]
+  azurerm_linux_virtual_machine_scale_set:
+    category: compute
+    security_attrs: [sku, instances, admin_username, disable_password_authentication,
+      network_interface, source_image_reference, identity, custom_data, encryption_at_host_enabled]
+  azurerm_kubernetes_cluster:
+    category: compute
+    security_attrs: [dns_prefix, kubernetes_version, private_cluster_enabled, identity,
+      default_node_pool.vnet_subnet_id, default_node_pool.node_count, network_profile,
+      azure_active_directory_role_based_access_control, role_based_access_control_enabled,
+      api_server_access_profile, oms_agent, local_account_disabled, azure_policy_enabled,
+      key_vault_secrets_provider, workload_identity_enabled, oidc_issuer_enabled]
+  azurerm_kubernetes_cluster_node_pool:
+    category: compute
+    security_attrs: [kubernetes_cluster_id, vm_size, node_count, vnet_subnet_id,
+      enable_node_public_ip]
+  azurerm_container_group:
+    category: compute
+    security_attrs: [ip_address_type, subnet_ids, identity, image_registry_credential,
+      container.image, container.ports, exposed_port]
+  azurerm_container_app:
+    category: compute
+    security_attrs: [container_app_environment_id, identity, ingress, secret, registry]
+  azurerm_container_app_environment:
+    category: compute
+    security_attrs: [infrastructure_subnet_id, internal_load_balancer_enabled,
+      log_analytics_workspace_id]
+  azurerm_linux_web_app:
+    category: compute
+    security_attrs: [service_plan_id, https_only, identity, site_config.ftps_state,
+      site_config.minimum_tls_version, site_config.ip_restriction, auth_settings,
+      virtual_network_subnet_id, client_certificate_enabled]
+  azurerm_windows_web_app:
+    category: compute
+    security_attrs: [service_plan_id, https_only, identity, site_config.minimum_tls_version,
+      site_config.ip_restriction, auth_settings, virtual_network_subnet_id]
+  azurerm_linux_function_app:
+    category: compute
+    security_attrs: [service_plan_id, storage_account_name, https_only, identity,
+      site_config.minimum_tls_version, site_config.ip_restriction, virtual_network_subnet_id]
+  azurerm_app_service:
+    category: compute
+    security_attrs: [app_service_plan_id, https_only, identity, site_config, auth_settings]
+  azurerm_service_plan:
+    category: compute
+    security_attrs: [os_type, sku_name]
+
+  # --------------------------------------------------------------- Azure storage
+  azurerm_storage_account:
+    category: storage
+    security_attrs: [account_tier, account_replication_type, account_kind,
+      https_traffic_only_enabled, enable_https_traffic_only, min_tls_version,
+      allow_nested_items_to_be_public, public_network_access_enabled, shared_access_key_enabled,
+      network_rules, blob_properties.versioning_enabled, blob_properties.delete_retention_policy,
+      identity, customer_managed_key, infrastructure_encryption_enabled, queue_properties.logging]
+  azurerm_storage_container:
+    category: storage
+    security_attrs: [storage_account_name, storage_account_id, container_access_type]
+  azurerm_storage_account_network_rules:
+    category: security_control
+    security_attrs: [storage_account_id, default_action, ip_rules, virtual_network_subnet_ids,
+      bypass]
+  azurerm_storage_share:
+    category: storage
+    security_attrs: [storage_account_name, quota, acl]
+  azurerm_managed_disk:
+    category: storage
+    security_attrs: [storage_account_type, disk_encryption_set_id, encryption_settings,
+      network_access_policy, public_network_access_enabled]
+  azurerm_postgresql_flexible_server:
+    category: storage
+    security_attrs: [version, sku_name, administrator_login, delegated_subnet_id,
+      private_dns_zone_id, public_network_access_enabled, backup_retention_days,
+      geo_redundant_backup_enabled, high_availability, authentication, customer_managed_key,
+      identity]
+  azurerm_postgresql_flexible_server_firewall_rule:
+    category: security_control
+    security_attrs: [server_id, start_ip_address, end_ip_address]
+  azurerm_postgresql_flexible_server_database:
+    category: storage
+    security_attrs: [server_id, name]
+  azurerm_postgresql_server:
+    category: storage
+    security_attrs: [version, sku_name, administrator_login, ssl_enforcement_enabled,
+      ssl_minimal_tls_version_enforced, public_network_access_enabled, geo_redundant_backup_enabled,
+      threat_detection_policy, identity]
+  azurerm_mssql_server:
+    category: storage
+    security_attrs: [version, administrator_login, minimum_tls_version,
+      public_network_access_enabled, azuread_administrator, identity,
+      transparent_data_encryption_key_vault_key_id]
+  azurerm_mssql_database:
+    category: storage
+    security_attrs: [server_id, sku_name, transparent_data_encryption_enabled,
+      threat_detection_policy, ledger_enabled]
+  azurerm_mssql_firewall_rule:
+    category: security_control
+    security_attrs: [server_id, start_ip_address, end_ip_address]
+  azurerm_mysql_flexible_server:
+    category: storage
+    security_attrs: [version, sku_name, administrator_login, delegated_subnet_id,
+      private_dns_zone_id, backup_retention_days, geo_redundant_backup_enabled, identity]
+  azurerm_cosmosdb_account:
+    category: storage
+    security_attrs: [offer_type, kind, public_network_access_enabled, ip_range_filter,
+      is_virtual_network_filter_enabled, virtual_network_rule, key_vault_key_id,
+      local_authentication_disabled, backup, identity]
+  azurerm_redis_cache:
+    category: storage
+    security_attrs: [sku_name, enable_non_ssl_port, non_ssl_port_enabled, minimum_tls_version,
+      public_network_access_enabled, subnet_id, redis_configuration]
+  azurerm_container_registry:
+    category: storage
+    security_attrs: [sku, admin_enabled, public_network_access_enabled, network_rule_set,
+      identity, encryption, anonymous_pull_enabled, zone_redundancy_enabled, georeplications]
+
+  # --------------------------------------------------------------- Azure network
+  azurerm_resource_group:
+    category: other
+    security_attrs: [name, location]
+  azurerm_management_lock:
+    category: security_control
+    security_attrs: [scope, lock_level]
+  azurerm_virtual_network:
+    category: network
+    security_attrs: [address_space, dns_servers, subnet]
+  azurerm_subnet:
+    category: network
+    security_attrs: [virtual_network_name, address_prefixes, service_endpoints, delegation,
+      private_endpoint_network_policies, private_endpoint_network_policies_enabled,
+      private_link_service_network_policies_enabled]
+  azurerm_subnet_network_security_group_association:
+    category: security_control
+    security_attrs: [subnet_id, network_security_group_id]
+  azurerm_subnet_route_table_association:
+    category: network
+    security_attrs: [subnet_id, route_table_id]
+  azurerm_subnet_nat_gateway_association:
+    category: network
+    security_attrs: [subnet_id, nat_gateway_id]
+  azurerm_route_table:
+    category: network
+    security_attrs: [route, disable_bgp_route_propagation]
+  azurerm_route:
+    category: network
+    security_attrs: [route_table_name, address_prefix, next_hop_type, next_hop_in_ip_address]
+  azurerm_network_interface:
+    category: network
+    security_attrs: [ip_configuration.subnet_id, ip_configuration.public_ip_address_id,
+      ip_configuration.private_ip_address_allocation, enable_ip_forwarding, ip_forwarding_enabled]
+  azurerm_network_interface_security_group_association:
+    category: security_control
+    security_attrs: [network_interface_id, network_security_group_id]
+  azurerm_public_ip:
+    category: network
+    security_attrs: [allocation_method, sku, ip_version, ddos_protection_mode]
+  azurerm_nat_gateway:
+    category: gateway
+    security_attrs: [sku_name, idle_timeout_in_minutes]
+  azurerm_nat_gateway_public_ip_association:
+    category: gateway
+    security_attrs: [nat_gateway_id, public_ip_address_id]
+  azurerm_virtual_network_peering:
+    category: network
+    security_attrs: [virtual_network_name, remote_virtual_network_id, allow_forwarded_traffic,
+      allow_gateway_transit, use_remote_gateways]
+  azurerm_private_endpoint:
+    category: network
+    security_attrs: [subnet_id, private_service_connection, private_dns_zone_group]
+  azurerm_private_dns_zone:
+    category: dns
+    security_attrs: [name]
+  azurerm_private_dns_zone_virtual_network_link:
+    category: dns
+    security_attrs: [private_dns_zone_name, virtual_network_id, registration_enabled]
+  azurerm_dns_zone:
+    category: dns
+    security_attrs: [name]
+  azurerm_dns_a_record:
+    category: dns
+    security_attrs: [zone_name, name, records, target_resource_id]
+  azurerm_dns_cname_record:
+    category: dns
+    security_attrs: [zone_name, name, record, target_resource_id]
+  azurerm_lb:
+    category: gateway
+    security_attrs: [sku, frontend_ip_configuration]
+  azurerm_lb_rule:
+    category: gateway
+    security_attrs: [loadbalancer_id, protocol, frontend_port, backend_port,
+      backend_address_pool_ids, probe_id]
+  azurerm_application_gateway:
+    category: gateway
+    security_attrs: [sku, gateway_ip_configuration, frontend_ip_configuration, ssl_policy,
+      ssl_certificate.name, waf_configuration, firewall_policy_id, http_listener.protocol,
+      identity, enable_http2]
+  azurerm_web_application_firewall_policy:
+    category: security_control
+    security_attrs: [policy_settings, managed_rules, custom_rules]
+  azurerm_firewall:
+    category: security_control
+    security_attrs: [sku_name, sku_tier, firewall_policy_id, ip_configuration, threat_intel_mode]
+  azurerm_firewall_policy:
+    category: security_control
+    security_attrs: [sku, threat_intelligence_mode, dns, intrusion_detection]
+  azurerm_bastion_host:
+    category: gateway
+    security_attrs: [sku, ip_configuration, tunneling_enabled, ip_connect_enabled]
+  azurerm_virtual_network_gateway:
+    category: gateway
+    security_attrs: [type, vpn_type, sku, ip_configuration, vpn_client_configuration]
+  azurerm_frontdoor:
+    category: cdn
+    security_attrs: [frontend_endpoint, routing_rule, backend_pool]
+  azurerm_cdn_frontdoor_profile:
+    category: cdn
+    security_attrs: [sku_name]
+  azurerm_cdn_frontdoor_endpoint:
+    category: cdn
+    security_attrs: [cdn_frontdoor_profile_id, enabled]
+  azurerm_cdn_endpoint:
+    category: cdn
+    security_attrs: [profile_name, origin, is_http_allowed, is_https_allowed]
+
+  # ------------------------------------------------------ Azure security/identity
+  azurerm_network_security_group:
+    category: security_control
+    security_attrs: [security_rule]
+  azurerm_network_security_rule:
+    category: security_control
+    security_attrs: [network_security_group_name, priority, direction, access, protocol,
+      source_port_range, destination_port_range, destination_port_ranges, source_address_prefix,
+      source_address_prefixes, destination_address_prefix, source_application_security_group_ids]
+  azurerm_key_vault:
+    category: security_control
+    security_attrs: [sku_name, tenant_id, enable_rbac_authorization, rbac_authorization_enabled,
+      purge_protection_enabled, soft_delete_retention_days, public_network_access_enabled,
+      network_acls, access_policy, enabled_for_deployment, enabled_for_disk_encryption,
+      enabled_for_template_deployment]
+  azurerm_key_vault_secret:
+    category: security_control
+    security_attrs: [key_vault_id, name, expiration_date, content_type]
+  azurerm_key_vault_key:
+    category: security_control
+    security_attrs: [key_vault_id, name, key_type, key_size, key_opts, rotation_policy,
+      expiration_date]
+  azurerm_key_vault_certificate:
+    category: security_control
+    security_attrs: [key_vault_id, name, certificate_policy.key_properties,
+      certificate_policy.issuer_parameters]
+  azurerm_key_vault_access_policy:
+    category: security_control
+    security_attrs: [key_vault_id, tenant_id, object_id, key_permissions, secret_permissions,
+      certificate_permissions]
+  azurerm_disk_encryption_set:
+    category: security_control
+    security_attrs: [key_vault_key_id, identity, encryption_type]
+  azurerm_role_assignment:
+    category: identity
+    security_attrs: [scope, role_definition_name, role_definition_id, principal_id, principal_type,
+      condition]
+  azurerm_role_definition:
+    category: identity
+    security_attrs: [name, scope, permissions, assignable_scopes]
+  azurerm_user_assigned_identity:
+    category: identity
+    security_attrs: [name]
+  azurerm_federated_identity_credential:
+    category: identity
+    security_attrs: [parent_id, issuer, subject, audience]
+  azuread_application:
+    category: identity
+    security_attrs: [display_name, sign_in_audience, web, required_resource_access, api]
+  azuread_service_principal:
+    category: identity
+    security_attrs: [client_id, application_id, app_role_assignment_required]
+  azuread_group:
+    category: identity
+    security_attrs: [display_name, security_enabled, owners, members]
+  azurerm_log_analytics_workspace:
+    category: monitoring
+    security_attrs: [sku, retention_in_days, internet_ingestion_enabled, internet_query_enabled]
+  azurerm_log_analytics_solution:
+    category: monitoring
+    security_attrs: [solution_name, workspace_resource_id, plan]
+  azurerm_monitor_diagnostic_setting:
+    category: monitoring
+    security_attrs: [target_resource_id, log_analytics_workspace_id, storage_account_id,
+      enabled_log, log, metric]
+  azurerm_monitor_action_group:
+    category: monitoring
+    security_attrs: [short_name, email_receiver, webhook_receiver]
+  azurerm_monitor_metric_alert:
+    category: monitoring
+    security_attrs: [scopes, criteria, action]
+  azurerm_application_insights:
+    category: monitoring
+    security_attrs: [application_type, workspace_id, internet_ingestion_enabled,
+      internet_query_enabled]
+  azurerm_security_center_subscription_pricing:
+    category: monitoring
+    security_attrs: [tier, resource_type]
+  azurerm_servicebus_namespace:
+    category: other
+    security_attrs: [sku, public_network_access_enabled, minimum_tls_version, local_auth_enabled,
+      identity, network_rule_set]
+  azurerm_eventhub_namespace:
+    category: other
+    security_attrs: [sku, public_network_access_enabled, minimum_tls_version, network_rulesets,
+      identity]
+
+  # ----------------------------------------------------------------- GCP compute
+  google_compute_instance:
+    category: compute
+    security_attrs: [machine_type, zone, boot_disk.initialize_params.image,
+      boot_disk.disk_encryption_key_raw, boot_disk.kms_key_self_link, network_interface.network,
+      network_interface.subnetwork, network_interface.access_config, service_account, tags,
+      metadata, metadata_startup_script, shielded_instance_config, can_ip_forward,
+      confidential_instance_config, deletion_protection]
+  google_compute_instance_template:
+    category: compute
+    security_attrs: [machine_type, disk.source_image, disk.disk_encryption_key,
+      network_interface.network, network_interface.subnetwork, network_interface.access_config,
+      service_account, tags, metadata, metadata_startup_script, shielded_instance_config,
+      can_ip_forward]
+  google_compute_instance_group_manager:
+    category: compute
+    security_attrs: [version, target_size, named_port, auto_healing_policies]
+  google_compute_region_instance_group_manager:
+    category: compute
+    security_attrs: [version, target_size, named_port, auto_healing_policies]
+  google_container_cluster:
+    category: compute
+    security_attrs: [location, network, subnetwork, private_cluster_config,
+      master_authorized_networks_config, ip_allocation_policy, workload_identity_config,
+      release_channel, logging_config, monitoring_config, database_encryption,
+      binary_authorization, enable_shielded_nodes, network_policy, addons_config,
+      master_auth, node_config.service_account, node_config.oauth_scopes,
+      remove_default_node_pool, enable_legacy_abac, datapath_provider, deletion_protection,
+      security_posture_config]
+  google_container_node_pool:
+    category: compute
+    security_attrs: [cluster, location, node_count, autoscaling, node_config.service_account,
+      node_config.oauth_scopes, node_config.machine_type, node_config.shielded_instance_config,
+      node_config.workload_metadata_config, node_config.image_type, management]
+  google_cloudfunctions_function:
+    category: compute
+    security_attrs: [runtime, entry_point, service_account_email, trigger_http,
+      ingress_settings, vpc_connector, vpc_connector_egress_settings, environment_variables,
+      kms_key_name, event_trigger]
+  google_cloudfunctions2_function:
+    category: compute
+    security_attrs: [build_config.runtime, build_config.entry_point,
+      service_config.service_account_email, service_config.ingress_settings,
+      service_config.vpc_connector, service_config.environment_variables, event_trigger,
+      kms_key_name]
+  google_cloud_run_service:
+    category: compute
+    security_attrs: [location, template.spec.service_account_name, template.spec.containers,
+      template.metadata.annotations, metadata.annotations]
+  google_cloud_run_v2_service:
+    category: compute
+    security_attrs: [location, ingress, template.service_account, template.containers,
+      template.vpc_access, template.encryption_key, binary_authorization]
+  google_cloud_run_service_iam_member:
+    category: identity
+    security_attrs: [service, role, member]
+  google_cloud_run_v2_service_iam_member:
+    category: identity
+    security_attrs: [name, role, member]
+  google_app_engine_application:
+    category: compute
+    security_attrs: [location_id, auth_domain, iap]
+
+  # ----------------------------------------------------------------- GCP storage
+  google_storage_bucket:
+    category: storage
+    security_attrs: [location, storage_class, uniform_bucket_level_access, public_access_prevention,
+      versioning, encryption, logging, retention_policy, lifecycle_rule, force_destroy, website,
+      cors]
+  google_storage_bucket_iam_member:
+    category: identity
+    security_attrs: [bucket, role, member, condition]
+  google_storage_bucket_iam_binding:
+    category: identity
+    security_attrs: [bucket, role, members, condition]
+  google_storage_bucket_iam_policy:
+    category: identity
+    security_attrs: [bucket, policy_data]
+  google_compute_disk:
+    category: storage
+    security_attrs: [type, size, image, disk_encryption_key]
+  google_sql_database_instance:
+    category: storage
+    security_attrs: [database_version, region, deletion_protection, encryption_key_name,
+      settings.tier, settings.availability_type, settings.ip_configuration,
+      settings.backup_configuration, settings.database_flags, settings.password_validation_policy,
+      settings.user_labels]
+  google_sql_database:
+    category: storage
+    security_attrs: [instance, name]
+  google_sql_user:
+    category: identity
+    security_attrs: [instance, name, type, host]
+  google_bigquery_dataset:
+    category: storage
+    security_attrs: [location, default_encryption_configuration, access,
+      default_table_expiration_ms]
+  google_bigquery_table:
+    category: storage
+    security_attrs: [dataset_id, encryption_configuration, deletion_protection]
+  google_bigtable_instance:
+    category: storage
+    security_attrs: [cluster, deletion_protection]
+  google_firestore_database:
+    category: storage
+    security_attrs: [location_id, type, point_in_time_recovery_enablement, delete_protection_state]
+  google_redis_instance:
+    category: storage
+    security_attrs: [tier, authorized_network, connect_mode, auth_enabled,
+      transit_encryption_mode, customer_managed_key]
+  google_spanner_instance:
+    category: storage
+    security_attrs: [config, num_nodes]
+  google_artifact_registry_repository:
+    category: storage
+    security_attrs: [location, format, kms_key_name, mode, cleanup_policies]
+  google_artifact_registry_repository_iam_member:
+    category: identity
+    security_attrs: [repository, role, member]
+  google_filestore_instance:
+    category: storage
+    security_attrs: [tier, networks, kms_key_name]
+
+  # ----------------------------------------------------------------- GCP network
+  google_compute_network:
+    category: network
+    security_attrs: [auto_create_subnetworks, routing_mode, delete_default_routes_on_create]
+  google_compute_subnetwork:
+    category: network
+    security_attrs: [network, ip_cidr_range, region, private_ip_google_access,
+      secondary_ip_range, log_config, purpose]
+  google_compute_route:
+    category: network
+    security_attrs: [network, dest_range, next_hop_gateway, next_hop_instance, next_hop_ip,
+      priority, tags]
+  google_compute_router:
+    category: network
+    security_attrs: [network, region, bgp]
+  google_compute_router_nat:
+    category: gateway
+    security_attrs: [router, nat_ip_allocate_option, source_subnetwork_ip_ranges_to_nat,
+      subnetwork, log_config]
+  google_compute_address:
+    category: network
+    security_attrs: [address_type, subnetwork, purpose]
+  google_compute_global_address:
+    category: network
+    security_attrs: [address_type, purpose, network, prefix_length]
+  google_compute_network_peering:
+    category: network
+    security_attrs: [network, peer_network, export_custom_routes, import_custom_routes]
+  google_service_networking_connection:
+    category: network
+    security_attrs: [network, service, reserved_peering_ranges]
+  google_vpc_access_connector:
+    category: network
+    security_attrs: [network, ip_cidr_range, subnet]
+  google_compute_global_forwarding_rule:
+    category: gateway
+    security_attrs: [target, port_range, ip_protocol, load_balancing_scheme, ip_address]
+  google_compute_forwarding_rule:
+    category: gateway
+    security_attrs: [target, backend_service, port_range, ports, ip_protocol,
+      load_balancing_scheme, network, subnetwork, allow_global_access]
+  google_compute_target_https_proxy:
+    category: gateway
+    security_attrs: [url_map, ssl_certificates, ssl_policy, certificate_map]
+  google_compute_target_http_proxy:
+    category: gateway
+    security_attrs: [url_map]
+  google_compute_url_map:
+    category: gateway
+    security_attrs: [default_service, host_rule, path_matcher]
+  google_compute_backend_service:
+    category: gateway
+    security_attrs: [protocol, port_name, backend, health_checks, security_policy, iap,
+      log_config, load_balancing_scheme, cdn_policy, enable_cdn]
+  google_compute_region_backend_service:
+    category: gateway
+    security_attrs: [protocol, backend, health_checks, load_balancing_scheme, network]
+  google_compute_managed_ssl_certificate:
+    category: security_control
+    security_attrs: [managed]
+  google_compute_ssl_certificate:
+    category: security_control
+    security_attrs: [name]
+  google_compute_ssl_policy:
+    category: security_control
+    security_attrs: [profile, min_tls_version, custom_features]
+  google_compute_security_policy:
+    category: security_control
+    security_attrs: [type, rule, adaptive_protection_config]
+  google_compute_health_check:
+    category: monitoring
+    security_attrs: [http_health_check, https_health_check, tcp_health_check]
+  google_dns_managed_zone:
+    category: dns
+    security_attrs: [dns_name, visibility, private_visibility_config, dnssec_config]
+  google_dns_record_set:
+    category: dns
+    security_attrs: [managed_zone, name, type, rrdatas]
+
+  # ---------------------------------------------------- GCP security & identity
+  google_compute_firewall:
+    category: security_control
+    security_attrs: [network, direction, priority, allow, deny, source_ranges,
+      destination_ranges, source_tags, target_tags, source_service_accounts,
+      target_service_accounts, disabled, log_config]
+  google_kms_key_ring:
+    category: security_control
+    security_attrs: [location]
+  google_kms_crypto_key:
+    category: security_control
+    security_attrs: [key_ring, purpose, rotation_period, version_template]
+  google_kms_crypto_key_iam_member:
+    category: identity
+    security_attrs: [crypto_key_id, role, member]
+  google_secret_manager_secret:
+    category: security_control
+    security_attrs: [secret_id, replication, rotation, expire_time, topics]
+  google_secret_manager_secret_version:
+    category: security_control
+    security_attrs: [secret, enabled]
+  google_secret_manager_secret_iam_member:
+    category: identity
+    security_attrs: [secret_id, role, member, condition]
+  google_service_account:
+    category: identity
+    security_attrs: [account_id, display_name, disabled]
+  google_service_account_key:
+    category: identity
+    security_attrs: [service_account_id, key_algorithm, public_key_type]
+  google_service_account_iam_member:
+    category: identity
+    security_attrs: [service_account_id, role, member, condition]
+  google_service_account_iam_binding:
+    category: identity
+    security_attrs: [service_account_id, role, members]
+  google_project_iam_member:
+    category: identity
+    security_attrs: [project, role, member, condition]
+  google_project_iam_binding:
+    category: identity
+    security_attrs: [project, role, members, condition]
+  google_project_iam_custom_role:
+    category: identity
+    security_attrs: [role_id, permissions, stage]
+  google_project_service:
+    category: other
+    security_attrs: [service, disable_on_destroy]
+  google_project:
+    category: other
+    security_attrs: [project_id, org_id, folder_id]
+  google_iap_web_iam_member:
+    category: identity
+    security_attrs: [role, member]
+  google_iap_client:
+    category: identity
+    security_attrs: [display_name, brand]
+  google_logging_project_sink:
+    category: monitoring
+    security_attrs: [destination, filter, unique_writer_identity, exclusions]
+  google_logging_project_bucket_config:
+    category: monitoring
+    security_attrs: [bucket_id, location, retention_days, enable_analytics, cmek_settings]
+  google_logging_metric:
+    category: monitoring
+    security_attrs: [filter, metric_descriptor]
+  google_monitoring_alert_policy:
+    category: monitoring
+    security_attrs: [display_name, combiner, conditions, notification_channels, enabled]
+  google_monitoring_notification_channel:
+    category: monitoring
+    security_attrs: [type, labels]
+  google_pubsub_topic:
+    category: other
+    security_attrs: [kms_key_name, message_retention_duration, message_storage_policy]
+  google_pubsub_subscription:
+    category: other
+    security_attrs: [topic, push_config, dead_letter_policy, expiration_policy]
+  google_pubsub_topic_iam_member:
+    category: identity
+    security_attrs: [topic, role, member]
+
+  # ----------------------------------------------------------------- OCI compute
+  oci_core_instance:
+    category: compute
+    security_attrs: [compartment_id, shape, availability_domain, source_details,
+      create_vnic_details.subnet_id, create_vnic_details.assign_public_ip,
+      create_vnic_details.nsg_ids, metadata, launch_options, agent_config, is_pv_encryption_in_transit_enabled,
+      platform_config]
+  oci_core_instance_configuration:
+    category: compute
+    security_attrs: [compartment_id, instance_details.launch_details.shape,
+      instance_details.launch_details.source_details,
+      instance_details.launch_details.create_vnic_details, instance_details.launch_details.metadata]
+  oci_core_instance_pool:
+    category: compute
+    security_attrs: [compartment_id, instance_configuration_id, size, placement_configurations,
+      load_balancers]
+  oci_containerengine_cluster:
+    category: compute
+    security_attrs: [compartment_id, kubernetes_version, vcn_id, type, endpoint_config,
+      cluster_pod_network_options, options.service_lb_subnet_ids, options.kubernetes_network_config,
+      options.admission_controller_options, options.add_ons, image_policy_config, kms_key_id]
+  oci_containerengine_node_pool:
+    category: compute
+    security_attrs: [cluster_id, compartment_id, kubernetes_version, node_shape,
+      node_config_details.placement_configs, node_config_details.nsg_ids, node_config_details.size,
+      node_config_details.is_pv_encryption_in_transit_enabled, node_config_details.kms_key_id,
+      node_source_details, node_metadata, ssh_public_key, node_pool_pod_network_option_details]
+  oci_containerengine_addon:
+    category: compute
+    security_attrs: [cluster_id, addon_name, version]
+  oci_containerengine_virtual_node_pool:
+    category: compute
+    security_attrs: [cluster_id, compartment_id, placement_configurations, nsg_ids, size]
+  oci_container_instances_container_instance:
+    category: compute
+    security_attrs: [compartment_id, shape, vnics, containers.image_url, containers.environment_variables,
+      image_pull_secrets, availability_domain]
+  oci_functions_application:
+    category: compute
+    security_attrs: [compartment_id, subnet_ids, network_security_group_ids, config,
+      syslog_url, trace_config, shape]
+  oci_functions_function:
+    category: compute
+    security_attrs: [application_id, image, memory_in_mbs, config, provisioned_concurrency_config,
+      source_details, trace_config]
+  oci_functions_invoke_function:
+    category: compute
+    security_attrs: [function_id]
+
+  # ----------------------------------------------------------------- OCI storage
+  oci_objectstorage_bucket:
+    category: storage
+    security_attrs: [compartment_id, namespace, access_type, versioning, kms_key_id,
+      object_events_enabled, retention_rules, storage_tier, auto_tiering]
+  oci_objectstorage_object:
+    category: storage
+    security_attrs: [bucket, namespace, object]
+  oci_objectstorage_preauthrequest:
+    category: security_control
+    security_attrs: [bucket, namespace, access_type, time_expires, object_name, bucket_listing_action]
+  oci_core_volume:
+    category: storage
+    security_attrs: [compartment_id, kms_key_id, size_in_gbs, availability_domain]
+  oci_core_boot_volume:
+    category: storage
+    security_attrs: [compartment_id, kms_key_id, size_in_gbs]
+  oci_core_volume_attachment:
+    category: storage
+    security_attrs: [instance_id, volume_id, attachment_type, is_pv_encryption_in_transit_enabled,
+      is_read_only]
+  oci_file_storage_file_system:
+    category: storage
+    security_attrs: [compartment_id, availability_domain, kms_key_id]
+  oci_file_storage_mount_target:
+    category: storage
+    security_attrs: [compartment_id, subnet_id, nsg_ids]
+  oci_file_storage_export:
+    category: storage
+    security_attrs: [export_set_id, file_system_id, path, export_options]
+  oci_database_autonomous_database:
+    category: storage
+    security_attrs: [compartment_id, db_workload, db_version, is_free_tier, is_mtls_connection_required,
+      subnet_id, nsg_ids, whitelisted_ips, is_access_control_enabled, private_endpoint_label,
+      kms_key_id, vault_id, is_data_guard_enabled, is_auto_scaling_enabled, cpu_core_count,
+      data_storage_size_in_tbs, license_model, admin_password]
+  oci_database_autonomous_database_wallet:
+    category: security_control
+    security_attrs: [autonomous_database_id, generate_type, password]
+  oci_database_db_system:
+    category: storage
+    security_attrs: [compartment_id, shape, subnet_id, nsg_ids, ssh_public_keys, database_edition,
+      db_home.database.db_name, db_home.database.admin_password, kms_key_id, license_model,
+      private_ip]
+  oci_mysql_mysql_db_system:
+    category: storage
+    security_attrs: [compartment_id, shape_name, subnet_id, admin_username, is_highly_available,
+      backup_policy, deletion_policy, data_storage_size_in_gb]
+  oci_nosql_table:
+    category: storage
+    security_attrs: [compartment_id, name, table_limits]
+  oci_artifacts_container_repository:
+    category: storage
+    security_attrs: [compartment_id, display_name, is_public, is_immutable, readme]
+  oci_artifacts_repository:
+    category: storage
+    security_attrs: [compartment_id, display_name, is_immutable, repository_type]
+
+  # ----------------------------------------------------------------- OCI network
+  oci_core_vcn:
+    category: network
+    security_attrs: [compartment_id, cidr_block, cidr_blocks, dns_label, is_ipv6enabled]
+  oci_core_subnet:
+    category: network
+    security_attrs: [compartment_id, vcn_id, cidr_block, prohibit_public_ip_on_vnic,
+      prohibit_internet_ingress, route_table_id, security_list_ids, dhcp_options_id, dns_label,
+      availability_domain]
+  oci_core_route_table:
+    category: network
+    security_attrs: [compartment_id, vcn_id, route_rules]
+  oci_core_route_table_attachment:
+    category: network
+    security_attrs: [subnet_id, route_table_id]
+  oci_core_dhcp_options:
+    category: network
+    security_attrs: [compartment_id, vcn_id, options]
+  oci_core_internet_gateway:
+    category: gateway
+    security_attrs: [compartment_id, vcn_id, enabled, route_table_id]
+  oci_core_nat_gateway:
+    category: gateway
+    security_attrs: [compartment_id, vcn_id, block_traffic, public_ip_id, route_table_id]
+  oci_core_service_gateway:
+    category: gateway
+    security_attrs: [compartment_id, vcn_id, services, route_table_id]
+  oci_core_drg:
+    category: gateway
+    security_attrs: [compartment_id]
+  oci_core_drg_attachment:
+    category: gateway
+    security_attrs: [drg_id, vcn_id, network_details, route_table_id]
+  oci_core_local_peering_gateway:
+    category: gateway
+    security_attrs: [compartment_id, vcn_id, peer_id, route_table_id]
+  oci_core_public_ip:
+    category: network
+    security_attrs: [compartment_id, lifetime, private_ip_id]
+  oci_core_vnic_attachment:
+    category: network
+    security_attrs: [instance_id, create_vnic_details.subnet_id, create_vnic_details.assign_public_ip,
+      create_vnic_details.nsg_ids]
+  oci_load_balancer_load_balancer:
+    category: gateway
+    security_attrs: [compartment_id, shape, subnet_ids, is_private, network_security_group_ids,
+      shape_details, ip_mode, reserved_ips]
+  oci_load_balancer_listener:
+    category: gateway
+    security_attrs: [load_balancer_id, port, protocol, default_backend_set_name, ssl_configuration,
+      rule_set_names, routing_policy_name, connection_configuration]
+  oci_load_balancer_backend_set:
+    category: network
+    security_attrs: [load_balancer_id, policy, health_checker, ssl_configuration, session_persistence_configuration]
+  oci_load_balancer_backend:
+    category: network
+    security_attrs: [load_balancer_id, backendset_name, ip_address, port, weight]
+  oci_load_balancer_certificate:
+    category: security_control
+    security_attrs: [load_balancer_id, certificate_name, ca_certificate, public_certificate]
+  oci_load_balancer_rule_set:
+    category: gateway
+    security_attrs: [load_balancer_id, name, items]
+  oci_load_balancer_load_balancer_routing_policy:
+    category: gateway
+    security_attrs: [load_balancer_id, name, condition_language_version, rules]
+  oci_network_load_balancer_network_load_balancer:
+    category: gateway
+    security_attrs: [compartment_id, subnet_id, is_private, network_security_group_ids,
+      is_preserve_source_destination]
+  oci_apigateway_gateway:
+    category: gateway
+    security_attrs: [compartment_id, endpoint_type, subnet_id, network_security_group_ids,
+      certificate_id]
+  oci_apigateway_deployment:
+    category: gateway
+    security_attrs: [gateway_id, path_prefix, specification.request_policies,
+      specification.logging_policies, specification.routes]
+  oci_dns_zone:
+    category: dns
+    security_attrs: [compartment_id, name, zone_type, scope, view_id]
+  oci_dns_rrset:
+    category: dns
+    security_attrs: [zone_name_or_id, domain, rtype, items]
+  oci_dns_record:
+    category: dns
+    security_attrs: [zone_name_or_id, domain, rtype, rdata]
+  oci_waf_web_app_firewall:
+    category: security_control
+    security_attrs: [compartment_id, backend_type, load_balancer_id, web_app_firewall_policy_id]
+  oci_waf_web_app_firewall_policy:
+    category: security_control
+    security_attrs: [compartment_id, actions, request_access_control, request_protection,
+      request_rate_limiting]
+
+  # ---------------------------------------------------- OCI security & identity
+  oci_core_security_list:
+    category: security_control
+    security_attrs: [compartment_id, vcn_id, ingress_security_rules, egress_security_rules]
+  oci_core_network_security_group:
+    category: security_control
+    security_attrs: [compartment_id, vcn_id, display_name]
+  oci_core_network_security_group_security_rule:
+    category: security_control
+    security_attrs: [network_security_group_id, direction, protocol, source, source_type,
+      destination, destination_type, tcp_options, udp_options, icmp_options, stateless]
+  oci_kms_vault:
+    category: security_control
+    security_attrs: [compartment_id, vault_type, display_name]
+  oci_kms_key:
+    category: security_control
+    security_attrs: [compartment_id, management_endpoint, key_shape, protection_mode,
+      is_auto_rotation_enabled, auto_key_rotation_details]
+  oci_vault_secret:
+    category: security_control
+    security_attrs: [compartment_id, vault_id, key_id, secret_name, secret_rules,
+      rotation_config]
+  oci_certificates_management_certificate:
+    category: security_control
+    security_attrs: [compartment_id, certificate_config, name]
+  oci_certificates_management_certificate_authority:
+    category: security_control
+    security_attrs: [compartment_id, kms_key_id, certificate_authority_config]
+  oci_identity_compartment:
+    category: other
+    security_attrs: [compartment_id, name, enable_delete]
+  oci_identity_policy:
+    category: identity
+    security_attrs: [compartment_id, name, statements]
+  oci_identity_dynamic_group:
+    category: identity
+    security_attrs: [compartment_id, name, matching_rule]
+  oci_identity_group:
+    category: identity
+    security_attrs: [compartment_id, name]
+  oci_identity_user:
+    category: identity
+    security_attrs: [compartment_id, name, email]
+  oci_identity_user_group_membership:
+    category: identity
+    security_attrs: [user_id, group_id]
+  oci_identity_auth_token:
+    category: identity
+    security_attrs: [user_id, description]
+  oci_identity_api_key:
+    category: identity
+    security_attrs: [user_id]
+  oci_identity_domain:
+    category: identity
+    security_attrs: [compartment_id, display_name, license_type, is_hidden_on_login]
+  oci_identity_tag_namespace:
+    category: other
+    security_attrs: [compartment_id, name]
+  oci_logging_log_group:
+    category: monitoring
+    security_attrs: [compartment_id, display_name]
+  oci_logging_log:
+    category: monitoring
+    security_attrs: [log_group_id, log_type, is_enabled, retention_duration,
+      configuration.source, configuration.compartment_id]
+  oci_logging_unified_agent_configuration:
+    category: monitoring
+    security_attrs: [compartment_id, is_enabled, service_configuration, group_association]
+  oci_monitoring_alarm:
+    category: monitoring
+    security_attrs: [compartment_id, namespace, query, severity, destinations, is_enabled]
+  oci_ons_notification_topic:
+    category: monitoring
+    security_attrs: [compartment_id, name]
+  oci_ons_subscription:
+    category: monitoring
+    security_attrs: [topic_id, protocol, endpoint]
+  oci_sch_service_connector:
+    category: monitoring
+    security_attrs: [compartment_id, source, target, tasks]
+  oci_audit_configuration:
+    category: monitoring
+    security_attrs: [compartment_id, retention_period_days]
+  oci_cloud_guard_cloud_guard_configuration:
+    category: monitoring
+    security_attrs: [compartment_id, reporting_region, status]
+  oci_bastion_bastion:
+    category: gateway
+    security_attrs: [compartment_id, bastion_type, target_subnet_id, client_cidr_block_allow_list,
+      max_session_ttl_in_seconds]
+  oci_streaming_stream:
+    category: other
+    security_attrs: [compartment_id, partitions, retention_in_hours, stream_pool_id]
+  oci_queue_queue:
+    category: other
+    security_attrs: [compartment_id, display_name, custom_encryption_key_id,
+      retention_in_seconds, dead_letter_queue_delivery_count]
+
+  # ------------------------------------------------------------ Kubernetes/Helm
+  kubernetes_namespace_v1:
+    category: other
+    security_attrs: [metadata.name, metadata.labels]
+  kubernetes_namespace:
+    category: other
+    security_attrs: [metadata.name, metadata.labels]
+  kubernetes_deployment_v1:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.replicas,
+      spec.template.spec.service_account_name, spec.template.spec.security_context,
+      spec.template.spec.container.image, spec.template.spec.container.port,
+      spec.template.spec.container.security_context, spec.template.spec.container.env_from,
+      spec.template.spec.host_network, spec.template.spec.automount_service_account_token,
+      spec.template.spec.image_pull_secrets]
+  kubernetes_deployment:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.replicas,
+      spec.template.spec.service_account_name, spec.template.spec.container.image,
+      spec.template.spec.container.port, spec.template.spec.container.security_context]
+  kubernetes_stateful_set_v1:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.replicas, spec.service_name,
+      spec.template.spec.service_account_name, spec.template.spec.container.image,
+      spec.template.spec.container.security_context, spec.volume_claim_template]
+  kubernetes_daemon_set_v1:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.template.spec.service_account_name,
+      spec.template.spec.container.image, spec.template.spec.container.security_context,
+      spec.template.spec.host_network, spec.template.spec.host_pid]
+  kubernetes_cron_job_v1:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.schedule,
+      spec.job_template.spec.template.spec.service_account_name,
+      spec.job_template.spec.template.spec.container.image]
+  kubernetes_job_v1:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.template.spec.service_account_name,
+      spec.template.spec.container.image]
+  kubernetes_pod_v1:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.service_account_name,
+      spec.container.image, spec.container.security_context, spec.host_network]
+  kubernetes_service_v1:
+    category: network
+    security_attrs: [metadata.name, metadata.namespace, metadata.annotations, spec.type,
+      spec.selector, spec.port, spec.load_balancer_source_ranges, spec.external_traffic_policy]
+  kubernetes_service:
+    category: network
+    security_attrs: [metadata.name, metadata.namespace, metadata.annotations, spec.type,
+      spec.selector, spec.port]
+  kubernetes_ingress_v1:
+    category: gateway
+    security_attrs: [metadata.name, metadata.namespace, metadata.annotations,
+      spec.ingress_class_name, spec.tls, spec.rule.host, spec.rule.http.path]
+  kubernetes_ingress_class_v1:
+    category: gateway
+    security_attrs: [metadata.name, spec.controller]
+  kubernetes_network_policy_v1:
+    category: security_control
+    security_attrs: [metadata.name, metadata.namespace, spec.pod_selector, spec.policy_types,
+      spec.ingress, spec.egress]
+  kubernetes_secret_v1:
+    category: storage
+    security_attrs: [metadata.name, metadata.namespace, type]
+  kubernetes_secret:
+    category: storage
+    security_attrs: [metadata.name, metadata.namespace, type]
+  kubernetes_config_map_v1:
+    category: storage
+    security_attrs: [metadata.name, metadata.namespace]
+  kubernetes_config_map:
+    category: storage
+    security_attrs: [metadata.name, metadata.namespace]
+  kubernetes_persistent_volume_claim_v1:
+    category: storage
+    security_attrs: [metadata.name, metadata.namespace, spec.storage_class_name,
+      spec.access_modes, spec.resources]
+  kubernetes_storage_class_v1:
+    category: storage
+    security_attrs: [metadata.name, storage_provisioner, parameters, reclaim_policy]
+  kubernetes_service_account_v1:
+    category: identity
+    security_attrs: [metadata.name, metadata.namespace, metadata.annotations,
+      automount_service_account_token]
+  kubernetes_service_account:
+    category: identity
+    security_attrs: [metadata.name, metadata.namespace, metadata.annotations]
+  kubernetes_role_v1:
+    category: identity
+    security_attrs: [metadata.name, metadata.namespace, rule]
+  kubernetes_role_binding_v1:
+    category: identity
+    security_attrs: [metadata.name, metadata.namespace, role_ref, subject]
+  kubernetes_cluster_role_v1:
+    category: identity
+    security_attrs: [metadata.name, rule]
+  kubernetes_cluster_role_binding_v1:
+    category: identity
+    security_attrs: [metadata.name, role_ref, subject]
+  kubernetes_cluster_role:
+    category: identity
+    security_attrs: [metadata.name, rule]
+  kubernetes_cluster_role_binding:
+    category: identity
+    security_attrs: [metadata.name, role_ref, subject]
+  kubernetes_pod_security_policy:
+    category: security_control
+    security_attrs: [metadata.name, spec]
+  kubernetes_manifest:
+    category: other
+    security_attrs: [manifest.kind, manifest.apiversion, manifest.metadata, manifest.spec]
+  kubernetes_horizontal_pod_autoscaler_v2:
+    category: compute
+    security_attrs: [metadata.name, metadata.namespace, spec.scale_target_ref, spec.min_replicas,
+      spec.max_replicas]
+  helm_release:
+    category: compute
+    security_attrs: [name, namespace, repository, chart, version, create_namespace, set,
+      set_sensitive, values, wait, atomic]
+
+  # --------------------------------------------------------- utility providers
+  random_password:
+    category: other
+    security_attrs: [length, special, min_special, min_upper, min_lower, min_numeric, keepers]
+  random_id:
+    category: other
+    security_attrs: [byte_length, keepers]
+  random_string:
+    category: other
+    security_attrs: [length, special, keepers]
+  random_uuid:
+    category: other
+    security_attrs: [keepers]
+  random_pet:
+    category: other
+    security_attrs: [length, prefix]
+  null_resource:
+    category: other
+    security_attrs: [triggers]
+  time_sleep:
+    category: other
+    security_attrs: [create_duration, destroy_duration]
+  time_static:
+    category: other
+    security_attrs: [triggers]
+  tls_private_key:
+    category: security_control
+    security_attrs: [algorithm, rsa_bits, ecdsa_curve]
+  tls_self_signed_cert:
+    category: security_control
+    security_attrs: [subject, validity_period_hours, allowed_uses, dns_names, is_ca_certificate]
+  tls_cert_request:
+    category: security_control
+    security_attrs: [subject, dns_names, ip_addresses]
+  tls_locally_signed_cert:
+    category: security_control
+    security_attrs: [validity_period_hours, allowed_uses, is_ca_certificate]
+  local_file:
+    category: other
+    security_attrs: [filename, file_permission]
+  local_sensitive_file:
+    category: other
+    security_attrs: [filename, file_permission]
+
+defaults:
+  unknown_category: other
+  unknown_attrs: all
+  # Script-carrying attribute names (matched at any nesting depth). Their value
+  # is replaced by "[script omitted: sha256:<12 hex>, <N> chars]" everywhere.
+  hash_only_attrs:
+    - user_data
+    - user_data_base64
+    - custom_data
+    - metadata_startup_script
+    - startup-script
+    - startup_script
+    - cloud_init
+    - cloud-init
