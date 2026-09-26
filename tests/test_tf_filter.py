@@ -514,3 +514,77 @@ class TestMergePhase1:
             {"type": "cloud", "provider": "AWS", "service": "EC2"},
             {"type": "saas", "provider": "GitHub", "service": "Actions"},
         ]
+
+        # unhashable id in a components entry must not raise (TypeError in the
+        # dict comprehension otherwise)
+        merged2 = merge_phase1(
+            _prebuilt(),
+            {
+                "components": [
+                    {"id": ["not", "hashable"], "name": "N", "purpose": "P"},
+                    {"id": "aws_instance.web_server", "name": "W2", "purpose": "P2"},
+                ]
+            },
+        )
+        assert merged2["components"][0]["name"] == "W2"
+
+        # unhashable claimed type on an "other" component must not raise and
+        # must not reclassify (TypeError from `in ALLOWED_CATEGORIES` otherwise)
+        merged3 = merge_phase1(
+            _prebuilt(),
+            {
+                "components": [
+                    {"id": "mycorp_widget.custom", "name": "X", "type": ["storage"]},
+                ]
+            },
+        )
+        assert merged3["components"][1]["type"] == "other"
+
+    def test_merge_keeps_duplicate_ids_both_get_semantics(self):
+        """Two modules resolving to the same address (Review Focus 1) both keep
+        their distinct static fields but share the LLM's one semantic entry."""
+        prebuilt = {
+            "components": [
+                {
+                    "id": "aws_iam_role.this",
+                    "resource_type": "aws_iam_role",
+                    "type": "identity",
+                    "provider": "AWS",
+                    "file": "modules/secrets/main.tf",
+                    "configuration": {"name": "secrets-role"},
+                    "references": [],
+                    "name": None,
+                    "purpose": None,
+                },
+                {
+                    "id": "aws_iam_role.this",
+                    "resource_type": "aws_iam_role",
+                    "type": "identity",
+                    "provider": "AWS",
+                    "file": "modules/logging/main.tf",
+                    "configuration": {"name": "logging-role"},
+                    "references": [],
+                    "name": None,
+                    "purpose": None,
+                },
+            ],
+            "variables": [],
+            "outputs": [],
+            "modules": [],
+            "unparsed_files": [],
+        }
+        semantic = {
+            "components": [
+                {"id": "aws_iam_role.this", "name": "Role", "purpose": "P"},
+            ]
+        }
+        merged = merge_phase1(prebuilt, semantic)
+        assert [(c["name"], c["purpose"]) for c in merged["components"]] == [
+            ("Role", "P"),
+            ("Role", "P"),
+        ]
+        # static per-occurrence fields are preserved independently
+        assert [c["configuration"] for c in merged["components"]] == [
+            {"name": "secrets-role"},
+            {"name": "logging-role"},
+        ]

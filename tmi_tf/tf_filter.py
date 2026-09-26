@@ -387,7 +387,11 @@ def merge_phase1(prebuilt: dict[str, Any], semantic: dict[str, Any]) -> dict[str
     ``name``, ``purpose``, ``services``, ``dependencies`` and may only
     reclassify components whose static type is ``other``.
     """
-    by_id = {c["id"]: c for c in _as_dict_list(semantic.get("components")) if "id" in c}
+    by_id = {
+        c["id"]: c
+        for c in _as_dict_list(semantic.get("components"))
+        if isinstance(c.get("id"), str)
+    }
     dependencies = []
     for d in _as_dict_list(semantic.get("dependencies")):
         dependencies.append(
@@ -399,13 +403,19 @@ def merge_phase1(prebuilt: dict[str, Any], semantic: dict[str, Any]) -> dict[str
             }
         )
 
+    static_ids = {c["id"] for c in prebuilt.get("components", [])}
     components: list[dict[str, Any]] = []
     for comp in prebuilt.get("components", []):
         cid = comp["id"]
-        sem = by_id.pop(cid, {})
+        sem = by_id.get(cid, {})
         ctype = comp["type"]
-        if ctype == "other" and sem.get("type") in ALLOWED_CATEGORIES:
-            ctype = sem["type"]
+        sem_type = sem.get("type")
+        if (
+            ctype == "other"
+            and isinstance(sem_type, str)
+            and sem_type in ALLOWED_CATEGORIES
+        ):
+            ctype = sem_type
         components.append(
             {
                 "id": cid,
@@ -425,11 +435,12 @@ def merge_phase1(prebuilt: dict[str, Any], semantic: dict[str, Any]) -> dict[str
                 ],
             }
         )
-    if by_id:
+    unknown_ids = set(by_id) - static_ids
+    if unknown_ids:
         logger.warning(
             "Phase 1: LLM returned %d component id(s) not in the static inventory; ignored: %s",
-            len(by_id),
-            ", ".join(sorted(by_id)[:10]),
+            len(unknown_ids),
+            ", ".join(sorted(unknown_ids)[:10]),
         )
     return {
         "components": components,
