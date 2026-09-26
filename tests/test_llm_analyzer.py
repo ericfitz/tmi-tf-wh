@@ -250,3 +250,180 @@ class TestCweRedirect:
         provider, result = self._run({"cwe_id": ["CWE-862"]}, "not json")
         assert provider.complete.call_count == 5
         assert result.security_findings[0]["cwe_id"] == ["CWE-862"]
+
+
+AWS_TF = (
+    'resource "aws_vpc" "main" {\n  cidr_block = "10.0.0.0/16"\n  tags = { a = "b" }\n}\n'
+    'resource "aws_instance" "web" {\n  ami = "ami-1"\n  instance_type = "t3.micro"\n'
+    "  subnet_id = aws_subnet.private.id\n}\n"
+)
+
+
+def _make_static_repo(files: dict[str, str]):
+    repo = MagicMock()
+    repo.name = "test-repo"
+    repo.url = "https://github.com/test/repo"
+    repo.get_terraform_content.return_value = files
+    return repo
+
+
+def _tail_responses():
+    """Phase 2, 3a responses so analyze_repository runs to completion."""
+    return [
+        _make_llm_response(json.dumps({"relationships": [], "data_flows": []})),
+        _make_llm_response("[]"),
+    ]
+
+
+class TestPhase1Static:
+    def test_static_path_sends_prebuilt_inventory_and_filtered_hcl(self):
+        semantic = {
+            "components": [
+                {"id": "aws_vpc.main", "name": "Main VPC", "purpose": "Network"},
+                {"id": "aws_instance.web", "name": "Web", "purpose": "Serves"},
+            ],
+            "services": [],
+            "dependencies": [
+                {
+                    "type": "cloud",
+                    "provider": "AWS",
+                    "service": "EC2",
+                    "dependent_components": ["aws_instance.web"],
+                }
+            ],
+        }
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(semantic)),
+            *_tail_responses(),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_static_repo({"main.tf": AWS_TF})
+        )
+        assert result.success is True
+
+        system_prompt, user_prompt = provider.complete.call_args_list[0].args[:2]
+        assert "semantic inference only" in system_prompt
+        assert "Pre-extracted inventory" in user_prompt
+        assert '"id": "aws_instance.web"' in user_prompt
+        assert '"type": "compute"' in user_prompt
+        assert "instance_type" not in user_prompt  # filtered out of the HCL
+        assert "### File: main.tf" in user_prompt
+
+        comps = {c["id"]: c for c in result.inventory["components"]}
+        assert comps["aws_instance.web"]["name"] == "Web"
+        assert comps["aws_instance.web"]["type"] == "compute"
+        assert comps["aws_instance.web"]["resource_type"] == "aws_instance"
+        assert comps["aws_instance.web"]["configuration"]["ami"] == "ami-1"
+        assert comps["aws_instance.web"]["dependencies"] == [
+            {"type": "cloud", "provider": "AWS", "service": "EC2"}
+        ]
+        assert result.inventory["dependencies"] == semantic["dependencies"]
+
+        # phase 2 still receives the full raw Terraform text
+        phase2_user = provider.complete.call_args_list[1].args[1]
+        assert "instance_type" in phase2_user
+
+    def test_phase1_partial_parse_sends_unparsed_raw(self):
+        broken = 'resource "aws_instance" "broken" {\n  ami =\n}\n'
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps({"components": []})),
+            *_tail_responses(),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_static_repo({"main.tf": AWS_TF, "broken.tf": broken})
+        )
+        assert result.success is True
+        user_prompt = provider.complete.call_args_list[0].args[1]
+        assert "Pre-extracted inventory" in user_prompt
+        assert '"unparsed_files": [\n    "broken.tf"\n  ]' in user_prompt
+        assert "ami =\n}" in user_prompt  # raw broken file passed through
+        assert [c["id"] for c in result.inventory["components"]] == [
+            "aws_vpc.main",
+            "aws_instance.web",
+        ]
+
+    def test_falls_back_to_full_llm_when_nothing_parses(self, caplog):
+        broken = 'resource "aws_instance" "broken" {\n  ami =\n}\n'
+        inventory = {"components": [{"id": "aws_instance.broken"}], "services": []}
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(inventory)),
+            *_tail_responses(),
+        ]
+        with caplog.at_level("WARNING"):
+            result = LLMAnalyzer(provider).analyze_repository(
+                _make_static_repo({"broken.tf": broken})
+            )
+        assert result.success is True
+        system_prompt, user_prompt = provider.complete.call_args_list[0].args[:2]
+        assert "semantic inference only" not in system_prompt
+        assert "## Terraform Configuration Files" in user_prompt
+        assert result.inventory == inventory  # untouched full-LLM answer
+        assert "full-LLM phase 1" in caplog.text
+
+    def test_falls_back_when_static_analysis_raises(self, monkeypatch, caplog):
+        import tmi_tf.llm_analyzer as mod
+
+        def boom(_contents):
+            raise RuntimeError("registry exploded")
+
+        monkeypatch.setattr(mod, "parse_terraform", boom)
+        inventory = {"components": [], "services": []}
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(inventory)),
+            *_tail_responses(),
+        ]
+        with caplog.at_level("WARNING"):
+            result = LLMAnalyzer(provider).analyze_repository(
+                _make_static_repo({"main.tf": AWS_TF})
+            )
+        assert result.success is True
+        assert "registry exploded" in caplog.text
+        assert (
+            "## Terraform Configuration Files"
+            in provider.complete.call_args_list[0].args[1]
+        )
+
+    def test_static_path_keeps_retry_once_then_fail_loudly(self):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response("not json"),
+            _make_llm_response("still not json"),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_static_repo({"main.tf": AWS_TF})
+        )
+        assert result.success is False
+        assert provider.complete.call_count == 2
+        assert (
+            "Phase 1" in result.error_message and "2 attempts" in result.error_message
+        )
+
+    def test_static_path_counts_tokens_from_both_attempts(self):
+        semantic = {"components": []}
+        truncated = _make_llm_response('{"components": [')
+        truncated.finish_reason = "length"
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            truncated,
+            _make_llm_response(json.dumps(semantic)),
+            *_tail_responses(),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_static_repo({"main.tf": AWS_TF})
+        )
+        assert result.success is True
+        assert provider.complete.call_count == 4
+        assert result.input_tokens >= 400
+
+
+def test_format_terraform_contents_is_module_level():
+    from tmi_tf.llm_analyzer import format_terraform_contents
+
+    assert format_terraform_contents({}) == "(No Terraform files found)"
+    text = format_terraform_contents({"b.tf": "x", "a.tf": "y"})
+    assert text.index("### File: a.tf") < text.index("### File: b.tf")
+    assert "```hcl\ny\n```" in text

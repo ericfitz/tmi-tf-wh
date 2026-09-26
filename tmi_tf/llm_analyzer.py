@@ -22,9 +22,21 @@ from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
+from tmi_tf.tf_filter import filter_terraform, load_registry, merge_phase1
+from tmi_tf.tf_parser import parse_terraform
 from tmi_tf.threat_processor import ALLOWED_CWE_IDS, disallowed_cwe_ids
 
 logger = logging.getLogger(__name__)
+
+
+def format_terraform_contents(tf_contents: dict[str, str]) -> str:
+    """One ``### File: path`` section with a fenced hcl block per file, sorted."""
+    if not tf_contents:
+        return "(No Terraform files found)"
+    sections = []
+    for filepath, content in sorted(tf_contents.items()):
+        sections.append(f"### File: {filepath}\n```hcl\n{content}\n```\n")
+    return "\n".join(sections)
 
 
 class TerraformAnalysis:
@@ -130,6 +142,7 @@ class LLMAnalyzer:
         # Load all phase prompts
         self.prompts_dir = prompts_dir()
         self._load_phase_prompts()
+        self.registry = load_registry()
 
         logger.info(
             "LLM analyzer initialized: provider=%s, model=%s",
@@ -141,6 +154,12 @@ class LLMAnalyzer:
         """Load prompt pairs for all analysis phases."""
         self.inventory_system = self._load_prompt("inventory_system.txt")
         self.inventory_user_template = self._load_prompt("inventory_user.txt")
+        self.inventory_semantic_system = self._load_prompt(
+            "inventory_semantic_system.txt"
+        )
+        self.inventory_semantic_user_template = self._load_prompt(
+            "inventory_semantic_user.txt"
+        )
         self.infra_system = self._load_prompt("infrastructure_analysis_system.txt")
         self.infra_user_template = self._load_prompt("infrastructure_analysis_user.txt")
         # Phase 3a: Threat identification
@@ -208,21 +227,13 @@ class LLMAnalyzer:
             tf_contents = terraform_repo.get_terraform_content()
             terraform_text = self._format_terraform_contents(tf_contents)
 
-            # Phase 1: Inventory Extraction
+            # Phase 1: Inventory Extraction (static analysis + semantic LLM,
+            # or the full-LLM prompt when static analysis yields nothing)
             if status_callback:
                 status_callback("Phase 1 (Inventory) started")
             logger.info("Phase 1: Extracting inventory for %s", terraform_repo.name)
-            inventory_user = self.inventory_user_template.format(
-                repo_name=terraform_repo.name,
-                repo_url=terraform_repo.url,
-                terraform_contents=terraform_text,
-            )
-
-            inventory, tokens_in, tokens_out, cost = self._call_llm_json(
-                system_prompt=self.inventory_system,
-                user_prompt=inventory_user,
-                phase_name="inventory",
-                attempts=2,
+            inventory, tokens_in, tokens_out, cost = self._run_phase1(
+                terraform_repo, tf_contents, terraform_text
             )
             total_input_tokens += tokens_in
             total_output_tokens += tokens_out
@@ -507,6 +518,84 @@ class LLMAnalyzer:
                 error_message=f"**Analysis Failed**: {e!s}",
             )
 
+    def _run_phase1(
+        self,
+        terraform_repo: TerraformRepository,
+        tf_contents: dict[str, str],
+        terraform_text: str,
+    ) -> tuple[dict[str, Any] | None, int, int, float]:
+        """Phase 1 with static HCL analysis; full-LLM fallback (#10).
+
+        Returns the same tuple as ``_call_llm_json``: the merged inventory (or
+        None when the LLM gave no usable JSON after 2 attempts, which the
+        caller turns into the #68 failure) plus tokens and cost.
+        """
+        prebuilt: dict[str, Any] | None = None
+        filtered_text = ""
+        try:
+            static = parse_terraform(tf_contents)
+            if static.unparsed_files:
+                logger.warning(
+                    "Phase 1: %d/%d file(s) not statically parsable, sent unfiltered: %s",
+                    len(static.unparsed_files),
+                    len(tf_contents),
+                    ", ".join(static.unparsed_files),
+                )
+            if static.resources or static.data_sources or static.modules:
+                filtered = filter_terraform(static, tf_contents, self.registry)
+                prebuilt = filtered.prebuilt_inventory
+                filtered_text = format_terraform_contents(filtered.filtered_files)
+                logger.info(
+                    "Phase 1 static: %d resources, %d data sources, %d modules; "
+                    "HCL %d -> %d chars, inventory JSON %d chars",
+                    len(static.resources),
+                    len(static.data_sources),
+                    len(static.modules),
+                    len(terraform_text),
+                    len(filtered_text),
+                    len(json.dumps(prebuilt)),
+                )
+            else:
+                logger.warning(
+                    "Phase 1: static analysis found no components in %d file(s); "
+                    "using full-LLM phase 1",
+                    len(tf_contents),
+                )
+        except Exception as e:
+            logger.warning(
+                "Phase 1: static HCL analysis failed (%s); using full-LLM phase 1", e
+            )
+            prebuilt = None
+
+        if prebuilt is None:
+            inventory_user = self.inventory_user_template.format(
+                repo_name=terraform_repo.name,
+                repo_url=terraform_repo.url,
+                terraform_contents=terraform_text,
+            )
+            return self._call_llm_json(
+                system_prompt=self.inventory_system,
+                user_prompt=inventory_user,
+                phase_name="inventory",
+                attempts=2,
+            )
+
+        semantic_user = self.inventory_semantic_user_template.format(
+            repo_name=terraform_repo.name,
+            repo_url=terraform_repo.url,
+            inventory_json=json.dumps(prebuilt, indent=2),
+            filtered_hcl=filtered_text,
+        )
+        semantic, tokens_in, tokens_out, cost = self._call_llm_json(
+            system_prompt=self.inventory_semantic_system,
+            user_prompt=semantic_user,
+            phase_name="inventory",
+            attempts=2,
+        )
+        if not semantic:
+            return None, tokens_in, tokens_out, cost
+        return merge_phase1(prebuilt, semantic), tokens_in, tokens_out, cost
+
     def _call_llm(
         self,
         system_prompt: str,
@@ -642,23 +731,8 @@ class LLMAnalyzer:
         return parsed, response.input_tokens, response.output_tokens, response.cost
 
     def _format_terraform_contents(self, tf_contents: dict[str, str]) -> str:
-        """
-        Format Terraform contents for prompt.
-
-        Args:
-            tf_contents: Dictionary of file paths to contents
-
-        Returns:
-            Formatted string
-        """
-        if not tf_contents:
-            return "(No Terraform files found)"
-
-        sections = []
-        for filepath, content in sorted(tf_contents.items()):
-            sections.append(f"### File: {filepath}\n```hcl\n{content}\n```\n")
-
-        return "\n".join(sections)
+        """Kept for callers/tests that use the method form."""
+        return format_terraform_contents(tf_contents)
 
     def estimate_tokens(self, text: str) -> int:
         """
