@@ -174,7 +174,7 @@ uv run tmi-tf analyze abc-123-def-456 --max-repos 1 --verbose
 2. **Discovery**: Fetches the specified threat model and its associated repositories
 3. **Filtering**: Identifies GitHub repositories (up to MAX_REPOS)
 4. **Cloning**: Sparse clones each repository (only .tf, .tfvars, and documentation files)
-5. **Analysis**: Sends Terraform code to Claude for security analysis
+5. **Analysis**: Parses the Terraform statically (python-hcl2) into a pre-built inventory, sends it with security-attribute-filtered HCL to the LLM for naming, purposes, services and dependencies (falling back to the full-LLM prompt when nothing parses), then runs the infrastructure and security phases
 6. **Report Generation**: Aggregates findings into a comprehensive markdown report
 7. **Note Storage**: Creates or updates a note in the TMI threat model
 8. **Diagram Generation**: Creates a data flow diagram (DFD) visualizing infrastructure components and flows
@@ -260,14 +260,18 @@ tmi-tf/
 │   ├── tmi_client_wrapper.py  # TMI API client
 │   ├── github_client.py        # GitHub API integration
 │   ├── repo_analyzer.py        # Repository cloning and extraction
+│   ├── tf_parser.py            # Static HCL parsing (python-hcl2) -> StaticInventory
+│   ├── tf_filter.py            # Registry-driven filtering, pre-built inventory, merge
+│   ├── data/resource_registry.yaml  # Resource type -> category + security attributes
 │   ├── llm_analyzer.py         # Unified LLM integration (via LiteLLM)
 │   ├── markdown_generator.py   # Report generation
 │   ├── dfd_llm_generator.py    # Data flow diagram generation
 │   ├── diagram_builder.py      # DFD cell builder
 │   └── threat_processor.py     # Threat extraction and STRIDE classification
 ├── prompts/
-│   ├── terraform_analysis_system.txt  # System prompt for Claude
-│   └── terraform_analysis_user.txt    # User prompt template
+│   ├── inventory_semantic_*.txt  # Phase 1 (static inventory + semantic LLM)
+│   ├── inventory_*.txt           # Phase 1 full-LLM fallback
+│   └── ...                       # Phases 2, 3a, 3b, DFD
 ├── .env                        # Environment configuration (not in git)
 ├── .env.example                # Example environment file
 ├── pyproject.toml              # Project dependencies

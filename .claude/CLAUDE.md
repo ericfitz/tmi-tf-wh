@@ -22,7 +22,7 @@ The TMI API client is **not** installed as a package. `tmi_client_wrapper.py` lo
 
 ### 3-phase LLM pipeline (`llm_analyzer.py`)
 
-1. **Inventory extraction** — enumerate cloud components and services → JSON
+1. **Inventory extraction** — static parse + registry filter build the component list; the LLM only adds names, purposes, services, dependencies (`inventory_semantic_*.txt`); full-LLM `inventory_*.txt` fallback when nothing parses → JSON
 2. **Infrastructure analysis** — relationships, data flows, trust boundaries from phase 1 → JSON
 3. **Security analysis** — STRIDE-classified findings from phases 1+2 → JSON array
 
@@ -33,6 +33,8 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 - **`cli.py`** — Click CLI; orchestrates auth → fetch repos → clone → analyze → reports → TMI artifacts
 - **`llm_analyzer.py`** — `LLMAnalyzer`; runs the 3 phases through LiteLLM; extracts JSON from responses (code blocks, raw, embedded)
 - **`repo_analyzer.py`** — sparse git clone, Terraform environment detection, module resolution; `TerraformRepository` / `TerraformEnvironment` dataclasses
+- **`tf_parser.py`** — static HCL parsing with python-hcl2 (8.x dict shape: quoted literals, `${expr}`, `__is_block__`); `StaticInventory`; files that fail to parse are listed in `unparsed_files`
+- **`tf_filter.py`** — applies `data/resource_registry.yaml` (category + security attrs per resource type; unknown types keep everything) to produce filtered HCL via `hcl2.dumps` and the pre-built inventory; `merge_phase1` folds the LLM's semantic answer back into the phase-1 schema
 - **`dfd_llm_generator.py`** — separate LLM call producing structured DFD component/flow data
 - **`diagram_builder.py`** — `DFDBuilder` converts that data to AntV X6 v2 cells for TMI diagrams
 - **`threat_processor.py`** — converts phase 3 findings into TMI threat objects

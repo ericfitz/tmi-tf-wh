@@ -4281,16 +4281,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Results
 
-Task 6 step 3 replaces this table with the measured numbers.
+Measured with `uv run python scripts/measure_phase1_prompt.py /Users/efitz/Projects/tmi/terraform <environment>` (python-hcl2 8.1.4, `litellm.token_counter(model="gpt-4o", ...)`, no network fallback needed).
 
 | environment | files | unparsed | components | raw HCL chars | filtered HCL chars | inventory JSON chars | prompt tokens before -> after | delta |
 |-------------|-------|----------|------------|---------------|--------------------|----------------------|-------------------------------|-------|
-| aws-public | | | | | | | | |
-| oci-private | | | | | | | | |
-| azure-public | | | | | | | | |
-| gcp-public | | | | | | | | |
+| aws-public | 23 | none | 108 | 115,940 | 71,639 | 99,318 | 29,184 -> 44,308 | +51.8% |
+| oci-private | 22 | none | 135 | 145,738 | 113,963 | 163,542 | 36,736 -> 70,062 | +90.7% |
+| azure-public | 19 | none | 46 | 56,857 | 45,280 | 60,296 | 15,108 -> 27,014 | +78.8% |
+| gcp-public | 19 | none | 54 | 58,532 | 46,314 | 66,028 | 15,177 -> 28,091 | +85.1% |
 
-Output tokens: not measurable without an LLM run; expected to drop because the semantic contract omits `resource_type`, `type`, `configuration` and per-component `dependencies` for every component.
+`modules/kubernetes/oci/k8s_resources.tf` (the python-hcl2 8.1.4 transformer bug the spec expected) now parses cleanly on this checkout of `~/Projects/tmi/terraform`; all four environments are fully statically analyzed, so "unparsed" is "none" throughout.
+
+Input tokens go up, not down: the filtered HCL (with security attributes trimmed) plus the pre-built inventory JSON sent alongside it is larger than the single raw-HCL block the full-LLM prompt sent, because the same component data now appears in both the JSON and the HCL comments. Output-token savings are not measurable without an LLM run; they're still expected because the semantic contract omits `resource_type`, `type`, `configuration` and per-component `dependencies` for every component, and the first production run's `Phase inventory: ... output tokens` log line will confirm.
 
 ## Deviations from the spec (decided while planning; revisit if they matter)
 
