@@ -21,7 +21,7 @@ ALLOWED_CATEGORIES = {
     "cdn",
     "other",
 }
-ATTR_PATH_RE = re.compile(r"^[a-z0-9_-]+(\.[a-z0-9_-]+)*$")
+ATTR_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$")
 
 
 def _registry() -> dict:
@@ -180,3 +180,10 @@ class TestRegistryStructure:
         ]
         missing = [t for t in used if t not in types]
         assert not missing, missing
+
+    def test_kubernetes_manifest_preserves_api_version_casing(self):
+        """HCL/Kubernetes attribute keys are case-sensitive; apiVersion must
+        not get lowercased to apiversion or Task 3's filter will never match
+        it and will strip apiVersion from every kubernetes_manifest block."""
+        attrs = _registry()["resources"]["kubernetes_manifest"]["security_attrs"]
+        assert "manifest.apiVersion" in attrs

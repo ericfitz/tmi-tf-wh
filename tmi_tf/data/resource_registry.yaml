@@ -1516,7 +1516,7 @@ resources:
     security_attrs: [metadata.name, spec]
   kubernetes_manifest:
     category: other
-    security_attrs: [manifest.kind, manifest.apiversion, manifest.metadata, manifest.spec]
+    security_attrs: [manifest.kind, manifest.apiVersion, manifest.metadata, manifest.spec]
   kubernetes_horizontal_pod_autoscaler_v2:
     category: compute
     security_attrs: [metadata.name, metadata.namespace, spec.scale_target_ref, spec.min_replicas,
