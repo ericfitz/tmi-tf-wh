@@ -1,5 +1,6 @@
 """Tests for registry-driven filtering and the pre-built inventory (issue #10)."""
 
+import itertools
 import json
 import re
 from pathlib import Path
@@ -13,6 +14,8 @@ from tmi_tf.tf_filter import (
     Registry,
     filter_terraform,
     load_registry,
+    prompt_inventory,
+    prompt_inventory_json,
 )
 from tmi_tf.tf_parser import parse_terraform
 
@@ -588,3 +591,154 @@ class TestMergePhase1:
             {"name": "secrets-role"},
             {"name": "logging-role"},
         ]
+
+
+class TestPromptInventory:
+    """The compact inventory sent in the phase-1 PROMPT (Task 7): configuration,
+
+    name, purpose, variables and outputs are dropped -- they're either
+    duplicated in the filtered HCL or not yet known.
+    """
+
+    def test_keeps_only_six_component_keys(self):
+        prebuilt = {
+            "components": [
+                {
+                    "id": "aws_instance.web",
+                    "resource_type": "aws_instance",
+                    "type": "compute",
+                    "provider": "AWS",
+                    "file": "main.tf",
+                    "configuration": {"ami": "ami-1"},
+                    "references": ["aws_subnet.private"],
+                    "name": None,
+                    "purpose": None,
+                }
+            ],
+            "variables": [{"name": "region"}],
+            "outputs": [{"name": "instance_ip"}],
+            "modules": [{"id": "module.dns", "source": "x", "file": "main.tf"}],
+            "unparsed_files": ["broken.tf"],
+        }
+        out = prompt_inventory(prebuilt)
+        assert set(out) == {"components", "modules", "unparsed_files"}
+        assert out["components"] == [
+            {
+                "id": "aws_instance.web",
+                "resource_type": "aws_instance",
+                "type": "compute",
+                "provider": "AWS",
+                "file": "main.tf",
+                "references": ["aws_subnet.private"],
+            }
+        ]
+        assert out["modules"] == prebuilt["modules"]
+        assert out["unparsed_files"] == prebuilt["unparsed_files"]
+
+    def test_omits_none_and_empty_list_values(self):
+        prebuilt = {
+            "components": [
+                {
+                    "id": "module.dns",
+                    "resource_type": "module",
+                    "type": "other",
+                    "provider": None,
+                    "file": "main.tf",
+                    "configuration": {"source": "x"},
+                    "references": [],
+                    "name": None,
+                    "purpose": None,
+                }
+            ],
+            "modules": [],
+            "unparsed_files": [],
+        }
+        out = prompt_inventory(prebuilt)
+        assert out["components"] == [
+            {
+                "id": "module.dns",
+                "resource_type": "module",
+                "type": "other",
+                "file": "main.tf",
+            }
+        ]
+
+    def test_never_raises_on_sparse_prebuilt(self):
+        assert prompt_inventory({}) == {
+            "components": [],
+            "modules": [],
+            "unparsed_files": [],
+        }
+        assert prompt_inventory({"components": [{"id": "x"}]}) == {
+            "components": [{"id": "x"}],
+            "modules": [],
+            "unparsed_files": [],
+        }
+
+    def test_prompt_inventory_json_is_compact(self):
+        prebuilt = {
+            "components": [
+                {
+                    "id": "aws_instance.web",
+                    "resource_type": "aws_instance",
+                    "type": "compute",
+                    "file": "main.tf",
+                }
+            ],
+            "modules": [],
+            "unparsed_files": [],
+        }
+        text = prompt_inventory_json(prebuilt)
+        assert "\n" not in text
+        assert ", " not in text
+        assert json.loads(text) == prompt_inventory(prebuilt)
+
+    def test_real_module_prompt_inventory_has_no_configuration_key(self, registry):
+        files = sorted((FIXTURES / "tmi_network_aws").glob("*.tf"))
+        contents = {
+            f"tmi_network_aws/{f.name}": f.read_text(encoding="utf-8") for f in files
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        text = prompt_inventory_json(res.prebuilt_inventory)
+        assert '"configuration"' not in text
+        assert '"name"' not in text
+        assert '"purpose"' not in text
+
+
+class TestWhitespaceNormalization:
+    def test_no_whitespace_only_or_double_blank_lines_in_real_module(self, registry):
+        files = sorted((FIXTURES / "tmi_network_aws").glob("*.tf"))
+        contents = {
+            f"tmi_network_aws/{f.name}": f.read_text(encoding="utf-8") for f in files
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        for path, text in res.filtered_files.items():
+            lines = text.split("\n")
+            assert not any(line != "" and line.strip() == "" for line in lines), (
+                f"{path} has a whitespace-only line"
+            )
+            assert not any(a == "" and b == "" for a, b in itertools.pairwise(lines)), (
+                f"{path} has a double blank line"
+            )
+
+    def test_heredoc_blank_lines_survive_normalization(self, registry):
+        contents = {
+            "m.tf": (
+                'resource "aws_iam_role" "x" {\n'
+                '  name = "x"\n'
+                "  assume_role_policy = <<-EOT\n"
+                "  {\n"
+                '    "a": 1\n'
+                "\n"
+                "\n"
+                '    "b": 2\n'
+                "  }\n"
+                "  EOT\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert '"a": 1\n\n\n    "b": 2' in hcl, (
+            "heredoc's own blank lines must be preserved byte-for-byte"
+        )

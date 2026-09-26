@@ -305,8 +305,9 @@ class TestPhase1Static:
         system_prompt, user_prompt = provider.complete.call_args_list[0].args[:2]
         assert "semantic inference only" in system_prompt
         assert "Pre-extracted inventory" in user_prompt
-        assert '"id": "aws_instance.web"' in user_prompt
-        assert '"type": "compute"' in user_prompt
+        assert '"id":"aws_instance.web"' in user_prompt
+        assert '"type":"compute"' in user_prompt
+        assert '"configuration"' not in user_prompt  # no longer duplicated in JSON
         assert "instance_type" not in user_prompt  # filtered out of the HCL
         assert "### File: main.tf" in user_prompt
 
@@ -337,7 +338,7 @@ class TestPhase1Static:
         assert result.success is True
         user_prompt = provider.complete.call_args_list[0].args[1]
         assert "Pre-extracted inventory" in user_prompt
-        assert '"unparsed_files": [\n    "broken.tf"\n  ]' in user_prompt
+        assert '"unparsed_files":["broken.tf"]' in user_prompt
         assert "ami =\n}" in user_prompt  # raw broken file passed through
         assert [c["id"] for c in result.inventory["components"]] == [
             "aws_vpc.main",

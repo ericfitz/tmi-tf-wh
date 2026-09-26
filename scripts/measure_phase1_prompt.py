@@ -11,14 +11,13 @@ Usage:
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.llm_analyzer import format_terraform_contents
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
-from tmi_tf.tf_filter import filter_terraform, load_registry
+from tmi_tf.tf_filter import filter_terraform, load_registry, prompt_inventory_json
 from tmi_tf.tf_parser import parse_terraform
 
 
@@ -71,7 +70,7 @@ def main() -> int:
     static = parse_terraform(contents)
     filtered = filter_terraform(static, contents, load_registry())
     filtered_text = format_terraform_contents(filtered.filtered_files)
-    inventory_json = json.dumps(filtered.prebuilt_inventory, indent=2)
+    inventory_json = prompt_inventory_json(filtered.prebuilt_inventory)
     after = new_system + new_user.format(
         repo_name="measure",
         repo_url="local",

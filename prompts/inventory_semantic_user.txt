@@ -3,7 +3,7 @@ URL: {repo_url}
 
 ## Pre-extracted inventory (authoritative)
 
-The ids, resource types, categories, configuration and references below were extracted by static analysis and must be preserved exactly. Fields set to null are for you to fill in.
+The ids, resource types, categories, providers, files and references below were extracted by static analysis and must be preserved exactly. Each component's security-relevant configuration is not repeated here -- it appears in the filtered Terraform source below, under the file named in its "file" field.
 
 {inventory_json}
 

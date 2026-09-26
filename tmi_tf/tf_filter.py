@@ -7,6 +7,7 @@ from a ``StaticInventory`` and ``tmi_tf/data/resource_registry.yaml``.
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -218,7 +219,40 @@ def _render_file(parsed: dict[str, Any], registry: Registry) -> tuple[str, int]:
                 chunks.append(hcl2.dumps({block_type: [item]}).rstrip())
             else:
                 chunks.append(hcl2.dumps({block_type: [item]}).rstrip())
-    return ("\n\n".join(chunks) + "\n") if chunks else "", omitted_total
+    text = ("\n\n".join(chunks) + "\n") if chunks else ""
+    return _normalize_whitespace(text), omitted_total
+
+
+_HEREDOC_START_RE = re.compile(r"<<-?(\w+)\s*$")
+_WHITESPACE_ONLY_RE = re.compile(r"^[ \t]+$")
+
+
+def _normalize_whitespace(text: str) -> str:
+    """Drop whitespace-only lines and collapse blank-line runs.
+
+    Heredoc bodies (between a ``<<MARKER``/``<<-MARKER`` line and the line
+    that is exactly ``MARKER``) are copied through untouched -- their blank
+    or whitespace lines are content, not hcl2.dumps formatting.
+    """
+    out: list[str] = []
+    marker: str | None = None
+    for line in text.split("\n"):
+        if marker is not None:
+            out.append(line)
+            if line.strip() == marker:
+                marker = None
+            continue
+        m = _HEREDOC_START_RE.search(line)
+        if m:
+            marker = m.group(1)
+            out.append(line)
+            continue
+        if _WHITESPACE_ONLY_RE.match(line):
+            continue  # whitespace-only line: drop it entirely
+        if line == "" and out and out[-1] == "":
+            continue  # 2+ consecutive blank lines: keep only one
+        out.append(line)
+    return "\n".join(out)
 
 
 # --- pre-built inventory ------------------------------------------------------
@@ -355,6 +389,48 @@ def filter_terraform(
         len(tf_contents),
     )
     return result
+
+
+# --- compact inventory for the phase-1 PROMPT (not the merged output) --------
+
+_PROMPT_COMPONENT_KEYS = (
+    "id",
+    "resource_type",
+    "type",
+    "provider",
+    "file",
+    "references",
+)
+
+
+def prompt_inventory(prebuilt: dict[str, Any]) -> dict[str, Any]:
+    """Slim the pre-built inventory down to what the phase-1 PROMPT needs.
+
+    ``configuration`` is dropped -- it's already in the filtered HCL below the
+    inventory in the prompt. ``name``/``purpose`` are for the LLM to fill in,
+    not send back. Top-level ``variables``/``outputs`` are dropped too (also
+    in the filtered HCL). The full ``prebuilt`` -- unchanged -- is still what
+    ``merge_phase1`` merges onto.
+    """
+    components = []
+    for c in prebuilt.get("components") or []:
+        if not isinstance(c, dict):
+            continue
+        comp = {
+            key: c[key]
+            for key in _PROMPT_COMPONENT_KEYS
+            if c.get(key) not in (None, [])
+        }
+        components.append(comp)
+    return {
+        "components": components,
+        "modules": prebuilt.get("modules") or [],
+        "unparsed_files": prebuilt.get("unparsed_files") or [],
+    }
+
+
+def prompt_inventory_json(prebuilt: dict[str, Any]) -> str:
+    return json.dumps(prompt_inventory(prebuilt), separators=(",", ":"))
 
 
 # --- merge of the LLM's semantic answer ---------------------------------------

@@ -4283,6 +4283,22 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 Measured with `uv run python scripts/measure_phase1_prompt.py /Users/efitz/Projects/tmi/terraform <environment>` (python-hcl2 8.1.4, `litellm.token_counter(model="gpt-4o", ...)`, no network fallback needed).
 
+**Task 7 correction:** Task 6's measurement (below the line) showed the new phase-1 prompt was *larger* than the old full-LLM prompt in every environment (+52% to +91%), because `json.dumps(prebuilt, indent=2)` duplicated every component's full `configuration` (already present in the filtered HCL) and carried `variables`/`outputs` (also already in the filtered HCL), pretty-printed. Task 7 added `tf_filter.prompt_inventory()`/`prompt_inventory_json()` -- a compact `{id, resource_type, type, provider, file, references}`-only inventory, `json.dumps(..., separators=(",", ":"))` -- used by both `LLMAnalyzer._run_phase1` and this measurement script, plus whitespace normalization of the filtered HCL (drop whitespace-only lines, collapse blank-line runs, heredoc bodies untouched). The merged phase-1 *output* (what `merge_phase1` produces) is unchanged; only the prompt shrank.
+
+| environment | files | unparsed | components | raw HCL chars | filtered HCL chars | prompt inventory JSON chars | prompt tokens before -> after | delta |
+|-------------|-------|----------|------------|---------------|--------------------|------------------------------|-------------------------------|-------|
+| aws-public | 23 | none | 108 | 115,940 | 71,529 | 22,466 | 29,184 -> 24,106 | -17.4% |
+| oci-private | 22 | none | 135 | 145,738 | 113,292 | 32,352 | 36,736 -> 36,827 | +0.2% |
+| azure-public | 19 | none | 46 | 56,857 | 45,064 | 10,297 | 15,108 -> 14,532 | -3.8% |
+| gcp-public | 19 | none | 54 | 58,532 | 46,074 | 11,950 | 15,177 -> 14,759 | -2.8% |
+
+`modules/kubernetes/oci/k8s_resources.tf` (the python-hcl2 8.1.4 transformer bug the spec expected) now parses cleanly on this checkout of `~/Projects/tmi/terraform`; all four environments are fully statically analyzed, so "unparsed" is "none" throughout.
+
+Input tokens now go down in three of four environments (aws-public -17.4%, azure-public -3.8%, gcp-public -2.8%), matching the spec's goal. **oci-private is still marginally larger (+0.2%, +91 tokens)**, not the +90.7% Task 6 measured but still not a net reduction: oci-private has the most components (135) with many `other`-category (unrecognized) resource types whose registry entry keeps every attribute, so its filtered HCL is proportionally less trimmed than the other environments' and the compact inventory's per-component overhead (six short keys, still one row per component) isn't fully absorbed by the HCL-side savings. Not further optimized in Task 7 (out of scope: would mean shrinking the registry-unknown passthrough or filtered-HCL comments, not the prompt-assembly change this task specified). Output-token savings are still not measurable without an LLM run; they're still expected because the semantic contract omits `resource_type`, `type`, `configuration` and per-component `dependencies` for every component, and the first production run's `Phase inventory: ... output tokens` log line will confirm.
+
+<details>
+<summary>Task 6's original (superseded) measurement</summary>
+
 | environment | files | unparsed | components | raw HCL chars | filtered HCL chars | inventory JSON chars | prompt tokens before -> after | delta |
 |-------------|-------|----------|------------|---------------|--------------------|----------------------|-------------------------------|-------|
 | aws-public | 23 | none | 108 | 115,940 | 71,639 | 99,318 | 29,184 -> 44,308 | +51.8% |
@@ -4290,9 +4306,7 @@ Measured with `uv run python scripts/measure_phase1_prompt.py /Users/efitz/Proje
 | azure-public | 19 | none | 46 | 56,857 | 45,280 | 60,296 | 15,108 -> 27,014 | +78.8% |
 | gcp-public | 19 | none | 54 | 58,532 | 46,314 | 66,028 | 15,177 -> 28,091 | +85.1% |
 
-`modules/kubernetes/oci/k8s_resources.tf` (the python-hcl2 8.1.4 transformer bug the spec expected) now parses cleanly on this checkout of `~/Projects/tmi/terraform`; all four environments are fully statically analyzed, so "unparsed" is "none" throughout.
-
-Input tokens go up, not down: the filtered HCL (with security attributes trimmed) plus the pre-built inventory JSON sent alongside it is larger than the single raw-HCL block the full-LLM prompt sent, because the same component data now appears in both the JSON and the HCL comments. Output-token savings are not measurable without an LLM run; they're still expected because the semantic contract omits `resource_type`, `type`, `configuration` and per-component `dependencies` for every component, and the first production run's `Phase inventory: ... output tokens` log line will confirm.
+</details>
 
 ## Deviations from the spec (decided while planning; revisit if they matter)
 

@@ -22,7 +22,12 @@ from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
-from tmi_tf.tf_filter import filter_terraform, load_registry, merge_phase1
+from tmi_tf.tf_filter import (
+    filter_terraform,
+    load_registry,
+    merge_phase1,
+    prompt_inventory_json,
+)
 from tmi_tf.tf_parser import parse_terraform
 from tmi_tf.threat_processor import ALLOWED_CWE_IDS, disallowed_cwe_ids
 
@@ -583,7 +588,7 @@ class LLMAnalyzer:
         semantic_user = self.inventory_semantic_user_template.format(
             repo_name=terraform_repo.name,
             repo_url=terraform_repo.url,
-            inventory_json=json.dumps(prebuilt, indent=2),
+            inventory_json=prompt_inventory_json(prebuilt),
             filtered_hcl=filtered_text,
         )
         semantic, tokens_in, tokens_out, cost = self._call_llm_json(
