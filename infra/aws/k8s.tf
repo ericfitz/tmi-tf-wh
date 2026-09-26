@@ -229,6 +229,9 @@ resource "kubernetes_ingress_v1" "this" {
       "alb.ingress.kubernetes.io/listen-ports"     = jsonencode([{ HTTPS = 443 }])
       "alb.ingress.kubernetes.io/certificate-arn"  = aws_acm_certificate_validation.webhook.certificate_arn
       "alb.ingress.kubernetes.io/healthcheck-path" = "${var.url_prefix}/health"
+      # Access logs to the account log bucket (owned by tmi's aws-persistent stack).
+      # ALB attributes are group-wide: every Ingress in the group must carry the same value.
+      "alb.ingress.kubernetes.io/load-balancer-attributes" = "access_logs.s3.enabled=true,access_logs.s3.bucket=${var.log_bucket},access_logs.s3.prefix=alb/${var.ingress_group}"
     }
   }
 

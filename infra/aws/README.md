@@ -97,6 +97,17 @@ The hostname is served by one ALB shared through the IngressGroup
    currently owned by this stack (`dns.tf`); when a second app exists, move
    them to a shared stack with `terraform state mv` / `import`.
 
+## Egress IP
+
+The worker's outbound traffic (LLM provider calls, TMI API calls) leaves AWS
+through the tmi VPC's NAT gateway as **34.232.165.1**
+(`eipalloc-07c325e51173c0bc9`). An external monitor depends on that address,
+so it never changes: the EIP is owned by the tmi repo's long-lived
+`aws-persistent` stack, not by any deployment, and releasing it requires
+Eric's explicit instruction. Tearing down this stack or the tmi deployment
+does not affect it. See
+`docs/superpowers/specs/2026-09-26-fixed-egress-eip-and-aws-logging-design.md`.
+
 ## Tear down
 
 ```bash

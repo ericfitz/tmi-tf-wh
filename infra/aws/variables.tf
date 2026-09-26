@@ -130,3 +130,15 @@ variable "github_token" {
   sensitive   = true
   default     = ""
 }
+
+variable "log_bucket" {
+  description = "Account log bucket (created by tmi's aws-persistent stack) for ALB access logs"
+  type        = string
+  default     = "tmi-logs-967218005408"
+}
+
+variable "security_alerts_topic_name" {
+  description = "SNS topic (created by tmi's aws-persistent stack) that receives alarms"
+  type        = string
+  default     = "tmi-security-alerts"
+}
