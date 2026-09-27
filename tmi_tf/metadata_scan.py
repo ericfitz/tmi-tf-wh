@@ -4,6 +4,7 @@ import bisect
 import hashlib
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -94,68 +95,70 @@ def _is_expression(raw: str) -> bool:
 
 # A string literal or a heredoc opener, whichever comes first on a line:
 # a ``<<WORD`` inside a literal is consumed as part of the literal.
-_LITERAL_OR_HEREDOC_RE = re.compile(r'"(?:[^"\\\n]|\\.)*"|<<-?(\w+)')
-_LEADING_WORD_RE = re.compile(r"[ \t]*(\w+)")
+_LITERAL_OR_HEREDOC_RE = re.compile(r'"((?:[^"\\\n]|\\.)*)"|<<-?(\w+)')
+# A heredoc terminator: the marker word alone on its line (in hcl2's raw
+# form optionally followed by its synthetic closing quote).
+_TERMINATOR_RE = re.compile(r'[ \t]*(\w+)(?="|[ \t]*$)')
 
 
-def _expression_heredocs(text: str) -> list[str]:
-    """Every ``<<MARKER ... MARKER`` heredoc span embedded in an
-    expression's raw text (``merge(var.a, {x = <<EOT...EOT})``). hcl2
-    wraps a heredoc -- even one nested inside an expression -- in a
-    synthetic quote pair for its own bookkeeping, not real source quotes,
-    and those embedded newlines mean ``_STRING_RE`` (which stops at a
-    literal newline) never matches across them anyway, so a heredoc needs
-    its own scan.
+def _expression_tokens(text: str) -> Iterator[tuple[bool, str]]:
+    """(is_literal, text) for every string-literal and heredoc leaf in an
+    expression's raw text, in order: a literal's inner text, or a
+    heredoc's full ``<<MARKER ... MARKER`` span.
 
-    Lines are tokenized left to right (string literal or heredoc opener),
-    so a ``<<WORD`` inside a literal is never an opener. A heredoc body
-    is skipped; its terminator line is re-scanned after the marker (and
-    hcl2's synthetic closing quote), because hcl2 puts the next opener
-    there (``EOT"}, {x = "<<EOT``). Terminators are looked up in a
-    per-leading-word index, so the pass is O(n log n) and an unterminated
-    opener is just skipped, never abandoning later heredocs."""
-    spans: list[str] = []
+    hcl2 wraps a heredoc -- even one nested inside an expression -- in a
+    synthetic quote pair (``"<<EOT`` ... ``EOT"``) that is not real
+    source, so the text cannot be split into literals by quote pairing
+    alone. Instead each line is tokenized left to right (literal or
+    heredoc opener), so a ``<<WORD`` inside a literal is never an opener.
+    A heredoc body is skipped; its terminator line is re-scanned after
+    the marker and the synthetic closing quote, because hcl2 puts the
+    next token there (``EOT"}, {x = "<<EOT``). Terminators are looked up
+    in a per-word line index, so the pass is O(n log n) and an
+    unterminated opener is just skipped, never abandoning later leaves."""
     lines = text.split("\n")
     ends: dict[str, list[int]] = {}
     for k, line in enumerate(lines):
-        lead = _LEADING_WORD_RE.match(line)
-        if lead:
-            ends.setdefault(lead.group(1), []).append(k)
+        term = _TERMINATOR_RE.match(line)
+        if term:
+            ends.setdefault(term.group(1), []).append(k)
     i, col = 0, 0
     while i < len(lines):
         line = lines[i]
         next_i, next_col = i + 1, 0
         for m in _LITERAL_OR_HEREDOC_RE.finditer(line, col):
-            marker = m.group(1)
+            marker = m.group(2)
             if marker is None:
+                yield True, m.group(1)
                 continue
             cands = ends.get(marker, [])
             idx = bisect.bisect_right(cands, i)
             if idx == len(cands):  # unterminated -- skip this opener
                 continue
             j = cands[idx]
-            close = _LEADING_WORD_RE.match(lines[j])
+            close = _TERMINATOR_RE.match(lines[j])
             assert close is not None
-            spans.append(
+            yield (
+                False,
                 "\n".join(
                     [line[m.start() :], *lines[i + 1 : j], lines[j][: close.end()]]
-                )
+                ),
             )
             next_i, next_col = j, close.end()
             if lines[j][next_col : next_col + 1] == '"':
                 next_col += 1
             break
         i, col = next_i, next_col
-    return spans
 
 
 def _expression_leaves(text: str, loc: str, out: list[tuple[str, str, bool]]) -> None:
     """String-literal (quoted) and heredoc (unquoted) leaves embedded in
     an expression's raw text -- see ``_is_expression``."""
-    for i, m in enumerate(_STRING_RE.finditer(text)):
-        out.append((f"{loc}[str{i}]", m.group(1), True))
-    for i, span in enumerate(_expression_heredocs(text)):
-        out.append((f"{loc}[heredoc{i}]", span, False))
+    counts = {True: 0, False: 0}
+    for is_literal, leaf in _expression_tokens(text):
+        kind = "str" if is_literal else "heredoc"
+        out.append((f"{loc}[{kind}{counts[is_literal]}]", leaf, is_literal))
+        counts[is_literal] += 1
 
 
 def _strings(value: Any, loc: str, out: list[tuple[str, str, bool]]) -> None:
