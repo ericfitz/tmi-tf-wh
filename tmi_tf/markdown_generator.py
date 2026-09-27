@@ -56,25 +56,34 @@ def _flatten(value: Any, prefix: str = "") -> list[tuple[str, Any]]:
 
 
 def _leaf_text(value: Any) -> str:
-    """Value text for a code span: whitespace collapsed, truncated, and
-    ``|``/backtick made safe (code spans are not HTML-escaped)."""
+    """Config leaf value rendered as escaped prose (NOT inside a code span):
+    whitespace collapsed, truncated at ``_VALUE_MAX`` raw chars, then
+    HTML-escaped and ``|``-escaped. A raw ``<``/``>``/``&`` inside a
+    backtick span is not safe -- the whole-note sanitizer parses the note
+    as HTML before markdown is ever rendered, so a code span does not stop
+    it from reading e.g. a heredoc's ``<<EOF > file`` as a tag and eating
+    it. An empty value renders as a literal ``""`` so the line doesn't
+    trail off with nothing after ``=``."""
     text = value if isinstance(value, str) else json.dumps(value)
     text = " ".join(text.split())
     if len(text) > _VALUE_MAX:
         text = text[:_VALUE_MAX] + "…"
-    return text.replace("`", "'").replace("|", "\\|")
+    if text == "":
+        return '""'
+    return html_escape(text, quote=True).replace("|", "\\|")
 
 
 def _config_cell(config: Any, attrs: list[str] | None) -> str:
     """Configuration column: registry security_attrs re-applied at render
     time (so the full-LLM fallback path is filtered too), one
-    `` `path = value` `` per leaf, joined with <br>."""
+    `` `path` = value `` per leaf (path in a code span, value escaped
+    prose -- see ``_leaf_text``), joined with <br>."""
     if attrs is None or not isinstance(config, dict):
         return "—"
     selected = _select(config, _attr_tree(attrs))
     if not selected:
         return "—"
-    lines = [f"`{path} = {_leaf_text(v)}`" for path, v in _flatten(selected)]
+    lines = [f"`{path}` = {_leaf_text(v)}" for path, v in _flatten(selected)]
     return "<br>".join(lines) or "—"
 
 
@@ -93,14 +102,6 @@ class MarkdownGenerator:
             parts.append("No infrastructure components identified.")
             return "\n\n".join(parts)
 
-        # Group components by type
-        by_type: dict[str, list[dict[str, Any]]] = {}
-        for comp in components:
-            comp_type = comp.get("type", "other")
-            if comp_type not in by_type:
-                by_type[comp_type] = []
-            by_type[comp_type].append(comp)
-
         type_order = [
             "compute",
             "storage",
@@ -113,6 +114,16 @@ class MarkdownGenerator:
             "cdn",
             "other",
         ]
+
+        # Group components by type; anything outside the fixed order above
+        # (e.g. the full-LLM fallback emitting "database") folds into
+        # "other" instead of being silently dropped.
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for comp in components:
+            comp_type = comp.get("type") or "other"
+            if comp_type not in type_order:
+                comp_type = "other"
+            by_type.setdefault(comp_type, []).append(comp)
 
         for comp_type in type_order:
             group = by_type.get(comp_type, [])
@@ -245,6 +256,8 @@ class MarkdownGenerator:
         for finding in security_findings:
             name = _md_cell(finding.get("name", "Unknown"))
             cwe_ids = finding.get("cwe_id", [])
+            if isinstance(cwe_ids, str):
+                cwe_ids = [cwe_ids]  # LLM sometimes emits a bare string, not a list
             if cwe_ids:
                 name += "<br>" + " ".join(f"`{_md_cell(c)}`" for c in cwe_ids)
             severity = _md_cell(finding.get("severity", "Medium"))

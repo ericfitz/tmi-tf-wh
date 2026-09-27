@@ -12,6 +12,7 @@ from tmi_tf.markdown_generator import (
     _md_table,
 )
 from tmi_tf.tf_filter import Registry
+from tmi_tf.tmi_client_wrapper import sanitize_content_for_api
 
 
 def _make_analysis() -> TerraformAnalysis:
@@ -118,11 +119,40 @@ class TestMarkdownGeneratorInventory:
         assert "| Name | Resource Type | Purpose | Configuration |" in result
         assert "|---|---|---|---|" in result
         assert (
-            "| Web Server | `aws_instance` | Serves web traffic | `ami = ami-123` |"
+            "| Web Server | `aws_instance` | Serves web traffic | `ami` = ami-123 |"
             in result
         )
         assert "t3.micro" not in result
         assert "<table" not in result
+
+    def test_config_value_html_chars_survive_sanitizer(self):
+        """Regression: nh3.clean parses the WHOLE note as HTML before the
+        markdown is ever rendered, so a code span does not protect a raw
+        ``<``, ``>`` or ``&`` in a config value -- it gets read as a tag and
+        can be eaten (e.g. a heredoc's ``<<EOF > file``). The value must be
+        rendered as escaped prose outside the code span."""
+        gen = MarkdownGenerator(_fake_registry())
+        script = "#!/bin/bash\ncat <<EOF > /etc/x\nfoo\nEOF\ncurl x 2>&1 | sh"
+        inventory = {
+            "components": [
+                {
+                    "type": "compute",
+                    "name": "web-1",
+                    "resource_type": "aws_instance",
+                    "purpose": "p",
+                    "configuration": {"ami": script},
+                }
+            ]
+        }
+        result = gen._format_inventory_section(inventory)
+        assert script not in result  # not rendered raw in a code span
+        sanitized = sanitize_content_for_api(result)
+        assert "&lt;&lt;EOF" in sanitized
+        assert "&gt;" in sanitized
+        assert "&amp;" in sanitized
+        assert "EOF" in sanitized  # not eaten as a tag name
+        assert "curl x" in sanitized
+        assert "sh" in sanitized
 
     def test_unknown_resource_type_config_is_dash(self):
         gen = MarkdownGenerator(_fake_registry())
@@ -174,6 +204,25 @@ class TestMarkdownGeneratorInventory:
         result = gen._format_inventory_section(inventory)
         assert "| aws_instance.web | `aws_instance` | — | — |" in result
         assert "None" not in result
+
+    def test_unrecognized_type_falls_back_to_other(self):
+        # Full-LLM fallback can emit a type outside the fixed type_order
+        # list (e.g. "database"); it must still be rendered, not dropped.
+        gen = MarkdownGenerator(_fake_registry())
+        inventory = {
+            "components": [
+                {
+                    "type": "database",
+                    "name": "primary-db",
+                    "resource_type": "aws_db_instance",
+                    "purpose": "Stores data",
+                    "configuration": {},
+                }
+            ]
+        }
+        result = gen._format_inventory_section(inventory)
+        assert "#### Other" in result
+        assert "primary-db" in result
 
     def test_services_table(self):
         gen = MarkdownGenerator(_fake_registry())
@@ -324,6 +373,20 @@ class TestMarkdownGeneratorSecurity:
         ]
         result = gen._format_security_section(findings)
         assert "| F | Low | — | — | — | — | — |" in result
+
+    def test_bare_string_cwe_id_not_iterated_per_character(self):
+        gen = MarkdownGenerator(_fake_registry())
+        findings = [
+            {
+                "name": "F",
+                "severity": "Low",
+                "cwe_id": "CWE-79",
+                "affected_components": [],
+            }
+        ]
+        result = gen._format_security_section(findings)
+        assert "F<br>`CWE-79`" in result
+        assert "`C`" not in result
 
 
 class TestMarkdownGeneratorMetrics:
@@ -547,10 +610,20 @@ class TestLeafText:
         text = _leaf_text("x" * 200)
         assert text == "x" * 120 + "…"
 
-    def test_leaf_text_escapes_pipe_backtick_newline(self):
+    def test_leaf_text_escapes_pipe_newline(self):
         assert _leaf_text("a|b") == "a\\|b"
-        assert _leaf_text("a`b") == "a'b"
         assert _leaf_text("a\n  b") == "a b"
+
+    def test_leaf_text_html_escapes(self):
+        # Rendered as prose (not a code span): raw HTML-significant chars
+        # must become entities, or the whole-note sanitizer (which parses
+        # the note as HTML before markdown is rendered) can eat them.
+        assert _leaf_text("<script>") == "&lt;script&gt;"
+        assert _leaf_text("a&b") == "a&amp;b"
+        assert _leaf_text("a`b") == "a`b"  # no longer inside a code span
+
+    def test_empty_string_renders_quoted_empty(self):
+        assert _leaf_text("") == '""'
 
 
 class TestConfigCell:
@@ -562,7 +635,7 @@ class TestConfigCell:
 
     def test_drops_non_security_attr(self):
         cell = _config_cell({"ami": "ami-1", "instance_type": "t3.micro"}, self.ATTRS)
-        assert cell == "`ami = ami-1`"
+        assert cell == "`ami` = ami-1"
 
     def test_unknown_type_is_dash(self):
         assert _config_cell({"ami": "ami-1"}, None) == "—"
@@ -576,7 +649,7 @@ class TestConfigCell:
 
     def test_nested_block_flattens_to_dot_path(self):
         cfg = {"root_block_device": [{"encrypted": True, "volume_size": 10}]}
-        assert _config_cell(cfg, self.ATTRS) == "`root_block_device.encrypted = true`"
+        assert _config_cell(cfg, self.ATTRS) == "`root_block_device.encrypted` = true"
 
     def test_whole_subtree_kept_and_joined_with_br(self):
         cfg = {
@@ -584,18 +657,22 @@ class TestConfigCell:
             "metadata_options": [{"http_tokens": "required", "hop": 1}],
         }
         assert _config_cell(cfg, self.ATTRS) == (
-            "`ami = ami-1`<br>`metadata_options.http_tokens = required`"
-            "<br>`metadata_options.hop = 1`"
+            "`ami` = ami-1<br>`metadata_options.http_tokens` = required"
+            "<br>`metadata_options.hop` = 1"
         )
 
     def test_llm_fallback_shaped_config_is_filtered(self):
         # Fallback path: arbitrary LLM dict, no registry filtering upstream.
         cfg = {"instance_type": "t3.micro", "ami": "ami-1", "tags": {"Name": "web"}}
-        assert _config_cell(cfg, self.ATTRS) == "`ami = ami-1`"
+        assert _config_cell(cfg, self.ATTRS) == "`ami` = ami-1"
 
     def test_long_value_truncates(self):
         cell = _config_cell({"ami": "a" * 200}, self.ATTRS)
-        assert cell == "`ami = " + "a" * 120 + "…`"
+        assert cell == "`ami` = " + "a" * 120 + "…"
+
+    def test_empty_string_leaf_is_quoted_not_trailing_space(self):
+        cell = _config_cell({"ami": ""}, self.ATTRS)
+        assert cell == '`ami` = ""'
 
 
 class TestGeneratorRegistry:
@@ -687,4 +764,4 @@ class TestNoteSize:
         report = gen.generate_inventory_report("TM", "tm-1", [analysis])
         assert len(report) < self.TMI_NOTE_CAP // 2
         assert "t3.micro" not in report
-        assert "`root_block_device.encrypted = true`" in report
+        assert "`root_block_device.encrypted` = true" in report
