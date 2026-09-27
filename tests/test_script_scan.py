@@ -258,6 +258,72 @@ def test_unparsed_heredoc_open_line_trailing_whitespace_is_omitted():
     assert not unomitted(contents, blobs)
 
 
+def test_unparsed_literal_inside_heredoc_body_is_not_a_separate_blob(caplog):
+    # A line shaped like `attr = "..."` living *inside* another script's
+    # heredoc body must not be mistaken for its own assignment (during
+    # extraction) or trigger a false "not found" miss (during omission).
+    broken = (
+        'resource "aws_instance" "x" {\n'
+        "  custom_data = <<EOF\n"
+        '  user_data = "inner"\n'
+        "EOF\n"
+        "  ??? =\n"
+        "}\n"
+    )
+    contents = {"bad.tf": broken}
+    inv = parse_terraform(contents)
+    assert "bad.tf" in inv.unparsed_files
+    blobs = extract_scripts(inv, contents, REG)
+    assert {b.attr_path for b in blobs} == {"custom_data"}
+    with caplog.at_level(logging.WARNING, logger="tmi_tf.script_scan"):
+        omit_scripts(contents, blobs)
+    assert not unomitted(contents, blobs)
+    assert not any("not found" in r.getMessage() for r in caplog.records)
+
+
+def test_omit_scripts_is_linear_in_file_size_not_blob_count():
+    # The old implementation ran one anchored `search`-from-offset-0 per
+    # blob -- O(blobs * file size). 20k blobs in one file must stay fast.
+    n = 20000
+    text = "".join(f'custom_data = "x{i}"\n' for i in range(n))
+    inv = StaticInventory(unparsed_files=["big.tf"])
+    contents = {"big.tf": text}
+    blobs = extract_scripts(inv, contents, REG)
+    assert len(blobs) == n
+    start = time.perf_counter()
+    out = omit_scripts(contents, blobs)
+    assert time.perf_counter() - start < 2.0
+    assert not unomitted(contents, blobs)
+    assert 'x0"' not in out["big.tf"]
+    assert f'x{n - 1}"' not in out["big.tf"]
+
+
+def test_omit_scripts_scales_to_50k_blobs_one_mb_file():
+    n = 50000  # ~1MB
+    text = "".join(f'custom_data = "y{i}"\n' for i in range(n))
+    inv = StaticInventory(unparsed_files=["big.tf"])
+    contents = {"big.tf": text}
+    blobs = extract_scripts(inv, contents, REG)
+    assert len(blobs) == n
+    start = time.perf_counter()
+    omit_scripts(contents, blobs)
+    assert time.perf_counter() - start < 2.0
+
+
+def test_omit_scripts_heredoc_shape_is_also_linear():
+    n = 5000
+    text = "".join(f"custom_data = <<EOF{i}\necho {i}\nEOF{i}\n" for i in range(n))
+    inv = StaticInventory(unparsed_files=["big.tf"])
+    contents = {"big.tf": text}
+    blobs = extract_scripts(inv, contents, REG)
+    assert len(blobs) == n
+    start = time.perf_counter()
+    out = omit_scripts(contents, blobs)
+    assert time.perf_counter() - start < 2.0
+    assert not unomitted(contents, blobs)
+    assert "echo 0" not in out["big.tf"]
+
+
 def test_omit_scripts_warns_and_reports_a_miss(caplog):
     # A blob whose raw_text span genuinely isn't in the file (e.g. produced
     # against a different snapshot of the source) must not fail silently.

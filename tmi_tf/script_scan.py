@@ -154,36 +154,34 @@ _FILE_REF_RE = re.compile(
 )
 _B64_ENC_RE = re.compile(r'^\$\{base64encode\("((?:[^"\\]|\\.)*)"\)\}$')
 _B64_LITERAL_RE = re.compile(r"^[A-Za-z0-9+/=\s]{8,}$")
-# Full quoted-literal span (kept, not just the body) so the replacement in
-# `omit_scripts` can anchor on the exact same self-delimited token the parsed
-# path produces (quotes included) instead of a bare body needing external
-# quotes to stay valid HCL.
-#
-# `[ \t]*`, not `\s*`, around the key/`=`: under re.MULTILINE, a `\s*` here
-# would happily cross newlines too, so at every whitespace-only line the
-# engine re-scans forward through every following blank line before giving
-# up -- O(n^2) on a file with many blank/garbage lines. Horizontal-only
-# whitespace keeps each line-start attempt bounded to that one line.
-_LITERAL_UNPARSED_RE = re.compile(
-    r'^[ \t]*(?P<attr>[\w-]+)[ \t]*=[ \t]*(?P<full>"(?P<body>(?:[^"\\]|\\.)*)")',
-    re.MULTILINE,
+# Matched one already-split line at a time -- never against the whole file
+# with re.MULTILINE -- so `^`/`$`/`[ \t]*` can never cross a newline and a
+# failed attempt at one line costs at most O(that line's length), regardless
+# of how many blank/garbage lines or heredoc starts surround it. The key is
+# optionally quoted (`"user_data" = ...`, valid HCL inside an object
+# constructor) since both extraction (unparsed files) and omission (any file)
+# use these against raw source text. `full`/`open` capture the whole
+# self-delimited value span (quotes, or heredoc markers, included) rather
+# than just the inner body/marker, so the span is an exact source substring
+# `omit_scripts` can find again verbatim.
+_LITERAL_LINE_RE = re.compile(
+    r'^[ \t]*"?(?P<attr>[\w-]+)"?[ \t]*=[ \t]*(?P<full>"(?P<body>(?:[^"\\]|\\.)*)")'
 )
-# Matched per already-split line (no embedded newline), so `\s*`/`^`/`$` here
-# can't cross lines -- no equivalent quadratic risk. `open` captures the
-# verbatim rest of the line (marker plus any trailing whitespace) rather than
-# trimming it, so `_iter_unparsed_heredocs`'s reconstructed span is an exact
-# substring of the source text for `omit_scripts` to anchor on.
 _HEREDOC_START_LINE_RE = re.compile(
-    r"^[ \t]*(?P<attr>[\w-]+)[ \t]*=[ \t]*(?P<open><<-?(?P<marker>\w+).*)$"
+    r'^[ \t]*"?(?P<attr>[\w-]+)"?[ \t]*=[ \t]*(?P<open><<-?(?P<marker>\w+).*)$'
 )
 
 
-def _iter_unparsed_heredocs(text: str):
-    """(attr, body, raw span) for each *terminated* heredoc in raw source text.
+def _iter_unparsed_assignments(text: str):
+    """(attr, body, raw_text span) for every literal or heredoc assignment
+    found in raw source text hcl2 couldn't parse, in one forward pass over
+    its lines, O(len(text)) total.
 
-    A single forward pass over lines, O(len(text)) total. An unterminated
-    heredoc consumes the rest of the file looking for its terminator (there is
-    no well-defined end otherwise) and yields nothing -- matching how a real
+    A heredoc's body lines are consumed atomically and never independently
+    re-examined, so an `attr = "..."`-shaped line living inside another
+    script's heredoc body is never mistaken for its own assignment. An
+    unterminated heredoc consumes the rest of the lines (there's no
+    well-defined end otherwise) and ends the scan -- matching how a real
     heredoc parser behaves, and avoiding the O(n^2) blowup of a backtracking
     `.*?` regex retried from every `<<` occurrence in the file.
     """
@@ -191,22 +189,26 @@ def _iter_unparsed_heredocs(text: str):
     i, n = 0, len(lines)
     while i < n:
         m = _HEREDOC_START_LINE_RE.match(lines[i])
-        if not m:
-            i += 1
-            continue
-        attr, open_tok, marker = m.group("attr"), m.group("open"), m.group("marker")
-        body_lines: list[str] = []
-        i += 1
-        while i < n and lines[i].strip() != marker:
-            body_lines.append(lines[i])
-            i += 1
-        if i < n:  # terminator line found; otherwise unterminated -- yield nothing
+        if m:
+            attr, open_tok, marker = m.group("attr"), m.group("open"), m.group("marker")
+            body_lines: list[str] = []
+            j = i + 1
+            while j < n and lines[j].strip() != marker:
+                body_lines.append(lines[j])
+                j += 1
+            if j == n:  # unterminated -- no well-defined end, stop scanning
+                return
             yield (
                 attr,
                 "\n".join(body_lines),
-                "\n".join([open_tok, *body_lines, lines[i]]),
+                "\n".join([open_tok, *body_lines, lines[j]]),
             )
-            i += 1
+            i = j + 1
+            continue
+        m = _LITERAL_LINE_RE.match(lines[i])
+        if m:
+            yield m.group("attr"), m.group("body"), m.group("full")
+        i += 1
 
 
 def _safe_read(
@@ -349,7 +351,7 @@ def extract_scripts(
                 ]
     for path in inventory.unparsed_files:
         text = tf_contents.get(path, "")
-        for attr, body, raw_text in _iter_unparsed_heredocs(text):
+        for attr, body, raw_text in _iter_unparsed_assignments(text):
             if attr in data_names:
                 blobs.append(
                     ScriptBlob(
@@ -362,31 +364,76 @@ def extract_scripts(
                         raw_text,
                     )
                 )
-        for m in _LITERAL_UNPARSED_RE.finditer(text):
-            if m.group("attr") in data_names:
-                blobs.append(
-                    ScriptBlob(
-                        f"{path}:{m.group('attr')}",
-                        path,
-                        m.group("attr"),
-                        path,
-                        _script_digest(m.group("full")),
-                        m.group("body"),
-                        m.group("full"),
-                    )
-                )
     logger.info(
         "Script extraction: %d blob(s) from %d file(s)", len(blobs), len(tf_contents)
     )
     return blobs
 
 
-def _assignment_pattern(attr_name: str, raw_text: str) -> re.Pattern[str]:
-    """Match ``<attr_name> = <raw_text>`` (key optionally quoted) so
-    `omit_scripts` only ever replaces that attribute's own value, never any
-    other value elsewhere in the file that happens to be textually identical
-    (e.g. a `tags.Name` holding the same string as a `user_data` script)."""
-    return re.compile(rf'("?\b{re.escape(attr_name)}\b"?\s*=\s*){re.escape(raw_text)}')
+def _marker_for(b: ScriptBlob) -> str:
+    return b.digest if b.raw_text == b.text else f'"{b.digest}"'
+
+
+def _rebuild_without_scripts(
+    text: str, wanted: dict[tuple[str, str], list[ScriptBlob]]
+) -> str:
+    """One forward pass over ``text``'s lines: each occurrence of a
+    ``wanted`` (attr_name, raw_text) key gets its blob's digest marker
+    substituted in place -- one occurrence consumed per matching blob, off
+    the front of that key's queue, so N blobs sharing an identical
+    attribute+value each still redact their own occurrence (and nothing
+    else in the file that merely happens to hold the same text). Whatever's
+    left in ``wanted``'s queues when this returns are misses -- `_omit`
+    collects them.
+
+    O(len(text) + len(wanted)) total: every blob targeting this file is
+    looked up against matches found in this single scan, rather than each
+    blob re-searching the whole file from scratch (which made `omit_scripts`
+    O(blobs x file size)).
+    """
+    lines = text.split("\n")
+    out_lines: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        m = _HEREDOC_START_LINE_RE.match(line)
+        if m:
+            attr, open_tok, marker_word = (
+                m.group("attr"),
+                m.group("open"),
+                m.group("marker"),
+            )
+            prefix = line[: m.start("open")]
+            body_lines: list[str] = []
+            j = i + 1
+            while j < n and lines[j].strip() != marker_word:
+                body_lines.append(lines[j])
+                j += 1
+            if j == n:  # unterminated -- copy the rest through, done
+                out_lines.extend(lines[i:])
+                break
+            raw_text = "\n".join([open_tok, *body_lines, lines[j]])
+            queue = wanted.get((attr, raw_text))
+            if queue:
+                out_lines.append(prefix + _marker_for(queue.pop(0)))
+            else:
+                out_lines.extend(lines[i : j + 1])
+            i = j + 1
+            continue
+        m = _LITERAL_LINE_RE.match(line)
+        if m:
+            queue = wanted.get((m.group("attr"), m.group("full")))
+            if queue:
+                out_lines.append(
+                    line[: m.start("full")]
+                    + _marker_for(queue.pop(0))
+                    + line[m.end("full") :]
+                )
+                i += 1
+                continue
+        out_lines.append(line)
+        i += 1
+    return "\n".join(out_lines)
 
 
 def _omit(
@@ -394,23 +441,22 @@ def _omit(
 ) -> tuple[dict[str, str], list[ScriptBlob]]:
     """Shared implementation for `omit_scripts`/`unomitted`: single source of
     truth for which blobs' anchored spans were actually found and replaced,
-    so the two never disagree with each other."""
+    so the two never disagree with each other. One rebuild pass per file."""
+    by_file: dict[str, list[ScriptBlob]] = {}
+    for b in blobs:
+        if b.raw_text:
+            by_file.setdefault(b.file, []).append(b)
     out = dict(tf_contents)
     misses: list[ScriptBlob] = []
-    for b in blobs:
-        if not b.raw_text:
-            continue
-        text = out.get(b.file, "")
-        attr_name = b.attr_path.rsplit(".", 1)[-1]
-        marker = b.digest if b.raw_text == b.text else f'"{b.digest}"'
-        pattern = _assignment_pattern(attr_name, b.raw_text)
-        new_text, count = pattern.subn(
-            lambda m, marker=marker: m.group(1) + marker, text, count=1
-        )
-        if count:
-            out[b.file] = new_text
-        else:
-            misses.append(b)
+    for file, file_blobs in by_file.items():
+        wanted: dict[tuple[str, str], list[ScriptBlob]] = {}
+        for b in file_blobs:
+            assert b.raw_text is not None  # by_file only collected truthy raw_text
+            attr_name = b.attr_path.rsplit(".", 1)[-1]
+            wanted.setdefault((attr_name, b.raw_text), []).append(b)
+        out[file] = _rebuild_without_scripts(out.get(file, ""), wanted)
+        for queue in wanted.values():
+            misses.extend(queue)
     return out, misses
 
 
