@@ -35,7 +35,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip
 COPY pyproject.toml ./
 COPY tmi_tf/ tmi_tf/
 
-RUN python3 -m pip install --no-cache-dir --prefix=/install .
+RUN python3 -m pip install --no-cache-dir --prefix=/install '.[jev]'
 
 # Stage 2: Runtime
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023

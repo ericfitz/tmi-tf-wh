@@ -32,7 +32,7 @@ resource "kubernetes_secret_v1" "this" {
     TMI_CLIENT_ID     = var.tmi_client_id
     TMI_CLIENT_SECRET = var.tmi_client_secret
     GITHUB_TOKEN      = var.github_token
-  }, var.llm_api_keys)
+  }, var.llm_api_keys, var.jev_api_key == "" ? {} : { JEV_API_KEY = var.jev_api_key })
 }
 
 # Optional override of the image's llm-profiles.yaml.
@@ -150,6 +150,10 @@ resource "kubernetes_deployment_v1" "this" {
           env {
             name  = "WEBHOOK_SUBSCRIPTION_ID"
             value = var.webhook_subscription_id
+          }
+          env {
+            name  = "JEV_SHADOW"
+            value = var.jev_shadow ? "1" : "0"
           }
 
           liveness_probe {

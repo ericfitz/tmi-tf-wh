@@ -131,6 +131,19 @@ variable "github_token" {
   default     = ""
 }
 
+variable "jev_api_key" {
+  description = "TypeSafe Jev API key (JEV_API_KEY) for the production Jev shadow; empty = no key in the Secret"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "jev_shadow" {
+  description = "Run the Jev shadow comparison (JEV_SHADOW=1); needs jev_api_key and an image built with the jev extra"
+  type        = bool
+  default     = false
+}
+
 variable "log_bucket" {
   description = "Account log bucket (created by tmi's aws-persistent stack) for ALB access logs"
   type        = string
