@@ -7,6 +7,8 @@ from tmi_tf.markdown_generator import (
     _esc,
     _html_list,
     _html_table,
+    _md_cell,
+    _md_table,
 )
 
 
@@ -473,6 +475,39 @@ class TestGenerateAnalysisReport:
         assert "External Dependencies" in report
         assert "AWS" in report
         assert "EC2" in report
+
+
+class TestMdCell:
+    def test_plain_text(self):
+        assert _md_cell("hello") == "hello"
+
+    def test_md_cell_escapes_pipe_html_and_newline(self):
+        assert _md_cell("a|b") == "a\\|b"
+        assert _md_cell("<script>") == "&lt;script&gt;"
+        assert _md_cell("line1\nline2") == "line1<br>line2"
+
+    def test_list_joins_with_br(self):
+        assert _md_cell(["a", "b|c", "<d>"]) == "a<br>b\\|c<br>&lt;d&gt;"
+
+    def test_empty_is_dash(self):
+        assert _md_cell("") == "—"
+        assert _md_cell(None) == "—"
+        assert _md_cell([]) == "—"
+        assert _md_cell(["", None]) == "—"
+
+    def test_non_string_scalars(self):
+        assert _md_cell(443) == "443"
+        assert _md_cell(5.0) == "5.0"
+
+
+class TestMdTable:
+    def test_basic_table(self):
+        assert _md_table(["A", "B"], [["1", "2"], ["3", "4"]]) == (
+            "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
+        )
+
+    def test_empty_rows_still_has_header_and_separator(self):
+        assert _md_table(["A"], []) == "| A |\n|---|"
 
 
 class TestMarkdownGeneratorDependencies:

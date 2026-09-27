@@ -16,6 +16,27 @@ def _esc(value: str) -> str:
     return html_escape(str(value), quote=True)
 
 
+def _md_cell(value: Any) -> str:
+    """One markdown table cell: HTML-escaped, ``|`` escaped, newlines as <br>.
+
+    A list joins its items with <br>; anything empty renders as an em dash.
+    """
+    items = value if isinstance(value, list) else [value]
+    lines = [
+        html_escape(str(v), quote=True).replace("|", "\\|").replace("\n", "<br>")
+        for v in items
+        if v is not None and str(v) != ""
+    ]
+    return "<br>".join(lines) or "—"
+
+
+def _md_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Markdown pipe table; ``rows`` are pre-rendered cell strings."""
+    lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
+    lines += ["| " + " | ".join(row) + " |" for row in rows]
+    return "\n".join(lines)
+
+
 def _html_list(items: Sequence[str]) -> str:
     """Render a list of items as an HTML <ul> list, or empty string if empty."""
     if not items:
