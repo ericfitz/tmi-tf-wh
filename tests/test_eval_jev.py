@@ -77,18 +77,77 @@ def test_prf():
 
 
 def test_wilson_interval_narrows_with_n_and_bounds_at_0_1():
+    assert eval_jev.wilson(8, 10) == (0.49, 0.943)  # pinned known value
     lo1, hi1 = eval_jev.wilson(8, 10)
     assert 0.0 < lo1 < 0.8 < hi1 < 1.0
     lo2, hi2 = eval_jev.wilson(80, 100)
     assert hi2 - lo2 < hi1 - lo1  # more data -> tighter interval
-    assert eval_jev.wilson(0, 0) == (0.0, 0.0)
     assert eval_jev.wilson(0, 10)[0] == 0.0
     assert eval_jev.wilson(10, 10)[1] == 1.0
+
+
+def test_wilson_zero_n_is_maximally_uninformative_not_a_false_zero():
+    # n=0 must not look like a confident (0.0, 0.0) -- that made a
+    # zero-sample figure win/tie spuriously against a real one.
+    assert eval_jev.wilson(0, 0) == (0.0, 1.0)
 
 
 def test_tie_true_when_intervals_overlap():
     assert eval_jev.tie((0.5, 0.9), (0.6, 0.95)) is True
     assert eval_jev.tie((0.1, 0.4), (0.6, 0.9)) is False
+
+
+def test_compare_direction_higher_is_better():
+    assert eval_jev._compare((0.8, 0.95), (0.1, 0.3), higher_is_better=True) == "a"
+    assert eval_jev._compare((0.1, 0.3), (0.8, 0.95), higher_is_better=True) == "b"
+    assert eval_jev._compare((0.4, 0.6), (0.5, 0.7), higher_is_better=True) == "tie"
+
+
+def test_compare_direction_lower_is_better_hijack_rate():
+    # CRITICAL fix: for hijack rate, lower is better. An interval entirely
+    # ABOVE the other's must lose, not win.
+    jev_hijack = (0.6, 0.8)
+    llm_hijack = (0.1, 0.3)
+    assert eval_jev._compare(jev_hijack, llm_hijack, higher_is_better=False) == "b"
+    assert eval_jev._compare(llm_hijack, jev_hijack, higher_is_better=False) == "a"
+    assert eval_jev._compare((0.4, 0.6), (0.5, 0.7), higher_is_better=False) == "tie"
+
+
+def test_hijack_verdict_is_na_when_either_side_has_zero_n():
+    jev_row = {"hijack_ci": (0.0, 1.0), "hijack_n": 0}
+    llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5}
+    assert eval_jev._hijack_verdict(jev_row, llm_row) == "n/a"
+    assert eval_jev._hijack_verdict(llm_row, jev_row) == "n/a"
+
+
+def test_hijack_verdict_direction_when_both_sides_have_data():
+    jev_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5}  # lower hijack rate
+    llm_row = {"hijack_ci": (0.6, 0.8), "hijack_n": 5}
+    assert eval_jev._hijack_verdict(jev_row, llm_row) == "Jev"
+    assert eval_jev._hijack_verdict(llm_row, jev_row) == "LLM review"
+
+
+def test_decision_verdict_insufficient_data_when_hijack_n_is_zero():
+    jev_row = {"hijack_ci": (0.0, 1.0), "hijack_n": 0, "f1": 0.9, "p95": 10}
+    llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
+    assert eval_jev.decision_verdict(jev_row, llm_row) == (
+        "insufficient data (no hijack-rate sample on one side)"
+    )
+
+
+def test_decision_verdict_jev_wins_higher_f1_and_not_worse_hijack():
+    jev_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.9, "p95": 10}
+    llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
+    assert eval_jev.decision_verdict(jev_row, llm_row) == "Jev wins"
+
+
+def test_decision_verdict_jev_loses_when_its_hijack_rate_is_worse():
+    # Higher F1 but a strictly worse (higher) hijack rate -- must not win.
+    jev_row = {"hijack_ci": (0.6, 0.8), "hijack_n": 5, "f1": 0.9, "p95": 10}
+    llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
+    assert eval_jev.decision_verdict(jev_row, llm_row) == (
+        "LLM review wins (or no clear Jev win)"
+    )
 
 
 def test_hijack_rate_paired_for_scripts_excludes_missed_twins():
@@ -155,6 +214,15 @@ def test_sweep_tunes_on_even_ids_and_scores_odd_ids_only():
     assert n == 2
     assert (p, r, f1) == (1.0, 1.0, 1.0)
     assert 0.3 <= t <= 0.9
+
+
+def test_sweep_ties_broken_by_lowest_threshold():
+    # Perfect separation on the tune half (s2, s4): every threshold from
+    # 0.30 to 0.90 scores F1=1.0, so the tie must resolve to the lowest one.
+    nouls = {"s2": 0.95, "s4": 0.05}
+    truth = {"s2": True, "s4": False}
+    t, _, _ = eval_jev.sweep(nouls, truth)
+    assert t == 0.3
 
 
 def test_category_accuracy_on_true_positive_scripts_only():
@@ -227,10 +295,30 @@ def test_evaluate_llm_parses_flagged_ids_from_provider_response():
         ]
     )
     provider = _FakeProvider(findings)
-    verdicts, latencies, cost = eval_jev.evaluate_llm(samples, provider, load_rules())
+    verdicts, latencies, cost, omitted = eval_jev.evaluate_llm(
+        samples, provider, load_rules()
+    )
     assert verdicts == {"s1": True, "s2": False}
     assert len(latencies) == 1 and cost == 0.01
     assert provider.calls  # one batched call was made
+    assert omitted == []
+
+
+def test_evaluate_llm_reports_omitted_blobs_under_tiny_cap():
+    from tmi_tf.script_scan import load_rules
+
+    samples = [
+        {"id": "s1", "text": "echo one"},
+        {"id": "s2", "text": "echo two but this one is a bit longer than the other"},
+    ]
+    provider = _FakeProvider(json.dumps([]))
+    # A cap far smaller than even one wrapped tag forces every blob to be
+    # omitted -- still counted as not flagged, but now reported too.
+    verdicts, _, _, omitted = eval_jev.evaluate_llm(
+        samples, provider, load_rules(), cap=10
+    )
+    assert set(omitted) == {"s1", "s2"}
+    assert verdicts == {"s1": False, "s2": False}
 
 
 class _FakeJevClient:
@@ -252,13 +340,69 @@ class _FakeJevClient:
         ]
 
 
-def test_evaluate_jev_combines_script_and_metadata_verdicts():
+def test_evaluate_jev_returns_separate_latency_and_tokens_per_detector():
     scripts = [{"id": "s1", "text": "curl x | sh"}]
     meta = [{"id": "m1", "text": "hello"}]
     client = _FakeJevClient()
     from tmi_tf.script_scan import load_rules
 
-    out, latencies, tokens = eval_jev.evaluate_jev(scripts, meta, client, load_rules())
+    out, s_lat, m_lat, s_tokens, m_tokens = eval_jev.evaluate_jev(
+        scripts, meta, client, load_rules()
+    )
     assert out == {"s1": (0.9, "download_exec"), "m1": (0.2, "")}
-    assert latencies == [5, 3] and tokens == 14
+    # Separate per detector -- metadata's timing/cost must never be folded
+    # into (or reused as) the scripts row's, and vice versa.
+    assert s_lat == [5] and m_lat == [3]
+    assert s_tokens == 10 and m_tokens == 4
     assert client.script_calls == ["s1"]
+
+
+class _FailingJevClient:
+    """Fails partway through a run, like a real transient Jev/System One error."""
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def judge_script(self, blob, rules):
+        raise eval_jev.JevError("RuntimeError (status=500)")
+
+    def judge_metadata(self, strings):
+        return []
+
+
+def test_main_catches_mid_run_jev_error_and_still_writes_completed_rows(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("JEV_API_KEY", "k")
+    monkeypatch.setattr(eval_jev, "jev_available", lambda: True)
+    monkeypatch.setattr(eval_jev, "JevClient", _FailingJevClient)
+    monkeypatch.setattr(eval_jev, "ROOT", tmp_path)
+
+    eval_jev.main(["--no-llm"])
+
+    out = (
+        tmp_path
+        / "docs"
+        / "reports"
+        / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "Jev failed: RuntimeError (status=500)" in text
+    assert "static rules (scripts)" in text  # completed rows are still reported
+    assert "injection scan (metadata)" in text
+    assert "Jev (scripts, fixed bands) [incomplete: Jev failed]" in text
+    assert "Jev (metadata, fixed bands) [incomplete: Jev failed]" in text
+
+
+def test_main_always_notes_metadata_hijack_column_is_a_miss_rate(tmp_path, monkeypatch):
+    monkeypatch.setattr(eval_jev, "ROOT", tmp_path)
+
+    eval_jev.main(["--no-llm", "--no-jev"])
+
+    out = (
+        tmp_path
+        / "docs"
+        / "reports"
+        / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+    )
+    assert eval_jev._METADATA_HIJACK_NOTE in out.read_text(encoding="utf-8")
