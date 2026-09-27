@@ -294,24 +294,20 @@ class MarkdownGenerator:
 
             rows: list[list[str]] = []
             for comp in group:
-                name = _esc(comp.get("name", "Unknown"))
-                resource_type = comp.get("resource_type", "")
-                rt_str = f"<code>{_esc(resource_type)}</code>" if resource_type else ""
-                purpose = _esc(comp.get("purpose", ""))
-                config = comp.get("configuration", {})
-                config_html = (
-                    _config_nested_table(config)
-                    if isinstance(config, dict) and config
-                    else ""
+                resource_type = comp.get("resource_type") or ""
+                rows.append(
+                    [
+                        _md_cell(comp.get("name") or comp.get("id") or "Unknown"),
+                        f"`{resource_type}`" if resource_type else "—",
+                        _md_cell(comp.get("purpose")),
+                        _config_cell(
+                            comp.get("configuration"),
+                            self._registry.security_attrs(resource_type),
+                        ),
+                    ]
                 )
-                rows.append([name, rt_str, purpose, config_html])
-
             parts.append(
-                _html_table(
-                    ["Name", "Resource Type", "Purpose", "Configuration"],
-                    rows,
-                    col_widths=["20%", "15%", "30%", "35%"],
-                )
+                _md_table(["Name", "Resource Type", "Purpose", "Configuration"], rows)
             )
 
         # Services
@@ -319,26 +315,19 @@ class MarkdownGenerator:
         if services:
             parts.append("#### Services (Logical Groupings)")
 
-            rows = []
-            for svc in services:
-                svc_name = _esc(svc.get("name", "Unknown"))
-                criteria = svc.get("criteria", [])
-                compute_units = svc.get("compute_units", [])
-                associated = svc.get("associated_resources", [])
-                rows.append(
-                    [
-                        svc_name,
-                        _html_list(criteria),
-                        _html_list(compute_units),
-                        _html_list(associated),
-                    ]
-                )
-
+            rows = [
+                [
+                    _md_cell(svc.get("name") or "Unknown"),
+                    _md_cell(svc.get("criteria", [])),
+                    _md_cell(svc.get("compute_units", [])),
+                    _md_cell(svc.get("associated_resources", [])),
+                ]
+                for svc in services
+            ]
             parts.append(
-                _html_table(
+                _md_table(
                     ["Service", "Criteria", "Compute Units", "Associated Resources"],
                     rows,
-                    col_widths=["15%", "30%", "25%", "30%"],
                 )
             )
 

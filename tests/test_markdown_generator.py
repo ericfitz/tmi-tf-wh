@@ -206,12 +206,12 @@ class TestMarkdownGeneratorInventory:
     """Test inventory section generation."""
 
     def test_empty_components(self):
-        gen = MarkdownGenerator()
+        gen = MarkdownGenerator(_fake_registry())
         result = gen._format_inventory_section({"components": []})
         assert "No infrastructure components identified" in result
 
-    def test_components_table(self):
-        gen = MarkdownGenerator()
+    def test_components_table_filters_configuration(self):
+        gen = MarkdownGenerator(_fake_registry())
         inventory = {
             "components": [
                 {
@@ -224,16 +224,53 @@ class TestMarkdownGeneratorInventory:
             ]
         }
         result = gen._format_inventory_section(inventory)
-        assert "<table" in result
-        assert "Web Server" in result
-        assert "aws_instance" in result
-        assert "Serves web traffic" in result
-        # Configuration should be a nested table
-        assert "instance_type" in result
-        assert "t3.micro" in result
+        assert "#### Compute" in result
+        assert "| Name | Resource Type | Purpose | Configuration |" in result
+        assert "|---|---|---|---|" in result
+        assert (
+            "| Web Server | `aws_instance` | Serves web traffic | `ami = ami-123` |"
+            in result
+        )
+        assert "t3.micro" not in result
+        assert "<table" not in result
+
+    def test_unknown_resource_type_config_is_dash(self):
+        gen = MarkdownGenerator(_fake_registry())
+        inventory = {
+            "components": [
+                {
+                    "type": "other",
+                    "name": "thing",
+                    "resource_type": "vendor_widget",
+                    "purpose": "p",
+                    "configuration": {"secret": "x"},
+                }
+            ]
+        }
+        result = gen._format_inventory_section(inventory)
+        assert "| thing | `vendor_widget` | p | — |" in result
+        assert "secret" not in result
+
+    def test_name_falls_back_to_id(self):
+        gen = MarkdownGenerator(_fake_registry())
+        inventory = {
+            "components": [
+                {
+                    "id": "aws_instance.web",
+                    "name": None,
+                    "type": "compute",
+                    "resource_type": "aws_instance",
+                    "purpose": None,
+                    "configuration": {},
+                }
+            ]
+        }
+        result = gen._format_inventory_section(inventory)
+        assert "| aws_instance.web | `aws_instance` | — | — |" in result
+        assert "None" not in result
 
     def test_services_table(self):
-        gen = MarkdownGenerator()
+        gen = MarkdownGenerator(_fake_registry())
         inventory = {
             "components": [
                 {
@@ -253,12 +290,12 @@ class TestMarkdownGeneratorInventory:
             ],
         }
         result = gen._format_inventory_section(inventory)
-        assert "web-frontend" in result
-        # Criteria should be a list, not comma-separated
-        assert "<ul>" in result
-        assert "<li>shared VPC</li>" in result
-        assert "<li>naming pattern</li>" in result
-        assert "<li>web-1</li>" in result
+        assert "#### Services (Logical Groupings)" in result
+        assert (
+            "| web-frontend | shared VPC<br>naming pattern | web-1<br>web-2 | alb-1 |"
+            in result
+        )
+        assert "<ul>" not in result
 
 
 class TestMarkdownGeneratorDataFlows:
