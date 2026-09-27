@@ -18,6 +18,7 @@ import yaml  # pyright: ignore[reportMissingModuleSource]
 from tmi_tf.tf_parser import (
     BLOCK_MARKER,
     StaticInventory,
+    clean_value,
     find_references,
     unquote_literal,
 )
@@ -50,6 +51,9 @@ class Registry:
     providers: dict[str, dict[str, str]]
     resources: dict[str, dict[str, Any]]
     hash_only_attrs: frozenset[str]
+    # Script-carrying names too generic to hash outside `data` blocks (e.g.
+    # local_file.content); union with hash_only_attrs there.
+    data_hash_only_attrs: frozenset[str]
     unknown_category: str = "other"
 
     def category(self, resource_type: str) -> str:
@@ -83,6 +87,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> Registry:
         providers=raw["providers"],
         resources=raw["resources"],
         hash_only_attrs=frozenset(defaults.get("hash_only_attrs", [])),
+        data_hash_only_attrs=frozenset(defaults.get("data_hash_only_attrs", [])),
         unknown_category=defaults.get("unknown_category", "other"),
     )
 
@@ -192,6 +197,18 @@ def _render_resource(
     return text, omitted
 
 
+def _render_variable(name_q: str, body: dict[str, Any]) -> tuple[str, int]:
+    """Variable blocks pass through except `validation` (config detail with no
+    security value); comment style matches _render_resource."""
+    if "validation" not in body:
+        return hcl2.dumps({"variable": [{name_q: body}]}).rstrip(), 0
+    kept = {k: v for k, v in body.items() if k != "validation"}
+    text = hcl2.dumps({"variable": [{name_q: kept}]}).rstrip()
+    if text.endswith("}"):
+        text = f"{text[:-1].rstrip()}\n  # 1 non-security attributes omitted\n}}"
+    return text, 1
+
+
 _TOP_LEVEL_BLOCK_TYPES = frozenset(
     {
         "resource",
@@ -240,6 +257,23 @@ def _render_file(parsed: dict[str, Any], registry: Registry) -> tuple[str, int]:
                     for label, body in item.items()
                 }
                 chunks.append(hcl2.dumps({block_type: [item]}).rstrip())
+            elif block_type == "data":
+                # Not registry-filtered (no security_attrs list per data
+                # source), but script-carrying attributes still must not leak;
+                # template/content are hashed here only -- too generic to hash
+                # on every resource (e.g. local_file.content).
+                names = registry.hash_only_attrs | registry.data_hash_only_attrs
+                for dtype_q, by_name in item.items():
+                    for name_q, body in by_name.items():
+                        hashed = _hash_scripts(body, names, quoted=True)
+                        chunks.append(
+                            hcl2.dumps({"data": [{dtype_q: {name_q: hashed}}]}).rstrip()
+                        )
+            elif block_type == "variable":
+                for name_q, body in item.items():
+                    text, omitted = _render_variable(name_q, body)
+                    chunks.append(text)
+                    omitted_total += omitted
             else:
                 chunks.append(hcl2.dumps({block_type: [item]}).rstrip())
     text = ("\n\n".join(chunks) + "\n") if chunks else ""
@@ -282,10 +316,16 @@ def _normalize_whitespace(text: str) -> str:
 
 
 def _configuration(
-    attributes: dict[str, Any], resource_type: str, registry: Registry
+    raw_attributes: dict[str, Any], resource_type: str, registry: Registry
 ) -> dict[str, Any]:
+    """Select on the raw (pre-clean_value) body -- _select's find_references
+    check only matches "${...}" expressions, so a cleaned body would wrongly
+    drop reference-bearing attributes not in the registry's security_attrs."""
     attrs = registry.security_attrs(resource_type)
-    cfg = attributes if attrs is None else _select(attributes, _attr_tree(attrs))
+    selected = (
+        raw_attributes if attrs is None else _select(raw_attributes, _attr_tree(attrs))
+    )
+    cfg = clean_value(selected)
     cfg = {k: v for k, v in cfg.items() if k not in _CONFIG_EXCLUDED}
     return _hash_scripts(cfg, registry.hash_only_attrs, quoted=False)
 
@@ -324,7 +364,7 @@ def _prebuilt_inventory(
                 registry.category(r.resource_type),
                 registry.provider_name(r.resource_type),
                 r.file,
-                _configuration(r.attributes, r.resource_type, registry),
+                _configuration(r.raw_attributes, r.resource_type, registry),
                 r.references,
             )
         )
@@ -336,7 +376,11 @@ def _prebuilt_inventory(
                 registry.category(d.data_type),
                 registry.provider_name(d.data_type),
                 d.file,
-                _hash_scripts(d.attributes, registry.hash_only_attrs, quoted=False),
+                _hash_scripts(
+                    d.attributes,
+                    registry.hash_only_attrs | registry.data_hash_only_attrs,
+                    quoted=False,
+                ),
                 d.references,
             )
         )
@@ -354,25 +398,11 @@ def _prebuilt_inventory(
                 references,
             )
         )
-    variables = []
-    for v in inventory.variables:
-        entry: dict[str, Any] = {"name": v.name, "type": v.type_expr}
-        if not v.sensitive:
-            entry["default"] = v.default
-        entry["description"] = v.description
-        variables.append(entry)
+    # variables/outputs are dropped here (Task 4): nothing downstream
+    # (prompt_inventory, merge_phase1) consumes them -- they're already in the
+    # filtered HCL.
     return {
         "components": components,
-        "variables": variables,
-        "outputs": [
-            {
-                "name": o.name,
-                "description": o.description,
-                "sensitive": o.sensitive,
-                "value": o.value_expr,
-            }
-            for o in inventory.outputs
-        ],
         "modules": [
             {"id": f"module.{m.name}", "source": m.source, "file": m.file}
             for m in inventory.modules
@@ -399,7 +429,14 @@ def filter_terraform(
     result = FilterResult(prebuilt_inventory=_prebuilt_inventory(inventory, registry))
     for path in sorted(tf_contents):
         if path in inventory.parsed_files:
-            text, omitted = _render_file(inventory.parsed_files[path], registry)
+            try:
+                text, omitted = _render_file(inventory.parsed_files[path], registry)
+            except Exception as e:
+                # One file's render bug must not abandon the static path for
+                # every other file -- fall back to its raw content instead.
+                logger.warning("Static HCL render failed for %s: %s", path, e)
+                result.filtered_files[path] = tf_contents[path]
+                continue
             result.filtered_files[path] = text
             result.omitted_attributes += omitted
         else:

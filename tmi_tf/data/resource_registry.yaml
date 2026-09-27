@@ -1584,3 +1584,8 @@ defaults:
     - startup_script
     - cloud_init
     - cloud-init
+  # Too generic to hash everywhere (e.g. local_file.content), so these apply
+  # only to `data` blocks, unioned with hash_only_attrs above.
+  data_hash_only_attrs:
+    - template
+    - content

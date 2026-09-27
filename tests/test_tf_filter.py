@@ -267,6 +267,108 @@ class TestFilteredHcl:
         ingress = cfg["dynamic"][0]['"ingress"']
         assert ingress["content"][0]["user_data"].startswith("[script omitted: sha256:")
 
+    def test_variable_validation_block_is_dropped_with_comment(self, registry):
+        contents = {
+            "m.tf": (
+                'variable "x" {\n'
+                "  type        = string\n"
+                '  default     = "d"\n'
+                '  description = "desc"\n'
+                "  sensitive   = false\n"
+                "  nullable    = true\n"
+                "  validation {\n"
+                "    condition     = length(var.x) > 0\n"
+                '    error_message = "must not be empty"\n'
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert 'variable "x"' in hcl
+        assert "type" in hcl
+        assert 'default     = "d"' in hcl or "default = " in hcl
+        assert "description" in hcl
+        assert "sensitive" in hcl
+        assert "nullable" in hcl
+        assert "validation" not in hcl
+        assert "error_message" not in hcl
+        assert "# 1 non-security attributes omitted" in hcl
+        assert res.omitted_attributes == 1
+
+    def test_variable_without_validation_is_untouched(self, registry):
+        contents = {"m.tf": 'variable "x" {\n  type = string\n}\n'}
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "omitted" not in hcl
+        assert res.omitted_attributes == 0
+
+    def test_output_blocks_are_never_touched_by_validation_stripping(self, registry):
+        hcl = _run(registry, "aws.tf").filtered_files["aws.tf"]
+        assert 'output "instance_ip"' in hcl
+        block = hcl[hcl.index('output "instance_ip"') :]
+        block = block[: block.index("\n}") + 2]
+        assert "omitted" not in block
+
+    def test_data_block_scripts_are_hashed(self, registry):
+        contents = {
+            "m.tf": (
+                'data "template_file" "x" {\n'
+                '  template = "#!/bin/bash\\necho DATASECRET"\n'
+                "}\n"
+                'data "cloudinit_config" "y" {\n'
+                "  part {\n"
+                '    content = "echo PARTSECRET"\n'
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "DATASECRET" not in hcl
+        assert "PARTSECRET" not in hcl
+        assert "[script omitted: sha256:" in hcl
+        dumped = json.dumps(res.prebuilt_inventory)
+        assert "DATASECRET" not in dumped and "PARTSECRET" not in dumped
+
+    def test_content_attr_not_hashed_outside_data_blocks(self, registry):
+        # "content"/"template" are too generic to hash everywhere (e.g.
+        # local_file.content); only data blocks get the extra names.
+        contents = {
+            "m.tf": 'resource "mycorp_widget" "w" {\n  content = "echo SHOULDSTAY"\n}\n'
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "echo SHOULDSTAY" in hcl
+        assert "[script omitted" not in hcl
+        cfg = _component(res, "mycorp_widget.w")["configuration"]
+        assert cfg["content"] == "echo SHOULDSTAY"
+
+    def test_render_file_error_falls_back_to_raw_for_that_file_only(
+        self, registry, monkeypatch, caplog
+    ):
+        import tmi_tf.tf_filter as tf_filter_mod
+
+        contents = {
+            "good.tf": 'resource "aws_kms_alias" "a" {\n  name = "x"\n}\n',
+            "bad.tf": 'resource "aws_kms_alias" "b" {\n  name = "y"\n}\n',
+        }
+        inventory = parse_terraform(contents)
+        original_dumps = tf_filter_mod.hcl2.dumps
+
+        def flaky_dumps(data, *args, **kwargs):
+            for item in data.get("resource", []):
+                if '"b"' in item.get('"aws_kms_alias"', {}):
+                    raise RuntimeError("boom")
+            return original_dumps(data, *args, **kwargs)
+
+        monkeypatch.setattr(tf_filter_mod.hcl2, "dumps", flaky_dumps)
+        with caplog.at_level("WARNING"):
+            res = filter_terraform(inventory, contents, registry)
+        assert res.filtered_files["bad.tf"] == contents["bad.tf"]
+        assert 'resource "aws_kms_alias" "a"' in res.filtered_files["good.tf"]
+        assert any("bad.tf" in r.message for r in caplog.records)
+
     def test_module_input_scripts_are_hashed_everywhere(self, registry):
         contents = {
             "m.tf": (
@@ -338,22 +440,35 @@ class TestPrebuiltInventory:
         assert mod["configuration"]["inputs"]["vpc_id"] == "aws_vpc.main.id"
         assert mod["references"] == ["aws_vpc.main"]
 
-    def test_variables_outputs_modules(self, registry):
+    def test_modules(self, registry):
+        # variables/outputs are dead weight nothing consumes (Task 4) -- only
+        # modules and unparsed_files are kept alongside components.
         inv = _run(registry, "aws.tf").prebuilt_inventory
-        var = {v["name"]: v for v in inv["variables"]}
-        assert var["region"] == {
-            "name": "region",
-            "type": "string",
-            "default": "us-east-1",
-            "description": "AWS region",
-        }
-        assert "default" not in var["db_password"]  # sensitive
-        out = {o["name"]: o for o in inv["outputs"]}
-        assert out["instance_ip"]["value"] == "aws_instance.web.private_ip"
-        assert out["db_password"]["sensitive"] is True
         assert inv["modules"] == [
             {"id": "module.dns", "source": "../../modules/dns/aws", "file": "aws.tf"}
         ]
+        assert "variables" not in inv
+        assert "outputs" not in inv
+
+    def test_configuration_keeps_reference_not_in_registry_security_attrs(
+        self, registry
+    ):
+        # kms_key_id isn't in aws_kms_alias's security_attrs ([name,
+        # target_key_id]), but it's a reference and must survive _configuration.
+        # Bug: _configuration used to receive already-cleaned attributes, where
+        # find_references (which only matches "${...}") can never match.
+        contents = {
+            "m.tf": (
+                'resource "aws_kms_alias" "a" {\n'
+                '  name       = "alias/x"\n'
+                "  kms_key_id = aws_kms_key.main.arn\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        cfg = _component(res, "aws_kms_alias.a")["configuration"]
+        assert cfg["kms_key_id"] == "aws_kms_key.main.arn"
+        assert cfg["name"] == "alias/x"
 
     def test_prebuilt_inventory_is_json_serializable(self, registry):
         res = _run(registry, "aws.tf", "azure.tf", "gcp.tf", "oci.tf", "broken.tf")
@@ -425,8 +540,6 @@ def _prebuilt() -> dict:
                 "purpose": None,
             },
         ],
-        "variables": [],
-        "outputs": [],
         "modules": [],
         "unparsed_files": [],
     }
@@ -619,8 +732,6 @@ class TestMergePhase1:
                     "purpose": None,
                 },
             ],
-            "variables": [],
-            "outputs": [],
             "modules": [],
             "unparsed_files": [],
         }
@@ -663,8 +774,6 @@ class TestPromptInventory:
                     "purpose": None,
                 }
             ],
-            "variables": [{"name": "region"}],
-            "outputs": [{"name": "instance_ip"}],
             "modules": [{"id": "module.dns", "source": "x", "file": "main.tf"}],
             "unparsed_files": ["broken.tf"],
         }

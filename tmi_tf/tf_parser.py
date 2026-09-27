@@ -34,6 +34,9 @@ class ParsedResource:
     address: str
     file: str
     attributes: dict[str, Any]
+    # Raw hcl2 body (pre-clean_value): tf_filter._configuration needs this so
+    # find_references (which only matches "${...}") still sees expressions.
+    raw_attributes: dict[str, Any]
     references: list[str]
 
 
@@ -168,6 +171,7 @@ def _collect(inv: StaticInventory, path: str, parsed: dict[str, Any]) -> None:
                         address=address,
                         file=path,
                         attributes=clean_value(body),
+                        raw_attributes=body,
                         references=find_references(body, exclude=address),
                     )
                 )
