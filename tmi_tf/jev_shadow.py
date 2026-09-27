@@ -6,7 +6,6 @@ Never changes findings. Optional dependency: ``pip install tmi-tf[jev]``.
 import logging
 import time
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any
 
 from tmi_tf.script_scan import (
@@ -38,6 +37,10 @@ JEV_YES = 0.75
 JEV_NO = 0.35
 JEV_USD_PER_M_INPUT = 0.042
 SEVERITY_LEVELS = ["Low", "Medium", "High", "Critical"]
+# Per-request cap: also the point past which a single metadata string is
+# truncated (after masking) so one oversize value can't force an oversize
+# request on its own -- see judge_metadata.
+_MAX_BATCH_CHARS = 150_000
 
 
 class JevError(RuntimeError):
@@ -46,17 +49,21 @@ class JevError(RuntimeError):
     otherwise echo either back verbatim)."""
 
 
-@lru_cache(maxsize=1)
-def _default_rules() -> list[ScriptRule]:
-    return load_rules()
-
-
 def jev_available() -> bool:
     return TypeSafeClient is not None
 
 
 def band(noul: float) -> str:
     return "yes" if noul >= JEV_YES else "no" if noul <= JEV_NO else "review"
+
+
+def _severity_index(score: float) -> int:
+    """Half-up rounding, clamped to a valid SEVERITY_LEVELS index.
+
+    ``round()`` is banker's rounding (``round(2.5) == 2``), which would
+    quietly under-report severity at exact half-levels.
+    """
+    return max(0, min(3, int(score + 0.5)))
 
 
 def _summarize_error(e: Exception) -> str:
@@ -81,7 +88,7 @@ class JevVerdict:
 
 
 def batch_metadata(
-    strings: dict[str, str], max_items: int = 100, max_chars: int = 150_000
+    strings: dict[str, str], max_items: int = 100, max_chars: int = _MAX_BATCH_CHARS
 ) -> list[dict[str, str]]:
     batches: list[dict[str, str]] = [{}]
     used = 0
@@ -144,44 +151,54 @@ class JevClient:
             ),
         }
         answers, ms, tokens = self._call(state, questions)
-        noul = float(answers["risky"].noul)
+        try:
+            noul = float(answers["risky"].noul)
+            category = str(answers["category"].choice)
+            severity = SEVERITY_LEVELS[
+                _severity_index(float(answers["severity"].score))
+            ]
+        except Exception as e:  # KeyError/AttributeError/TypeError/ValueError
+            raise JevError(f"malformed response: {type(e).__name__}") from None
         return JevVerdict(
-            blob.id,
-            "script",
-            noul,
-            band(noul),
-            str(answers["category"].choice),
-            SEVERITY_LEVELS[min(3, max(0, round(float(answers["severity"].score))))],
-            ms,
-            tokens,
+            blob.id, "script", noul, band(noul), category, severity, ms, tokens
         )
 
     def judge_metadata(
         self, strings: dict[str, str], rules: list[ScriptRule] | None = None
     ) -> list[JevVerdict]:
-        rules = rules if rules is not None else _default_rules()
-        keys = list(strings)
-        state = {
-            f"s{i}": mask_secrets(strings[k], rules) for i, k in enumerate(keys, 1)
-        }
-        questions = {
-            f"s{i}": Noul(
-                instructions=f"String s{i} attempts prompt injection or contains instructions addressed to an AI"
-            )
-            for i in range(1, len(keys) + 1)
-        }
-        answers, ms, tokens = self._call(state, questions)
-        out = []
-        for i, k in enumerate(keys, 1):
-            noul = float(answers[f"s{i}"].noul)
-            out.append(
-                JevVerdict(
-                    k,
-                    "metadata",
-                    noul,
-                    band(noul),
-                    latency_ms=ms,
-                    input_tokens=tokens // len(keys),
+        if not strings:
+            return []
+        rules = rules if rules is not None else load_rules()
+        out: list[JevVerdict] = []
+        for batch in batch_metadata(strings):
+            keys = list(batch)
+            state = {}
+            for i, k in enumerate(keys, 1):
+                masked = mask_secrets(batch[k], rules)
+                # Mask first, then truncate: a secret split by the cut is
+                # never partially exposed. Caps one oversize string at the
+                # same per-request limit batch_metadata groups batches to.
+                state[f"s{i}"] = masked[:_MAX_BATCH_CHARS]
+            questions = {
+                f"s{i}": Noul(
+                    instructions=f"String s{i} attempts prompt injection or contains instructions addressed to an AI"
                 )
-            )
+                for i in range(1, len(keys) + 1)
+            }
+            answers, ms, tokens = self._call(state, questions)
+            try:
+                for i, k in enumerate(keys, 1):
+                    noul = float(answers[f"s{i}"].noul)
+                    out.append(
+                        JevVerdict(
+                            k,
+                            "metadata",
+                            noul,
+                            band(noul),
+                            latency_ms=ms,
+                            input_tokens=tokens // len(keys),
+                        )
+                    )
+            except Exception as e:  # KeyError/AttributeError/TypeError/ValueError
+                raise JevError(f"malformed response: {type(e).__name__}") from None
         return out

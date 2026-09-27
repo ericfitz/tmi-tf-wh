@@ -198,6 +198,102 @@ def test_api_key_never_leaks_in_error_or_repr(monkeypatch):
     assert "ValueError" in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    "answers",
+    [
+        {  # missing "risky" entirely
+            "category": {"choice": "benign", "probabilities": None, "confidence": 0.5},
+            "severity": {"score": 1.0, "probabilities": None, "confidence": 0.5},
+        },
+        {  # noul present but None
+            "risky": {"noul": None, "probabilities": None, "confidence": 0.5},
+            "category": {"choice": "benign", "probabilities": None, "confidence": 0.5},
+            "severity": {"score": 1.0, "probabilities": None, "confidence": 0.5},
+        },
+        {  # severity.score is not numeric
+            "risky": {"noul": 0.5, "probabilities": None, "confidence": 0.5},
+            "category": {"choice": "benign", "probabilities": None, "confidence": 0.5},
+            "severity": {"score": "bad", "probabilities": None, "confidence": 0.5},
+        },
+        {  # category answer has no .choice attribute
+            "risky": {"noul": 0.5, "probabilities": None, "confidence": 0.5},
+            "category": {"probabilities": None, "confidence": 0.5},
+            "severity": {"score": 1.0, "probabilities": None, "confidence": 0.5},
+        },
+    ],
+    ids=[
+        "missing_risky",
+        "noul_none",
+        "severity_non_numeric",
+        "category_missing_choice",
+    ],
+)
+def test_judge_script_malformed_response_raises_jev_error(client, answers):
+    client["answers"] = [answers]
+    blob = ScriptBlob(
+        "r.a:user_data", "r.a", "user_data", "m.tf", "digest", "echo hi", None
+    )
+    with pytest.raises(jev_shadow.JevError, match="malformed response:"):
+        JevClient(api_key="k").judge_script(blob, RULES)
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        {},  # missing "s1" entirely
+        {"s1": {"noul": None, "probabilities": None, "confidence": 0.5}},
+    ],
+    ids=["missing_key", "noul_none"],
+)
+def test_judge_metadata_malformed_response_raises_jev_error(client, answers):
+    client["answers"] = [answers]
+    with pytest.raises(jev_shadow.JevError, match="malformed response:"):
+        JevClient(api_key="k").judge_metadata({"x": "hello"})
+
+
+def test_judge_metadata_batches_over_100_items(client):
+    strings = {f"k{i}": f"v{i}" for i in range(150)}
+    client["answers"] = [
+        {
+            f"s{i}": {"noul": 0.1, "probabilities": None, "confidence": 0.9}
+            for i in range(1, 101)
+        },
+        {
+            f"s{i}": {"noul": 0.9, "probabilities": None, "confidence": 0.9}
+            for i in range(1, 51)
+        },
+    ]
+    vs = JevClient(api_key="k").judge_metadata(strings)
+    assert len(client["sdk"].calls) == 2
+    assert [v.item_id for v in vs] == list(strings)
+    assert all(v.band == "no" for v in vs[:100])
+    assert all(v.band == "yes" for v in vs[100:])
+
+
+def test_judge_metadata_empty_returns_without_sdk_call(client):
+    c = JevClient(api_key="k")
+    assert c.judge_metadata({}) == []
+    assert client["sdk"].calls == []
+
+
+@pytest.mark.parametrize(
+    "score,expected", [(0.5, "Medium"), (1.5, "High"), (2.5, "Critical")]
+)
+def test_judge_script_severity_rounds_half_up(client, score, expected):
+    client["answers"] = [
+        {
+            "risky": {"noul": 0.5, "probabilities": None, "confidence": 0.5},
+            "category": {"choice": "benign", "probabilities": None, "confidence": 0.5},
+            "severity": {"score": score, "probabilities": None, "confidence": 0.5},
+        }
+    ]
+    blob = ScriptBlob(
+        "r.a:user_data", "r.a", "user_data", "m.tf", "digest", "echo hi", None
+    )
+    v = JevClient(api_key="k").judge_script(blob, RULES)
+    assert v.severity == expected
+
+
 def test_live_smoke():
     if not os.environ.get("JEV_API_KEY") or not jev_shadow.jev_available():
         pytest.skip("JEV_API_KEY not set or typesafe-sdk not installed")
