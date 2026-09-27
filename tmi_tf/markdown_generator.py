@@ -288,6 +288,38 @@ class MarkdownGenerator:
             rows,
         )
 
+    def _format_scripts_section(self, analysis: TerraformAnalysis) -> str:
+        """Hits only (source, rule, component, file, digest, severity): never script text."""
+        parts = ["### Scripts and Metadata"]
+        if analysis.script_review_error:
+            parts.append(
+                f"*LLM script review unavailable: {_md_cell(analysis.script_review_error)}*"
+            )
+        if not analysis.script_findings:
+            parts.append("No script or metadata findings.")
+            return "\n\n".join(parts)
+        rows = [
+            [
+                _md_cell(r.get(k, ""))
+                for k in ("source", "rule", "component", "file", "digest", "severity")
+            ]
+            for r in analysis.script_findings
+        ]
+        parts.append(
+            _md_table(
+                [
+                    "Source",
+                    "Rule / Category",
+                    "Component",
+                    "File",
+                    "Digest",
+                    "Severity",
+                ],
+                rows,
+            )
+        )
+        return "\n\n".join(parts)
+
     def _generate_consolidated_findings(self, analyses: list[TerraformAnalysis]) -> str:
         """Generate consolidated findings section."""
         successful = [a for a in analyses if a.success]
@@ -365,6 +397,10 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
                 if model:
                     model_info.append(f"**LLM Model**: {model}")
                 parts.append("\n".join(model_info))
+
+        jev = next((a.jev_summary for a in successful if a.jev_summary), "")
+        if jev:
+            parts.append(f"**Jev shadow**: {jev}")
 
         # Per-repository metrics table
         if successful:
@@ -488,6 +524,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
                     f"dependencies: see note *{inventory_note_name}*."
                 )
             parts.append(self._format_security_section(analysis.security_findings))
+            parts.append(self._format_scripts_section(analysis))
             sections.append("\n\n".join(part for part in parts if part))
 
         sections.append(self._generate_consolidated_findings(analyses))
