@@ -18,12 +18,14 @@ from tmi_tf.config import Config
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
+from tmi_tf.jev_shadow import jev_shadow_from_env
 from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
 from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.providers import get_llm_provider
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
 from tmi_tf.scope import LATEST, match_environments, normalize_scope
+from tmi_tf.script_scan import load_rules
 from tmi_tf.tf_validator import validate_and_sanitize
 from tmi_tf.threat_processor import ThreatProcessor
 from tmi_tf.tmi_client_wrapper import TMIClient
@@ -257,7 +259,9 @@ def run_analysis(
         logger.info("\n[1/7] Initializing clients...")
         repo_analyzer = RepositoryAnalyzer(config)
         llm_provider = get_llm_provider(profile)
-        llm_analyzer = LLMAnalyzer(llm_provider)
+        llm_analyzer = LLMAnalyzer(
+            llm_provider, jev_shadow=jev_shadow_from_env(load_rules())
+        )
         markdown_gen = MarkdownGenerator()
 
         tmi_client.update_status_note(

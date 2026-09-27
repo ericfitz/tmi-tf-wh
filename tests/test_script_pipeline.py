@@ -26,7 +26,7 @@ def _resp(obj):
     )
 
 
-def _analyzer_and_prompts(review_text):
+def _analyzer_and_prompts(review_text, jev_shadow=None):
     provider = MagicMock()
     provider.model, provider.provider = "anthropic/m", "anthropic"
     threat_analysis = {
@@ -75,7 +75,7 @@ def _analyzer_and_prompts(review_text):
     repo.name, repo.url = "r", "u"
     repo.get_terraform_content.return_value = {"main.tf": TF}
     repo.clone_path = None
-    analyzer = LLMAnalyzer(provider)
+    analyzer = LLMAnalyzer(provider, jev_shadow=jev_shadow)
     result = analyzer.analyze_repository(repo)
     prompts = [c.args[0] + c.args[1] for c in provider.complete.call_args_list]
     return result, prompts
@@ -284,3 +284,30 @@ def test_review_hard_failure_keeps_static_findings_reaching_3b():
     assert "secret leak" not in result.script_review_error
     sources = {f.get("finding_source") for f in result.security_findings}
     assert {"static-rule", "injection-scan"} <= sources
+
+
+def test_shadow_cannot_change_findings():
+    review = json.dumps([])
+    baseline, _ = _analyzer_and_prompts(review)
+    shadow = MagicMock()
+    shadow.finish.return_value = "agree=1 disagree=0 review=0 p50=5ms"
+    with_shadow, _ = _analyzer_and_prompts(review, jev_shadow=shadow)
+    assert (
+        with_shadow.security_findings == baseline.security_findings
+        and with_shadow.script_findings == baseline.script_findings
+    )
+    assert with_shadow.jev_summary == "agree=1 disagree=0 review=0 p50=5ms"
+    shadow.start.assert_called_once()
+    ours = shadow.finish.call_args.args[0]
+    assert (
+        ours["aws_instance.web:user_data"] is True
+        and ours["variable.x.description"] is True
+    )
+
+
+def test_shadow_exception_is_swallowed():
+    shadow = MagicMock()
+    shadow.start.side_effect = RuntimeError("boom")
+    shadow.finish.side_effect = RuntimeError("boom")
+    result, _ = _analyzer_and_prompts(json.dumps([]), jev_shadow=shadow)
+    assert result.success and result.jev_summary == ""

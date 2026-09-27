@@ -20,7 +20,12 @@ from typing import Any
 from tmi_tf.config import prompts_dir
 from tmi_tf.cvss_scorer import score_cvss4_vector
 from tmi_tf.json_extract import extract_json_array, extract_json_object
-from tmi_tf.metadata_scan import InjectionHit, redact_contents, scan_metadata
+from tmi_tf.metadata_scan import (
+    InjectionHit,
+    collect_metadata_strings,
+    redact_contents,
+    scan_metadata,
+)
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
@@ -103,7 +108,9 @@ class TerraformAnalysis:
             security_cost: Phase 3 cost in USD (for threat metadata)
             script_findings: Script/metadata risk note rows (#14)
             script_review_error: Set when the isolated script-review LLM call failed
-            jev_summary: Reserved for Task 10 (jev shadow evaluation summary)
+            jev_summary: Jev shadow comparison summary line (#14 Task 10),
+                e.g. "agree=5 disagree=1 review=0 p50=120ms"; "" when the
+                shadow is disabled/absent or errored during this run
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
@@ -160,8 +167,9 @@ class LLMAnalyzer:
 
         Args:
             llm_provider: LLM provider instance to use for completion calls
-            jev_shadow: Reserved for Task 10 (jev shadow evaluation); accepted
-                and stored only, not yet used.
+            jev_shadow: Optional JevShadow instance (#14 Task 10); runs a
+                background comparison against Jev/System One and never
+                affects findings, redactions, prompts, or run success.
         """
         self.llm_provider = llm_provider
         self.model = llm_provider.model
@@ -356,6 +364,25 @@ class LLMAnalyzer:
             ) = self._prescan(
                 tf_contents, repo_root if isinstance(repo_root, Path) else None
             )
+            # Jev shadow (#14 Task 10): fire-and-forget background comparison.
+            # Never allowed to change findings/success -- any failure here is
+            # caught and logged, and just leaves jev_summary == "".
+            meta: dict[str, str] = {}
+            if self.jev_shadow is not None:
+                try:
+                    meta = (
+                        {
+                            m.location: m.text
+                            for m in collect_metadata_strings(static, tf_contents)
+                        }
+                        if static
+                        else {}
+                    )
+                    self.jev_shadow.start(blobs, meta)
+                except Exception as e:
+                    # Never log str(e): see _prescan.
+                    logger.warning("jev_shadow: start failed: %s", type(e).__name__)
+            meta_locations = set(meta)
             # Script-omit tf_contents itself (not just terraform_text): tf_filter
             # sends unparsed files' raw text as-is, so it must already be safe.
             # warn=False: _prescan already logged one summary warning for any
@@ -478,6 +505,22 @@ class LLMAnalyzer:
             logger.info(
                 "Script/metadata findings: %d added to phase 3b", len(extra_threats)
             )
+
+            jev_summary = ""
+            if self.jev_shadow is not None:
+                try:
+                    ours = {
+                        b.id: bool(static_hits.get(b.id))
+                        or any(f["script_id"] == b.id for f in llm_findings)
+                        for b in blobs
+                    }
+                    ours.update({h.location: True for h in injection_hits})
+                    for loc in meta_locations - set(ours):
+                        ours[loc] = False
+                    jev_summary = self.jev_shadow.finish(ours)
+                except Exception as e:
+                    # Never log str(e): see _prescan.
+                    logger.warning("jev_shadow: finish failed: %s", type(e).__name__)
 
             # Phase 3b: Per-Threat Analysis (sequential, one LLM call per threat)
             if status_callback:
@@ -666,6 +709,7 @@ class LLMAnalyzer:
                 security_cost=sec_cost,
                 script_findings=script_findings,
                 script_review_error=script_review_error,
+                jev_summary=jev_summary,
             )
 
         except Exception as e:

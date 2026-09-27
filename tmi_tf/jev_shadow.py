@@ -3,11 +3,16 @@
 Never changes findings. Optional dependency: ``pip install tmi-tf[jev]``.
 """
 
+import json
 import logging
+import os
+import statistics
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any
 
+from tmi_tf.config import save_llm_response
 from tmi_tf.script_scan import (
     CATEGORIES,
     ScriptBlob,
@@ -202,3 +207,116 @@ class JevClient:
             except Exception as e:  # KeyError/AttributeError/TypeError/ValueError
                 raise JevError(f"malformed response: {type(e).__name__}") from None
         return out
+
+
+class JevShadow:
+    """Runs Jev detectors in the background; output is a comparison file + one log line."""
+
+    def __init__(
+        self,
+        client: Any,
+        rules: list[ScriptRule],
+        timeout: float = 30.0,
+        max_workers: int = 4,
+    ):
+        self.client, self.rules, self.timeout = client, rules, timeout
+        self._pool = ThreadPoolExecutor(
+            max_workers=max_workers, thread_name_prefix="jev"
+        )
+        self._futures: list[Future[Any]] = []
+        self.disabled = False
+
+    def start(self, blobs: list[ScriptBlob], metadata_strings: dict[str, str]) -> None:
+        self._futures = [
+            self._pool.submit(self.client.judge_script, b, self.rules) for b in blobs
+        ]
+        self._futures += [
+            self._pool.submit(self.client.judge_metadata, batch)
+            for batch in batch_metadata(metadata_strings)
+        ]
+
+    def finish(self, ours: dict[str, bool]) -> str:
+        done, not_done = wait(self._futures, timeout=self.timeout)
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        verdicts: list[JevVerdict] = []
+        for f in done:
+            try:
+                r = f.result()
+                verdicts += r if isinstance(r, list) else [r]
+            except Exception as e:
+                # Never log str(e): a bug in a judge_* implementation could
+                # echo back script/metadata text in its exception message.
+                logger.warning(
+                    "jev_shadow: disabled for this run after error: %s",
+                    type(e).__name__,
+                )
+                self.disabled = True
+                return ""
+        if not_done:
+            logger.warning(
+                "jev_shadow: %d call(s) exceeded %.0fs; disabled for this run",
+                len(not_done),
+                self.timeout,
+            )
+            self.disabled = True
+            return ""
+        counts = {"agree": 0, "disagree": 0, "review": 0}
+        rows = []
+        for v in verdicts:
+            mine = ours.get(v.item_id)
+            verdict = (
+                "review"
+                if v.band == "review"
+                else "agree"
+                if (v.band == "yes") == bool(mine)
+                else "disagree"
+            )
+            counts[verdict] += 1
+            rows.append(
+                {
+                    "item_id": v.item_id,
+                    "kind": v.kind,
+                    "ours": mine,
+                    "jev_noul": v.noul,
+                    "jev_band": v.band,
+                    "jev_category": v.category,
+                    "jev_severity": v.severity,
+                    "jev_latency_ms": v.latency_ms,
+                    "verdict": verdict,
+                }
+            )
+        tokens = sum(v.input_tokens for v in verdicts)
+        p50 = (
+            int(statistics.median([v.latency_ms for v in verdicts])) if verdicts else 0
+        )
+        summary = (
+            f"agree={counts['agree']} disagree={counts['disagree']} "
+            f"review={counts['review']} p50={p50}ms"
+        )
+        save_llm_response(
+            json.dumps(
+                {
+                    "summary": summary,
+                    "jev_input_tokens": tokens,
+                    "cost_usd": tokens / 1e6 * JEV_USD_PER_M_INPUT,
+                    "items": rows,
+                },
+                indent=1,
+            ),
+            "jev_shadow",
+        )
+        logger.info("jev_shadow: %s", summary)
+        return summary
+
+
+def jev_shadow_from_env(rules: list[ScriptRule]) -> "JevShadow | None":
+    if os.environ.get("JEV_SHADOW") != "1":
+        return None
+    key = os.environ.get("JEV_API_KEY", "").strip()
+    if not key or not jev_available():
+        logger.warning(
+            "JEV_SHADOW=1 but %s; shadow disabled",
+            "JEV_API_KEY missing" if not key else "typesafe-sdk not installed",
+        )
+        return None
+    return JevShadow(JevClient(key, os.environ.get("JEV_MODEL", "jev-latest")), rules)
