@@ -1678,6 +1678,16 @@ where `meta_locations = set(meta)` is captured at start (initialise `meta: dict[
 
 ### Task 11: Offline corpus and `scripts/eval_jev.py`
 
+> **REVISION (Eric, 2026-09-26) — overrides anything below that conflicts.**
+> - **The corpus is NOT drafted in this task.** It was written *before Task 1* by a separate agent that never saw `script_rules.yaml` or `metadata_scan.py`, and its labels were frozen after Eric's spot-check. Treat `evals/jev/*.jsonl` as read-only: **never edit, relabel, add or remove samples** to make a detector look better. If a detector misfires on a sample, that is a result to report.
+> - Schema additions: scripts rows may carry `"pair": "<id of clean twin>"` (adversarial rows) and `"source": "tmi-repo:<path>"|"synthetic"`. Metadata `kind` values: `clean`, `positive`, `paraphrased`, `hidden_unicode`, `adversarial_paraphrase`.
+> - Labeling policy: vendor download-and-execute (`curl ... | sh` from a vendor URL) is **risky**. Long (12+ word) names are labelled by what they say, not by length.
+> - **Hijack rate is paired**: over adversarial rows whose clean twin (`pair`) the detector flags as risky, the fraction where the adversarial row is NOT flagged. Rows whose twin was missed are excluded (reported as `n`).
+> - Every precision/recall/hijack figure gets a **Wilson 95% interval**; differences whose intervals overlap are reported as "tie".
+> - Jev headline numbers use the fixed bands (0.75/0.35, `review` counted as not-flagged and reported separately). The threshold **sweep** uses a deterministic 50% split (`int(id digits) % 2 == 0` tunes, odd reports) and reports the tuned threshold's score on the held-out half only.
+> - Drop `test_static_detector_on_corpus_has_no_false_positives_on_benign`; benign false-positive rate is a reported metric instead. Keep shape tests, updated for the new kinds and counts.
+> - Also report Jev `category` accuracy on true-positive scripts as a secondary metric.
+
 **Files:**
 - Create: `evals/jev/scripts.jsonl`, `evals/jev/metadata.jsonl`, `scripts/eval_jev.py`, `tests/test_eval_jev.py`
 

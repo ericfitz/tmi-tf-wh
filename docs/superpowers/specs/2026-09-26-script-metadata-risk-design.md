@@ -9,6 +9,7 @@ Date: 2026-09-26. Issue: #14 ("analyze scripts and metadata inside terraform for
 - Suspicious metadata is **redacted** from every LLM input (not only flagged). Script review input capped at **60,000 characters**. One extra phase-3b call per grouped finding is **accepted**.
 - **Jev** (TypeSafe AI System One) is evaluated against items 2-4 below, **offline on a labeled corpus and as a production shadow**. The shadow never affects output.
 - Before anything is sent to TypeSafe, **secrets matched by our secret rules are masked**.
+- **Jev corpus (Eric, 2026-09-26, after plan review):** written by an agent blind to our rules/detectors, before the rules exist; labels frozen after Eric's spot-check; paired adversarial samples (hijack = caught clean twin, missed injected twin); paraphrased natural-language metadata injections are the main adversarial case (hidden Unicode kept as a sanity check); no heuristic-as-label; threshold sweep on a 50% split; ~30 adversarial pairs with Wilson 95% intervals; benign scripts drawn from ~/Projects/tmi/terraform where available. Vendor `curl | sh` is labelled risky.
 - No PR until #10 follow-ups, #10 subtasks 2-3 and #14 are all done (one PR); no deploy before that.
 
 ## Current state (why this is needed)
