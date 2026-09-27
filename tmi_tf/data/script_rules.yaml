@@ -1,19 +1,25 @@
 # Static script rules (#14). pattern: Python regex, MULTILINE|IGNORECASE.
 # severity: Low|Medium|High|Critical. threat_hint: one STRIDE letter.
 # secret: true when the match itself is a credential (masked before any external send).
-# Every gap between two required tokens is bounded ({0,400} / {0,300}) so a
-# pathological single long line can't drive superlinear regex backtracking;
-# match_rules() also caps each scanned line defensively (see script_scan.py).
+# Every gap between two required tokens is bounded ({0,400} / {0,300}) AND,
+# where a rule chains two required literals (curl/wget -> pipe or delimiter
+# -> a second literal), the gap either excludes the delimiter character(s)
+# or is a tempered token (?:(?!literal).) so the engine can't retry the same
+# span at every occurrence of the next literal inside it. This keeps every
+# rule linear in input size, including on adversarial single- or multi-line
+# input; there is deliberately no length cap on the scanned text itself
+# (script_scan.py used to truncate long lines, which let a payload past the
+# truncation point evade every rule -- removed, see match_rules()).
 rules:
-  - {id: curl_pipe_sh, category: download_exec, title: "curl output piped to a shell", pattern: 'curl\b[^\n|]{0,400}\|\s*(sudo(\s+-\S+)*\s+)?(ba|z|da)?sh\b', severity: High, threat_hint: T, secret: false}
-  - {id: wget_pipe_sh, category: download_exec, title: "wget output piped to a shell", pattern: 'wget\b[^\n|]{0,400}\|\s*(sudo(\s+-\S+)*\s+)?(ba|z|da)?sh\b', severity: High, threat_hint: T, secret: false}
-  - {id: download_then_exec, category: download_exec, title: "downloaded file made executable and run", pattern: '(curl|wget)\b[^\n]{0,400}(&&|;)[^\n]{0,400}chmod\s+\+x[^\n]{0,400}(&&|;)', severity: High, threat_hint: T, secret: false}
-  - {id: base64_decode_exec, category: decode_exec, title: "base64-decoded content executed", pattern: 'base64\s+(-d|--decode)\b[^\n]{0,400}\|\s*(sudo(\s+-\S+)*\s+)?(ba|z|da)?sh\b', severity: Critical, threat_hint: T, secret: false}
-  - {id: xxd_decode_exec, category: decode_exec, title: "hex-decoded content executed", pattern: 'xxd\s+-r\b[^\n]{0,400}\|\s*(sudo(\s+-\S+)*\s+)?(ba|z|da)?sh\b', severity: Critical, threat_hint: T, secret: false}
+  - {id: curl_pipe_sh, category: download_exec, title: "curl output piped to a shell", pattern: 'curl\b[^\n|]{0,400}\|\s*(sudo(\s+-\w+(\s+\w+)?){0,10}\s+)?(ba|z|da)?sh\b', severity: High, threat_hint: T, secret: false}
+  - {id: wget_pipe_sh, category: download_exec, title: "wget output piped to a shell", pattern: 'wget\b[^\n|]{0,400}\|\s*(sudo(\s+-\w+(\s+\w+)?){0,10}\s+)?(ba|z|da)?sh\b', severity: High, threat_hint: T, secret: false}
+  - {id: download_then_exec, category: download_exec, title: "downloaded file made executable and run", pattern: '(curl|wget)\b[^\n;&]{0,400}(&&|;)[^\n;&]{0,400}chmod\s+\+x[^\n;&]{0,400}(&&|;)', severity: High, threat_hint: T, secret: false}
+  - {id: base64_decode_exec, category: decode_exec, title: "base64-decoded content executed", pattern: 'base64\s+(-d|--decode)\b[^\n]{0,400}\|\s*(sudo(\s+-\w+(\s+\w+)?){0,10}\s+)?(ba|z|da)?sh\b', severity: Critical, threat_hint: T, secret: false}
+  - {id: xxd_decode_exec, category: decode_exec, title: "hex-decoded content executed", pattern: 'xxd\s+-r\b[^\n]{0,400}\|\s*(sudo(\s+-\w+(\s+\w+)?){0,10}\s+)?(ba|z|da)?sh\b', severity: Critical, threat_hint: T, secret: false}
   - {id: eval_dynamic, category: decode_exec, title: "eval of dynamically built command", pattern: '\beval\s+["$`(]', severity: Medium, threat_hint: T, secret: false}
   - {id: dev_tcp_shell, category: reverse_shell, title: "shell bound to /dev/tcp socket", pattern: '/dev/tcp/', severity: Critical, threat_hint: E, secret: false}
   - {id: netcat_exec, category: reverse_shell, title: "netcat with command execution", pattern: '\b(nc|ncat|netcat)\b[^\n]{0,400}\s-(e|c)\b', severity: Critical, threat_hint: E, secret: false}
-  - {id: python_reverse_shell, category: reverse_shell, title: "python socket + subprocess one-liner", pattern: 'python[23]?\s+-c\s+.{0,300}socket.{0,300}subprocess', severity: Critical, threat_hint: E, secret: false}
+  - {id: python_reverse_shell, category: reverse_shell, title: "python socket + subprocess one-liner", pattern: 'python[23]?\s+-c\s+(?:(?!socket).){0,300}socket(?:(?!subprocess).){0,300}subprocess', severity: Critical, threat_hint: E, secret: false}
   - {id: setenforce_off, category: security_disable, title: "SELinux set to permissive", pattern: '\bsetenforce\s+(0|permissive)\b', severity: High, threat_hint: E, secret: false}
   - {id: selinux_disabled, category: security_disable, title: "SELinux disabled in config", pattern: '^\s*SELINUX\s*=\s*disabled', severity: High, threat_hint: E, secret: false}
   - {id: firewall_disabled, category: security_disable, title: "host firewall disabled", pattern: '\b(ufw\s+disable|systemctl\s+(stop|disable)\s+firewalld)\b', severity: High, threat_hint: E, secret: false}
@@ -31,5 +37,5 @@ rules:
   - {id: imds_credentials, category: metadata_creds, title: "EC2 IMDS IAM credentials fetched", pattern: '169\.254\.169\.254/latest/meta-data/iam/security-credentials', severity: High, threat_hint: I, secret: false}
   - {id: gcp_metadata_token, category: metadata_creds, title: "GCE metadata service-account token fetched", pattern: 'metadata\.google\.internal/computeMetadata/v1/instance/service-accounts/[^\s/]+/token', severity: High, threat_hint: I, secret: false}
   - {id: azure_imds_token, category: metadata_creds, title: "Azure IMDS identity token fetched", pattern: '169\.254\.169\.254/metadata/identity/oauth2/token', severity: High, threat_hint: I, secret: false}
-  - {id: cron_remote, category: persistence, title: "cron entry runs remote content", pattern: 'crontab[^\n]{0,400}(curl|wget)[^\n]{0,400}\|', severity: High, threat_hint: T, secret: false}
-  - {id: authorized_keys_remote, category: persistence, title: "authorized_keys appended from remote content", pattern: '(curl|wget)[^\n]{0,400}>>?\s*[^\n]{0,400}authorized_keys', severity: High, threat_hint: S, secret: false}
+  - {id: cron_remote, category: persistence, title: "cron entry runs remote content", pattern: 'crontab(?:(?!curl|wget).){0,400}(curl|wget)(?:(?!\|).){0,400}\|', severity: High, threat_hint: T, secret: false}
+  - {id: authorized_keys_remote, category: persistence, title: "authorized_keys appended from remote content", pattern: '(curl|wget)[^\n>]{0,400}>>?[^\n]{0,400}?authorized_keys', severity: High, threat_hint: S, secret: false}
