@@ -79,10 +79,68 @@ def _is_quoted_source(raw: Any) -> bool:
 
 
 def _is_expression(raw: str) -> bool:
-    """Same criterion ``clean_value`` uses to decide a string is *entirely*
-    one interpolated expression (as opposed to a plain literal, or a
-    literal with an embedded ``${...}`` among other text)."""
-    return raw.startswith("${") and raw.endswith("}") and raw.count("${") == 1
+    """True for anything that isn't itself a plain quoted literal or a
+    top-level heredoc (both start with a real ``"``) -- i.e. a bare
+    expression: a reference, a function call, or a literal with one or
+    more *embedded* ``${...}`` interpolations among other text. All of
+    these are re-serialized by hcl2 (normalized whitespace, and a mixed
+    literal's outer quotes are folded into the surrounding ``${...}``
+    rather than kept as its own top-level quoted string), so scanning the
+    whole thing as one blob essentially never matches the source
+    verbatim."""
+    return not raw.startswith('"')
+
+
+_HEREDOC_MARKER_RE = re.compile(r"<<-?(\w+)")
+
+
+def _expression_heredocs(text: str) -> list[str]:
+    """Every ``<<MARKER ... MARKER`` heredoc span embedded in an
+    expression's raw text (``merge(var.a, {x = <<EOT...EOT})``). hcl2
+    wraps a heredoc -- even one nested inside an expression -- in a
+    synthetic quote pair for its own bookkeeping, not real source quotes,
+    and those embedded newlines mean ``_STRING_RE`` (which stops at a
+    literal newline) never matches across them anyway, so a heredoc needs
+    its own scan.
+
+    One marker search per line, then one forward pass over the following
+    lines to find the terminator, exactly like ``_iter_comments``'s block
+    handling and ``script_scan``'s heredoc scanner -- no backtracking, and
+    each line is examined at most twice (once as a candidate opener, once
+    while a heredoc consumes it as a body/terminator line)."""
+    spans: list[str] = []
+    lines = text.split("\n")
+    i, n = 0, len(lines)
+    while i < n:
+        m = _HEREDOC_MARKER_RE.search(lines[i])
+        if not m:
+            i += 1
+            continue
+        marker = m.group(1)
+        end_re = re.compile(rf"[ \t]*{re.escape(marker)}\b")
+        j = i + 1
+        while j < n and not end_re.match(lines[j]):
+            j += 1
+        if j == n:  # unterminated -- no well-defined end
+            break
+        close = end_re.match(lines[j])
+        assert close is not None
+        spans.append(
+            "\n".join(
+                [lines[i][m.start() :], *lines[i + 1 : j], lines[j][: close.end()]]
+            )
+        )
+        i = j + 1
+    return spans
+
+
+def _expression_leaves(text: str, loc: str, out: list[tuple[str, str, bool]]) -> None:
+    """String-literal (quoted) and heredoc (unquoted) leaves embedded in
+    an expression's raw text -- see ``_is_expression``."""
+    for i, m in enumerate(_STRING_RE.finditer(text)):
+        out.append((f"{loc}[str{i}]", m.group(1), True))
+    for i, span in enumerate(_expression_heredocs(text)):
+        out.append((f"{loc}[heredoc{i}]", span, False))
 
 
 def _strings(value: Any, loc: str, out: list[tuple[str, str, bool]]) -> None:
@@ -91,17 +149,14 @@ def _strings(value: Any, loc: str, out: list[tuple[str, str, bool]]) -> None:
     dicts/lists exactly like ``clean_value`` does, but keeping each leaf's
     raw form just long enough to classify it via ``_is_quoted_source``.
 
-    An expression (`merge(var.t, {Note = "..."})`, a bare reference, ...)
-    is re-serialized by hcl2 and essentially never matches the source
-    verbatim, so scanning it whole would never find its redaction target
-    in the file. Instead extract its string-literal leaves with
-    ``_STRING_RE`` and scan/redact each one individually -- `var.t` (no
-    quotes) is correctly left alone.
+    An expression (see ``_is_expression``) is not scanned as one blob;
+    its string-literal and heredoc leaves are extracted and
+    scanned/redacted individually instead -- `var.t` (no quotes) is
+    correctly left alone.
     """
     if isinstance(value, str):
         if _is_expression(value):
-            for i, m in enumerate(_STRING_RE.finditer(value)):
-                out.append((f"{loc}[expr{i}]", m.group(1), True))
+            _expression_leaves(value, loc, out)
             return
         text = clean_value(value)
         if isinstance(text, str):
@@ -318,22 +373,26 @@ def _compile(spans, bounded: bool = False) -> re.Pattern[str] | None:
     over a shorter one it contains (e.g. flagging `disregard` must not
     also truncate a match against `disregard-this-flag`).
 
-    ``bounded`` (the bare pass only) adds lookarounds so a short bare
-    text can never match as a mere substring of a longer identifier or
-    literal it isn't equal to -- flagging `disregard` (from a comment)
-    must not touch `disregard_me` used as a resource name, a bare
-    reference to it (`aws_instance.disregard_me.id`), or an unrelated
-    quoted literal (`"disregard_me"`, already excluded by the quoted
-    pass's own exact-match requirement, but not by a plain substring
-    search). A quote or word character immediately before/after the
-    match means it's part of something bigger, so neither side may be
-    one.
+    ``bounded`` (the bare pass only) adds word-boundary lookarounds so a
+    short bare text can never match as a mere substring of a longer
+    *identifier* it isn't equal to -- flagging `disregard` (from a
+    comment) must not touch `disregard_me` used as a resource name or a
+    bare reference to it (`aws_instance.disregard_me.id`). A word
+    character immediately before/after the match means it's part of a
+    longer identifier, so neither side may be one. A `"` on either side
+    is fine and deliberately *not* excluded: an exact `"text"` occurrence
+    is already fully handled by the quoted pass (which runs first and
+    consumes it), and a comment marker is never quoted, so the only thing
+    left for the bare pass to find at a quote boundary is a comment-
+    derived word sitting at the edge of a longer, unrelated quoted string
+    (`"please disregard"`, `"disregard this one"`) -- which is exactly an
+    occurrence that must still be redacted.
     """
     spans = sorted(set(spans), key=len, reverse=True)
     if not spans:
         return None
     alt = "|".join(re.escape(s) for s in spans)
-    return re.compile(rf'(?<![\w"])(?:{alt})(?![\w"])' if bounded else alt)
+    return re.compile(rf"(?<!\w)(?:{alt})(?!\w)" if bounded else alt)
 
 
 def _bare_marker(text: str) -> str:
