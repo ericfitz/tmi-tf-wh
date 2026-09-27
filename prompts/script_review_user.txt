@@ -1,0 +1,7 @@
+Repository: {repo_name}
+
+Review the {count} script(s) below. Each is wrapped in <untrusted-script id="..." nonce="{nonce}"> ... </untrusted-script-{nonce}>. Static rules already matched some of them; the hits are listed per script as context only.
+
+{scripts}
+
+Return ONLY the JSON array.
