@@ -141,7 +141,7 @@ def parse_review(
             )
             continue
         script_id, category, severity = (
-            item["script_id"],
+            html.unescape(item["script_id"]),
             item["category"],
             item["severity"],
         )

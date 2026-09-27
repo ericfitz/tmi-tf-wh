@@ -92,6 +92,23 @@ def test_parse_review_discards_unknown_ids_and_categories():
     assert out == [good]
 
 
+def test_parse_review_unescapes_html_escaped_script_id():
+    """The review tag's id attribute is html.escape'd (build_review_input),
+    so a model that echoes it back verbatim sends the escaped form back;
+    parse_review must html.unescape it before matching against sent_ids."""
+    good = {
+        "script_id": "r.1&2:user_data",
+        "title": "t",
+        "category": "reverse_shell",
+        "severity": "Critical",
+        "evidence": "e",
+        "reason": "r",
+    }
+    escaped = {**good, "script_id": html.escape(good["script_id"], quote=True)}
+    out = parse_review(json.dumps([escaped]), ["r.1&2:user_data"])
+    assert out == [good]
+
+
 def test_parse_review_garbage_is_empty():
     assert parse_review("not json at all", ["r.1:user_data"]) == []
     assert parse_review('{"a": 1}', ["r.1:user_data"]) == []

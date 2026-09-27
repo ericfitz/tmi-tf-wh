@@ -14,21 +14,33 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.cvss_scorer import score_cvss4_vector
 from tmi_tf.json_extract import extract_json_array, extract_json_object
+from tmi_tf.metadata_scan import InjectionHit, redact_contents, scan_metadata
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import retry_transient_llm_call
+from tmi_tf.script_review import build_review_input, merge_findings, parse_review
+from tmi_tf.script_scan import (
+    RuleHit,
+    ScriptBlob,
+    extract_scripts,
+    load_rules,
+    match_rules,
+    omit_scripts,
+    unomitted,
+)
 from tmi_tf.tf_filter import (
     filter_terraform,
     load_registry,
     merge_phase1,
     prompt_inventory_json,
 )
-from tmi_tf.tf_parser import parse_terraform
+from tmi_tf.tf_parser import StaticInventory, parse_terraform
 from tmi_tf.threat_processor import ALLOWED_CWE_IDS, disallowed_cwe_ids
 
 logger = logging.getLogger(__name__)
@@ -65,6 +77,9 @@ class TerraformAnalysis:
         security_input_tokens: int = 0,
         security_output_tokens: int = 0,
         security_cost: float = 0.0,
+        script_findings: list[dict[str, Any]] | None = None,
+        script_review_error: str = "",
+        jev_summary: str = "",
     ):
         """
         Initialize analysis result.
@@ -86,6 +101,9 @@ class TerraformAnalysis:
             security_input_tokens: Phase 3 input tokens (for threat metadata)
             security_output_tokens: Phase 3 output tokens (for threat metadata)
             security_cost: Phase 3 cost in USD (for threat metadata)
+            script_findings: Script/metadata risk note rows (#14)
+            script_review_error: Set when the isolated script-review LLM call failed
+            jev_summary: Reserved for Task 10 (jev shadow evaluation summary)
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
@@ -103,6 +121,9 @@ class TerraformAnalysis:
         self.security_input_tokens = security_input_tokens
         self.security_output_tokens = security_output_tokens
         self.security_cost = security_cost
+        self.script_findings = script_findings or []
+        self.script_review_error = script_review_error
+        self.jev_summary = jev_summary
 
     @property
     def analysis_content(self) -> str:
@@ -133,21 +154,25 @@ class TerraformAnalysis:
 class LLMAnalyzer:
     """Phased LLM analyzer for Terraform files using LiteLLM."""
 
-    def __init__(self, llm_provider: LLMProvider):
+    def __init__(self, llm_provider: LLMProvider, jev_shadow: Any | None = None):
         """
         Initialize LLM analyzer.
 
         Args:
             llm_provider: LLM provider instance to use for completion calls
+            jev_shadow: Reserved for Task 10 (jev shadow evaluation); accepted
+                and stored only, not yet used.
         """
         self.llm_provider = llm_provider
         self.model = llm_provider.model
         self.provider = llm_provider.provider
+        self.jev_shadow = jev_shadow
 
         # Load all phase prompts
         self.prompts_dir = prompts_dir()
         self._load_phase_prompts()
         self.registry = load_registry()
+        self.rules = load_rules()
 
         logger.info(
             "LLM analyzer initialized: provider=%s, model=%s",
@@ -184,6 +209,9 @@ class LLMAnalyzer:
         self.threat_analysis_user_template = self._load_prompt(
             "threat_analysis_user.txt"
         )
+        # Script review (#14): isolated LLM call over extracted script blobs
+        self.script_review_system = self._load_prompt("script_review_system.txt")
+        self.script_review_user_template = self._load_prompt("script_review_user.txt")
 
     def _load_prompt(self, filename: str) -> str:
         """
@@ -201,6 +229,83 @@ class LLMAnalyzer:
         else:
             logger.warning("Prompt file not found: %s", prompt_file)
             return ""
+
+    def _prescan(
+        self, tf_contents: dict[str, str], repo_root: Path | None
+    ) -> tuple[
+        dict[str, str],
+        StaticInventory | None,
+        list[ScriptBlob],
+        list[InjectionHit],
+        dict[str, list[RuleHit]],
+    ]:
+        """Redact injection strings, extract scripts, run static rules.
+
+        Any failure degrades to "nothing scanned" (raw text goes on unchanged)
+        so a scanner bug never aborts the run.
+        """
+        try:
+            static = parse_terraform(tf_contents)
+            hits = scan_metadata(static, tf_contents)
+            if hits:
+                tf_contents = redact_contents(tf_contents, hits)
+                static = parse_terraform(tf_contents)
+            blobs = extract_scripts(static, tf_contents, self.registry, repo_root)
+            static_hits = {
+                b.id: h for b in blobs if (h := match_rules(b.text, self.rules))
+            }
+            logger.info(
+                "Prescan: %d injection hit(s), %d script(s), %d with static hits",
+                len(hits),
+                len(blobs),
+                len(static_hits),
+            )
+            missed = unomitted(tf_contents, blobs)
+            if missed:
+                logger.warning(
+                    "Prescan: %d script(s) could not be omitted from source: %s",
+                    len(missed),
+                    ", ".join(b.id for b in missed),
+                )
+            return tf_contents, static, blobs, hits, static_hits
+        except Exception as e:
+            logger.warning(
+                "Prescan failed (%s); continuing without script/metadata scan", e
+            )
+            return tf_contents, None, [], [], {}
+
+    def _review_scripts(
+        self,
+        repo_name: str,
+        blobs: list[ScriptBlob],
+        static_hits: dict[str, list[RuleHit]],
+    ) -> tuple[list[dict[str, Any]], int, int, float, str]:
+        """One isolated LLM call; (findings, tokens_in, tokens_out, cost, error)."""
+        if not blobs:
+            return [], 0, 0, 0.0, ""
+        scripts, nonce, included, _ = build_review_input(blobs, static_hits)
+        user = self.script_review_user_template.format(
+            repo_name=repo_name, count=len(included), nonce=nonce, scripts=scripts
+        )
+        try:
+            response = self._call_llm(
+                self.script_review_system,
+                user,
+                "script_review",
+                max_tokens=16000,
+                timeout=600.0,
+            )
+        except Exception as e:
+            logger.error("Script review failed: %s", e)
+            return [], 0, 0, 0.0, f"script review failed: {e}"
+        findings = parse_review(response.text or "", included, self.rules)
+        return (
+            findings,
+            response.input_tokens,
+            response.output_tokens,
+            response.cost,
+            "",
+        )
 
     def analyze_repository(
         self,
@@ -226,10 +331,19 @@ class LLMAnalyzer:
         total_output_tokens = 0
         total_cost = 0.0
         start_time = time.time()
+        script_findings: list[dict[str, Any]] = []
+        script_review_error = ""
 
         try:
             # Get and format Terraform contents
             tf_contents = terraform_repo.get_terraform_content()
+            repo_root = getattr(terraform_repo, "clone_path", None)
+            tf_contents, static, blobs, injection_hits, static_hits = self._prescan(
+                tf_contents, repo_root if isinstance(repo_root, Path) else None
+            )
+            # Script-omit tf_contents itself (not just terraform_text): tf_filter
+            # sends unparsed files' raw text as-is, so it must already be safe.
+            tf_contents = omit_scripts(tf_contents, blobs)
             terraform_text = self._format_terraform_contents(tf_contents)
 
             # Phase 1: Inventory Extraction (static analysis + semantic LLM,
@@ -238,7 +352,7 @@ class LLMAnalyzer:
                 status_callback("Phase 1 (Inventory) started")
             logger.info("Phase 1: Extracting inventory for %s", terraform_repo.name)
             inventory, tokens_in, tokens_out, cost = self._run_phase1(
-                terraform_repo, tf_contents, terraform_text
+                terraform_repo, tf_contents, terraform_text, static
             )
             total_input_tokens += tokens_in
             total_output_tokens += tokens_out
@@ -324,6 +438,26 @@ class LLMAnalyzer:
                 status_callback(
                     f"Phase 3a complete: {len(raw_threats)} threats identified"
                 )
+
+            # Script review (isolated call) + static/injection findings -> raw threats
+            if status_callback:
+                status_callback("Script review started")
+            llm_findings, sr_in, sr_out, sr_cost, script_review_error = (
+                self._review_scripts(terraform_repo.name, blobs, static_hits)
+            )
+            sec_tokens_in += sr_in
+            sec_tokens_out += sr_out
+            sec_cost += sr_cost
+            total_input_tokens += sr_in
+            total_output_tokens += sr_out
+            total_cost += sr_cost
+            extra_threats, script_findings = merge_findings(
+                blobs, static_hits, llm_findings, injection_hits
+            )
+            raw_threats = list(raw_threats) + extra_threats
+            logger.info(
+                "Script/metadata findings: %d added to phase 3b", len(extra_threats)
+            )
 
             # Phase 3b: Per-Threat Analysis (sequential, one LLM call per threat)
             if status_callback:
@@ -459,6 +593,11 @@ class LLMAnalyzer:
                         "cwe_id": cwe_ids,
                         "mitigation": analysis_result.get("mitigation", ""),
                         "category": analysis_result.get("category", ""),
+                        **{
+                            k: raw_threat[k]
+                            for k in ("finding_source", "rule_id", "digest")
+                            if k in raw_threat
+                        },
                     }
                     security_findings.append(finding)
 
@@ -505,6 +644,8 @@ class LLMAnalyzer:
                 security_input_tokens=sec_tokens_in,
                 security_output_tokens=sec_tokens_out,
                 security_cost=sec_cost,
+                script_findings=script_findings,
+                script_review_error=script_review_error,
             )
 
         except Exception as e:
@@ -528,6 +669,7 @@ class LLMAnalyzer:
         terraform_repo: TerraformRepository,
         tf_contents: dict[str, str],
         terraform_text: str,
+        static: StaticInventory | None = None,
     ) -> tuple[dict[str, Any] | None, int, int, float]:
         """Phase 1 with static HCL analysis; full-LLM fallback (#10).
 
@@ -538,7 +680,7 @@ class LLMAnalyzer:
         prebuilt: dict[str, Any] | None = None
         filtered_text = ""
         try:
-            static = parse_terraform(tf_contents)
+            static = static or parse_terraform(tf_contents)
             if static.unparsed_files:
                 logger.warning(
                     "Phase 1: %d/%d file(s) not statically parsable, sent unfiltered: %s",
