@@ -35,6 +35,10 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 - **`repo_analyzer.py`** — sparse git clone, Terraform environment detection, module resolution; `TerraformRepository` / `TerraformEnvironment` dataclasses
 - **`tf_parser.py`** — static HCL parsing with python-hcl2 (8.x dict shape: quoted literals, `${expr}`, `__is_block__`); `StaticInventory`; files that fail to parse are listed in `unparsed_files`
 - **`tf_filter.py`** — applies `data/resource_registry.yaml` (category + security attrs per resource type; unknown types keep everything) to produce filtered HCL via `hcl2.dumps` and the pre-built inventory; `merge_phase1` folds the LLM's semantic answer back into the phase-1 schema
+- **`script_scan.py`** — static script rules (`data/script_rules.yaml`, linear-time), `extract_scripts` (script-carrying values incl. `file()`/`templatefile()` in-repo only) and `omit_scripts` (replace script spans with the phase-1 digest so phases 2/3a never see script bodies); `mask_secrets`
+- **`metadata_scan.py`** — prompt-injection detectors over descriptions, defaults, tags (incl. `merge()` leaves, provider `default_tags`), names, comments; `redact_contents` removes flagged strings from every file before any prompt is built
+- **`script_review.py`** — isolated, nonce-delimited LLM script review (60k-char cap), strict response validation, merge of static/LLM/injection hits into phase-3a-shaped threats (`finding_source`, `rule_id`, `digest`)
+- **`jev_shadow.py`** — optional TypeSafe Jev comparison (`JEV_SHADOW=1` + `JEV_API_KEY` + `uv sync --extra jev`); secrets masked before sending; never affects output. Offline eval: `scripts/eval_jev.py` on the frozen corpus `evals/jev/` (never edit it)
 - **`dfd_llm_generator.py`** — separate LLM call producing structured DFD component/flow data
 - **`diagram_builder.py`** — `DFDBuilder` converts that data to AntV X6 v2 cells for TMI diagrams
 - **`threat_processor.py`** — converts phase 3 findings into TMI threat objects

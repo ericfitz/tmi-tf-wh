@@ -115,6 +115,15 @@ Every phase system prompt (inventory, semantic inventory, infrastructure, threat
 
 - **Item 5** changes what phases 2 and 3a see: script bodies become digests there too. Today phase 3a sometimes raises script risks itself; after this, script risks come only from items 2-3. Alternative: leave raw text in phases 2/3a (still redacting injection strings).
 
+## Known gaps (accepted at final review, 2026-09-27)
+
+- A heredoc opened inside a single-line inline object is extracted and scanned but not omitted from phase 2/3a text; logged as an omission miss.
+- In a heredoc nested inside an expression, a body line that is exactly the marker followed by `"` or trailing spaces ends the heredoc early for injection scanning.
+- `locals`, module inputs, other resource attributes and nested `tag {}` blocks are not scanned for injection; fullwidth/lookalike letters and instructions split across adjacent strings are not detected.
+- Short (< 20 char) script quotes inside a masked, bounded LLM `reason` can reach threat descriptions.
+- The Jev SDK call has no request timeout (not exposed by the SDK); shadow workers are daemon threads bounded by the 30 s join.
+- `decision_verdict` in `scripts/eval_jev.py` compares F1 as a point estimate; precision, recall and hijack rate are interval-gated.
+
 ## Out of scope
 
 - Other secret scanning of non-script Terraform attributes (beyond the rule file).
