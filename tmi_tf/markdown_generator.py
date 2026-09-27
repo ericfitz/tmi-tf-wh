@@ -2,7 +2,6 @@
 
 import json
 import logging
-from collections.abc import Sequence
 from datetime import datetime, timezone
 from html import escape as html_escape
 from typing import Any
@@ -11,11 +10,6 @@ from tmi_tf.llm_analyzer import TerraformAnalysis
 from tmi_tf.tf_filter import Registry, _attr_tree, _select, load_registry
 
 logger = logging.getLogger(__name__)
-
-
-def _esc(value: str) -> str:
-    """HTML-escape a string for safe embedding in table cells."""
-    return html_escape(str(value), quote=True)
 
 
 def _md_cell(value: Any) -> str:
@@ -82,77 +76,6 @@ def _config_cell(config: Any, attrs: list[str] | None) -> str:
         return "—"
     lines = [f"`{path} = {_leaf_text(v)}`" for path, v in _flatten(selected)]
     return "<br>".join(lines) or "—"
-
-
-def _html_list(items: Sequence[str]) -> str:
-    """Render a list of items as an HTML <ul> list, or empty string if empty."""
-    if not items:
-        return ""
-    li = "".join(f"<li>{_esc(item)}</li>" for item in items)
-    return f"<ul>{li}</ul>"
-
-
-def _html_table(
-    headers: list[str],
-    rows: list[list[str]],
-    col_widths: list[str] | None = None,
-    col_aligns: list[str] | None = None,
-    bold_last_row: bool = False,
-) -> str:
-    """Build an HTML table with optional colgroup widths and alignment.
-
-    Args:
-        headers: Column header labels.
-        rows: List of rows, each row is a list of cell HTML content strings
-              (already escaped or containing nested HTML).
-        col_widths: Optional list of CSS width values (e.g. "20%", "150px").
-        col_aligns: Optional list of CSS text-align values per column.
-        bold_last_row: If True, wrap last row cells in <strong>.
-    """
-    parts: list[str] = ['<table style="width:100%">']
-
-    # Column widths via colgroup
-    if col_widths:
-        parts.append("<colgroup>")
-        for w in col_widths:
-            parts.append(f'<col style="width:{w}">')
-        parts.append("</colgroup>")
-
-    # Header
-    parts.append("<thead><tr>")
-    for i, h in enumerate(headers):
-        style = f' style="text-align:{col_aligns[i]}"' if col_aligns else ""
-        parts.append(f"<th{style}>{_esc(h)}</th>")
-    parts.append("</tr></thead>")
-
-    # Body
-    parts.append("<tbody>")
-    for row_idx, row in enumerate(rows):
-        parts.append("<tr>")
-        is_bold = bold_last_row and row_idx == len(rows) - 1
-        for i, cell in enumerate(row):
-            style = f' style="text-align:{col_aligns[i]}"' if col_aligns else ""
-            content = f"<strong>{cell}</strong>" if is_bold else cell
-            parts.append(f"<td{style}>{content}</td>")
-        parts.append("</tr>")
-    parts.append("</tbody>")
-
-    parts.append("</table>")
-    return "".join(parts)
-
-
-def _config_nested_table(config: dict[str, Any]) -> str:
-    """Render a configuration dict as a nested table inside a cell."""
-    if not config:
-        return ""
-    parts = ['<table style="width:100%">']
-    for k, v in list(config.items())[:5]:
-        parts.append(
-            f"<tr><td><strong>{_esc(str(k))}</strong></td>"
-            f"<td><code>{_esc(str(v))}</code></td></tr>"
-        )
-    parts.append("</table>")
-    return "".join(parts)
 
 
 class MarkdownGenerator:
@@ -407,63 +330,42 @@ class MarkdownGenerator:
         )
 
     def _format_security_section(self, security_findings: list[dict[str, Any]]) -> str:
-        """Format security findings JSON into markdown section with HTML tables."""
+        """Format security findings JSON into a markdown table section."""
         if not security_findings:
             return "### Security Observations\n\nNo security findings identified."
-
-        parts = ["### Security Observations"]
-
         rows: list[list[str]] = []
         for finding in security_findings:
-            name = _esc(finding.get("name", "Unknown"))
-            severity = finding.get("severity", "Medium")
+            name = _md_cell(finding.get("name", "Unknown"))
+            cwe_ids = finding.get("cwe_id", [])
+            if cwe_ids:
+                name += "<br>" + " ".join(f"`{_md_cell(c)}`" for c in cwe_ids)
+            severity = _md_cell(finding.get("severity", "Medium"))
             score = finding.get("score")
-            description = _esc(finding.get("description", ""))
-            threat_type = _esc(finding.get("threat_type", ""))
-            category = _esc(finding.get("category", ""))
-            mitigation = _esc(finding.get("mitigation", ""))
-            cwe_id = finding.get("cwe_id", [])
-            affected = finding.get("affected_components", [])
-
-            severity_str = _esc(severity)
             if score is not None:
-                severity_str += f" ({_esc(str(score))})"
-
-            # CWE IDs as separate code elements
-            name_html = name
-            if cwe_id:
-                cwe_html = " ".join(f"<code>{_esc(cid)}</code>" for cid in cwe_id)
-                name_html += f"<br>{cwe_html}"
-
+                severity += f" ({_md_cell(score)})"
             rows.append(
                 [
-                    name_html,
-                    severity_str,
-                    threat_type,
-                    category,
-                    description,
-                    mitigation,
-                    _html_list(affected),
+                    name,
+                    severity,
+                    _md_cell(finding.get("threat_type")),
+                    _md_cell(finding.get("category")),
+                    _md_cell(finding.get("description")),
+                    _md_cell(finding.get("mitigation")),
+                    _md_cell(finding.get("affected_components", [])),
                 ]
             )
-
-        parts.append(
-            _html_table(
-                [
-                    "Finding",
-                    "Severity",
-                    "STRIDE",
-                    "Category",
-                    "Description",
-                    "Mitigation",
-                    "Affected Components",
-                ],
-                rows,
-                col_widths=["15%", "8%", "8%", "10%", "24%", "20%", "15%"],
-            )
+        return "### Security Observations\n\n" + _md_table(
+            [
+                "Finding",
+                "Severity",
+                "STRIDE",
+                "Category",
+                "Description",
+                "Mitigation",
+                "Affected Components",
+            ],
+            rows,
         )
-
-        return "\n\n".join(parts)
 
     def _generate_consolidated_findings(self, analyses: list[TerraformAnalysis]) -> str:
         """Generate consolidated findings section."""
@@ -551,7 +453,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
             for a in successful:
                 rows.append(
                     [
-                        _esc(a.repo_name),
+                        _md_cell(a.repo_name),
                         f"{a.elapsed_time:.2f}s",
                         f"{a.input_tokens:,}",
                         f"{a.output_tokens:,}",
@@ -566,21 +468,21 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
             total_cost = sum(a.total_cost for a in successful)
             rows.append(
                 [
-                    "Total",
-                    f"{total_time:.2f}s",
-                    f"{total_input:,}",
-                    f"{total_output:,}",
-                    f"${total_cost:.4f}",
+                    f"**{c}**"
+                    for c in (
+                        "Total",
+                        f"{total_time:.2f}s",
+                        f"{total_input:,}",
+                        f"{total_output:,}",
+                        f"${total_cost:.4f}",
+                    )
                 ]
             )
 
             parts.append(
-                _html_table(
+                _md_table(
                     ["Repository", "Time", "Input Tokens", "Output Tokens", "Cost"],
                     rows,
-                    col_widths=["30%", "15%", "20%", "20%", "15%"],
-                    col_aligns=["left", "right", "right", "right", "right"],
-                    bold_last_row=True,
                 )
             )
 
