@@ -392,17 +392,33 @@ def test_shadow_error_disables_shadow():
     assert shadow.finish({"r.1:user_data": True}) == "" and shadow.disabled
 
 
-def test_shadow_timeout_returns_empty(monkeypatch):
+def test_shadow_timeout_returns_empty_without_blocking_and_worker_is_daemon():
     import time
 
     class Slow(FakeClient):
         def judge_script(self, blob, rules):
-            time.sleep(0.5)
+            time.sleep(2)
             return super().judge_script(blob, rules)
 
     shadow = JevShadow(Slow(), RULES, timeout=0.05)
     shadow.start([_blob(1)], {})
+    t0 = time.monotonic()
     assert shadow.finish({"r.1:user_data": True}) == ""
+    assert time.monotonic() - t0 < 0.5
+    assert shadow._threads and all(t.daemon for t in shadow._threads)
+
+
+def test_shadow_reusable_across_multiple_runs():
+    """One JevShadow instance is reused across repos in analyzer.py's loop:
+    start()/finish() must both work again on the second run, not raise
+    'cannot schedule new futures after shutdown' or silently no-op."""
+    shadow = JevShadow(FakeClient(), RULES)
+    shadow.start([_blob(1)], {})
+    first = shadow.finish({"r.1:user_data": True})
+    shadow.start([_blob(2)], {})
+    second = shadow.finish({"r.2:user_data": True})
+    assert first.startswith("agree=") and second.startswith("agree=")
+    assert not shadow.disabled
 
 
 def test_from_env(monkeypatch):

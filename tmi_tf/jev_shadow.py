@@ -6,9 +6,11 @@ Never changes findings. Optional dependency: ``pip install tmi-tf[jev]``.
 import json
 import logging
 import os
+import queue
 import statistics
+import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, wait
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -210,7 +212,24 @@ class JevClient:
 
 
 class JevShadow:
-    """Runs Jev detectors in the background; output is a comparison file + one log line."""
+    """Runs Jev detectors in the background; output is a comparison file + one log line.
+
+    Workers are per-run: created fresh in ``start()``, never reused, and
+    never joined in ``finish()`` -- not a persistent pool built in
+    ``__init__``. ``analyzer.py`` builds one ``LLMAnalyzer``/shadow and
+    calls ``analyze_repository`` in a loop over repos, so a persistent
+    ``ThreadPoolExecutor`` shut down at the end of the first repo's
+    ``finish()`` would raise "cannot schedule new futures after shutdown"
+    on every subsequent repo's ``start()``.
+
+    Workers are plain ``daemon=True`` threads pulling from a bounded job
+    queue (never a ``ThreadPoolExecutor``): a non-daemon pool thread that's
+    still running a hung SDK call past ``finish()``'s timeout is joined by
+    ``concurrent.futures`` at interpreter exit, delaying process exit and
+    leaking a thread per timed-out run. A daemon thread is simply abandoned
+    -- ``finish()`` waits up to ``timeout`` for results and returns without
+    joining stragglers, and the straggler can never block process exit.
+    """
 
     def __init__(
         self,
@@ -219,47 +238,86 @@ class JevShadow:
         timeout: float = 30.0,
         max_workers: int = 4,
     ):
-        self.client, self.rules, self.timeout = client, rules, timeout
-        self._pool = ThreadPoolExecutor(
-            max_workers=max_workers, thread_name_prefix="jev"
+        self.client, self.rules, self.timeout, self.max_workers = (
+            client,
+            rules,
+            timeout,
+            max_workers,
         )
-        self._futures: list[Future[Any]] = []
         self.disabled = False
+        self._results: queue.Queue[Any] = queue.Queue()
+        self._threads: list[threading.Thread] = []
+        self._expected = 0
+
+    @staticmethod
+    def _worker(
+        jobs: "queue.Queue[Callable[[], Any]]", results: "queue.Queue[Any]"
+    ) -> None:
+        while True:
+            try:
+                job = jobs.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                results.put(job())
+            except Exception as e:  # forwarded to finish(), never raised here
+                results.put(e)
 
     def start(self, blobs: list[ScriptBlob], metadata_strings: dict[str, str]) -> None:
-        self._futures = [
-            self._pool.submit(self.client.judge_script, b, self.rules) for b in blobs
+        jobs: queue.Queue[Callable[[], Any]] = queue.Queue()
+        for b in blobs:
+            jobs.put(lambda b=b: self.client.judge_script(b, self.rules))
+        for batch in batch_metadata(metadata_strings):
+            jobs.put(lambda batch=batch: self.client.judge_metadata(batch))
+        self._expected = jobs.qsize()
+        # A fresh queue per run, passed to workers by value (not looked up
+        # via self._results at completion time): a straggler abandoned by a
+        # prior run's finish() must keep writing to *that* run's queue, not
+        # whatever queue self._results has been reassigned to by a later
+        # start() -- otherwise its late result could pollute the next run's
+        # comparison.
+        results: queue.Queue[Any] = queue.Queue()
+        self._results = results
+        self._threads = [
+            threading.Thread(
+                target=self._worker, args=(jobs, results), name=f"jev-{i}", daemon=True
+            )
+            for i in range(min(self.max_workers, self._expected))
         ]
-        self._futures += [
-            self._pool.submit(self.client.judge_metadata, batch)
-            for batch in batch_metadata(metadata_strings)
-        ]
+        for t in self._threads:
+            t.start()
 
     def finish(self, ours: dict[str, bool]) -> str:
-        done, not_done = wait(self._futures, timeout=self.timeout)
-        self._pool.shutdown(wait=False, cancel_futures=True)
-        verdicts: list[JevVerdict] = []
-        for f in done:
+        deadline = time.monotonic() + self.timeout
+        results: list[Any] = []
+        while len(results) < self._expected:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             try:
-                r = f.result()
-                verdicts += r if isinstance(r, list) else [r]
-            except Exception as e:
-                # Never log str(e): a bug in a judge_* implementation could
-                # echo back script/metadata text in its exception message.
-                logger.warning(
-                    "jev_shadow: disabled for this run after error: %s",
-                    type(e).__name__,
-                )
-                self.disabled = True
-                return ""
-        if not_done:
+                results.append(self._results.get(timeout=remaining))
+            except queue.Empty:
+                break
+        if len(results) < self._expected:
             logger.warning(
-                "jev_shadow: %d call(s) exceeded %.0fs; disabled for this run",
-                len(not_done),
+                "jev_shadow: %d call(s) exceeded %gs; disabled for this run",
+                self._expected - len(results),
                 self.timeout,
             )
             self.disabled = True
             return ""
+        verdicts: list[JevVerdict] = []
+        for r in results:
+            if isinstance(r, Exception):
+                # Never log str(r): a bug in a judge_* implementation could
+                # echo back script/metadata text in its exception message.
+                logger.warning(
+                    "jev_shadow: disabled for this run after error: %s",
+                    type(r).__name__,
+                )
+                self.disabled = True
+                return ""
+            verdicts += r if isinstance(r, list) else [r]
         counts = {"agree": 0, "disagree": 0, "review": 0}
         rows = []
         for v in verdicts:
@@ -285,6 +343,7 @@ class JevShadow:
                     "verdict": verdict,
                 }
             )
+        rows.sort(key=lambda r: r["item_id"])  # deterministic output
         tokens = sum(v.input_tokens for v in verdicts)
         p50 = (
             int(statistics.median([v.latency_ms for v in verdicts])) if verdicts else 0
@@ -311,6 +370,7 @@ class JevShadow:
 
 def jev_shadow_from_env(rules: list[ScriptRule]) -> "JevShadow | None":
     if os.environ.get("JEV_SHADOW") != "1":
+        logger.info("JEV_SHADOW not set to 1; jev shadow disabled")
         return None
     key = os.environ.get("JEV_API_KEY", "").strip()
     if not key or not jev_available():
@@ -319,4 +379,12 @@ def jev_shadow_from_env(rules: list[ScriptRule]) -> "JevShadow | None":
             "JEV_API_KEY missing" if not key else "typesafe-sdk not installed",
         )
         return None
+    # ponytail: JevClient doesn't pass this shadow's `timeout` down to
+    # TypeSafeClient -- the real typesafe-sdk isn't installed in this repo,
+    # so whether TypeSafeClient.__init__ even accepts a timeout kwarg is
+    # unconfirmed (the one usage example available, jev-usecases/src/
+    # jev_usecases/client.py, only passes api_key/model). Upgrade once
+    # confirmed: JevClient(key, model, timeout=timeout) plumbed through to
+    # TypeSafeClient(..., timeout=timeout), so a slow SDK call fails fast
+    # instead of relying solely on JevShadow's own thread-level timeout.
     return JevShadow(JevClient(key, os.environ.get("JEV_MODEL", "jev-latest")), rules)
