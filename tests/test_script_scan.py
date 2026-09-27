@@ -1,9 +1,10 @@
 """Script extraction from parsed and unparsed Terraform (#14)."""
 
 import base64
+import logging
 import time
 
-from tmi_tf.script_scan import extract_scripts, omit_scripts
+from tmi_tf.script_scan import ScriptBlob, extract_scripts, omit_scripts, unomitted
 from tmi_tf.tf_filter import _script_digest, load_registry
 from tmi_tf.tf_parser import StaticInventory, parse_terraform
 
@@ -219,3 +220,61 @@ def test_unparsed_heredoc_scan_is_linear_time():
     start = time.perf_counter()
     extract_scripts(inv, {"big.tf": big_text}, REG)
     assert time.perf_counter() - start < 2.0
+
+
+# --- re-review fixes: linear literal scan, exact heredoc spans, miss detection ---
+
+
+def test_unparsed_literal_scan_is_linear_time():
+    # 40k+ whitespace-only lines: the old `^\s*` (under MULTILINE, matching
+    # newlines too) re-scanned forward through every following blank line
+    # from each line start (quadratic). A few real assignments are mixed in
+    # to confirm the fast path still extracts correctly; the trailing blank
+    # block (nothing valid after it) is what actually forces the old regex's
+    # worst case -- a leading/middle blank run before a real assignment lets
+    # a single greedy sweep "rescue" it in one shot.
+    blank = "   \n" * 40000
+    text = 'custom_data = "echo c"\n' + blank + 'user_data = "echo u"\n' + blank
+    inv = StaticInventory(unparsed_files=["big.tf"])
+    start = time.perf_counter()
+    blobs = {b.attr_path: b for b in extract_scripts(inv, {"big.tf": text}, REG)}
+    assert time.perf_counter() - start < 2.0
+    assert blobs["custom_data"].text == "echo c"
+    assert blobs["user_data"].text == "echo u"
+
+
+def test_unparsed_heredoc_open_line_trailing_whitespace_is_omitted():
+    # A heredoc opener with trailing whitespace after the marker (hcl2 itself
+    # rejects this syntax, so it always lands in the unparsed-fallback path).
+    # The exact opening-line text (trailing spaces included) must be captured
+    # so `omit_scripts`'s anchor can find and replace the whole span.
+    broken = 'resource "aws_instance" "a" {\n  user_data = <<-EOT  \n    echo a\n  EOT\n  ??? =\n}\n'
+    contents = {"bad.tf": broken}
+    inv = parse_terraform(contents)
+    assert "bad.tf" in inv.unparsed_files
+    blobs = extract_scripts(inv, contents, REG)
+    out = omit_scripts(contents, blobs)
+    assert "echo a" not in out["bad.tf"]
+    assert not unomitted(contents, blobs)
+
+
+def test_omit_scripts_warns_and_reports_a_miss(caplog):
+    # A blob whose raw_text span genuinely isn't in the file (e.g. produced
+    # against a different snapshot of the source) must not fail silently.
+    blob = ScriptBlob(
+        "aws_instance.x:user_data",
+        "aws_instance.x",
+        "user_data",
+        "main.tf",
+        _script_digest('"missing"'),
+        "missing",
+        '"missing"',
+    )
+    contents = {"main.tf": 'resource "aws_instance" "x" {\n  other = "value"\n}\n'}
+    with caplog.at_level(logging.WARNING, logger="tmi_tf.script_scan"):
+        out = omit_scripts(contents, [blob])
+    assert out["main.tf"] == contents["main.tf"]
+    assert unomitted(contents, [blob]) == [blob]
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("aws_instance.x:user_data" in m for m in messages)
+    assert all("missing" not in m for m in messages)  # never log script text

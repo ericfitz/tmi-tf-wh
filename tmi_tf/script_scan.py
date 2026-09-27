@@ -158,11 +158,23 @@ _B64_LITERAL_RE = re.compile(r"^[A-Za-z0-9+/=\s]{8,}$")
 # `omit_scripts` can anchor on the exact same self-delimited token the parsed
 # path produces (quotes included) instead of a bare body needing external
 # quotes to stay valid HCL.
+#
+# `[ \t]*`, not `\s*`, around the key/`=`: under re.MULTILINE, a `\s*` here
+# would happily cross newlines too, so at every whitespace-only line the
+# engine re-scans forward through every following blank line before giving
+# up -- O(n^2) on a file with many blank/garbage lines. Horizontal-only
+# whitespace keeps each line-start attempt bounded to that one line.
 _LITERAL_UNPARSED_RE = re.compile(
-    r'^\s*(?P<attr>[\w-]+)\s*=\s*(?P<full>"(?P<body>(?:[^"\\]|\\.)*)")', re.MULTILINE
+    r'^[ \t]*(?P<attr>[\w-]+)[ \t]*=[ \t]*(?P<full>"(?P<body>(?:[^"\\]|\\.)*)")',
+    re.MULTILINE,
 )
+# Matched per already-split line (no embedded newline), so `\s*`/`^`/`$` here
+# can't cross lines -- no equivalent quadratic risk. `open` captures the
+# verbatim rest of the line (marker plus any trailing whitespace) rather than
+# trimming it, so `_iter_unparsed_heredocs`'s reconstructed span is an exact
+# substring of the source text for `omit_scripts` to anchor on.
 _HEREDOC_START_LINE_RE = re.compile(
-    r"^\s*(?P<attr>[\w-]+)\s*=\s*(?P<open><<-?(?P<marker>\w+))\s*$"
+    r"^[ \t]*(?P<attr>[\w-]+)[ \t]*=[ \t]*(?P<open><<-?(?P<marker>\w+).*)$"
 )
 
 
@@ -377,12 +389,14 @@ def _assignment_pattern(attr_name: str, raw_text: str) -> re.Pattern[str]:
     return re.compile(rf'("?\b{re.escape(attr_name)}\b"?\s*=\s*){re.escape(raw_text)}')
 
 
-def omit_scripts(
+def _omit(
     tf_contents: dict[str, str], blobs: list[ScriptBlob]
-) -> dict[str, str]:
-    """Copy of tf_contents with each blob's raw span replaced by its digest
-    marker, anchored to that attribute's own assignment."""
+) -> tuple[dict[str, str], list[ScriptBlob]]:
+    """Shared implementation for `omit_scripts`/`unomitted`: single source of
+    truth for which blobs' anchored spans were actually found and replaced,
+    so the two never disagree with each other."""
     out = dict(tf_contents)
+    misses: list[ScriptBlob] = []
     for b in blobs:
         if not b.raw_text:
             continue
@@ -395,4 +409,34 @@ def omit_scripts(
         )
         if count:
             out[b.file] = new_text
+        else:
+            misses.append(b)
+    return out, misses
+
+
+def omit_scripts(
+    tf_contents: dict[str, str], blobs: list[ScriptBlob]
+) -> dict[str, str]:
+    """Copy of tf_contents with each blob's raw span replaced by its digest
+    marker, anchored to that attribute's own assignment.
+
+    A blob whose span can't be found and replaced is logged (id/file only,
+    never the script text) rather than failing silently; call
+    `unomitted(tf_contents, blobs)` to get that list back programmatically.
+    """
+    out, misses = _omit(tf_contents, blobs)
+    for b in misses:
+        logger.warning(
+            "Script omission: %s (attr %r in %s) not found -- left unredacted",
+            b.id,
+            b.attr_path.rsplit(".", 1)[-1],
+            b.file,
+        )
     return out
+
+
+def unomitted(tf_contents: dict[str, str], blobs: list[ScriptBlob]) -> list[ScriptBlob]:
+    """Blobs `omit_scripts(tf_contents, blobs)` would not find and redact
+    (same arguments as `omit_scripts`). Never inspects or returns script
+    text itself, only the ``ScriptBlob`` records."""
+    return _omit(tf_contents, blobs)[1]
