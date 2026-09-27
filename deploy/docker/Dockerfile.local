@@ -20,6 +20,12 @@ ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
 ARG TMI_CLIENT_REF=main
 RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
 
+# Client matching the TMI API schema version (newest same major.minor patch <= schema).
+ARG TMI_SCHEMA_URL=https://raw.githubusercontent.com/ericfitz/tmi/main/api-schema/tmi-openapi.json
+COPY scripts/select_tmi_client.py /tmp/select_tmi_client.py
+RUN python3.12 /tmp/select_tmi_client.py --schema ${TMI_SCHEMA_URL} \
+        --clients /opt/tmi-clients/python-client-generated --out /opt/tmi-client
+
 WORKDIR /app
 
 COPY pyproject.toml ./
@@ -45,10 +51,8 @@ RUN apk add --no-cache \
 RUN addgroup -S tmi-tf && \
     adduser -S -G tmi-tf -h /home/tmi-tf tmi-tf
 
-ARG TMI_CLIENT_VERSION=v1.8.3
-
 COPY --from=builder /install /usr/
-COPY --from=builder /opt/tmi-clients/python-client-generated/${TMI_CLIENT_VERSION} /opt/tmi-client
+COPY --from=builder /opt/tmi-client /opt/tmi-client
 COPY --from=hashicorp/terraform:1.15 /bin/terraform /usr/local/bin/terraform
 COPY prompts/ /opt/tmi-tf/prompts/
 ENV PROMPTS_DIR=/opt/tmi-tf/prompts

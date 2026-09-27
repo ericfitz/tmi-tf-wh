@@ -46,6 +46,8 @@ Recorded per the design-changes rule. Made by Eric Fitzgerald on 2026-09-04.
 | Terraform layout | Move OCI to `infra/oci/`, add `infra/aws/` | Keep OCI at `infra/` root |
 | TMI write auth (Eric, 2026-09-06) | tmi-tf-wh authenticates to the TMI API with **client_credentials of a dedicated non-admin automation user** (member of `tmi-automation`, writer on the threat model); the webhook is only a trigger. TMI will add an opt-in `direct_write` flag on the credential so the invoker-only gate (T18) lets it through to normal ACL checks; ADR + issues tracked in the `tmi` repo. | Port to the addon flow and write back with the per-delivery delegation JWT — rejected: protocol transition from webhook auth to OAuth, and the JWT TTL is 60 s vs 10–40 min jobs |
 
+- **TMI client version is derived, not pinned (Eric, 2026-09-27).** Image builds read `info.version` from `ericfitz/tmi` `main:api-schema/tmi-openapi.json` and use the newest `tmi-clients` `python-client-generated/vX.Y.Z` with the same major.minor and a patch not above the schema's; no matching major.minor fails the build (`scripts/select_tmi_client.py`, all `deploy/docker/Dockerfile.*`). Replaces the hard-coded `v1.8.3`, which tmi-clients dropped.
+
 ## Architecture
 
 ```
