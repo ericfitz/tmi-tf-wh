@@ -1,5 +1,6 @@
 """Prompt-injection scan of Terraform metadata and redaction (#14)."""
 
+import bisect
 import hashlib
 import logging
 import re
@@ -91,7 +92,10 @@ def _is_expression(raw: str) -> bool:
     return not raw.startswith('"')
 
 
-_HEREDOC_MARKER_RE = re.compile(r"<<-?(\w+)")
+# A string literal or a heredoc opener, whichever comes first on a line:
+# a ``<<WORD`` inside a literal is consumed as part of the literal.
+_LITERAL_OR_HEREDOC_RE = re.compile(r'"(?:[^"\\\n]|\\.)*"|<<-?(\w+)')
+_LEADING_WORD_RE = re.compile(r"[ \t]*(\w+)")
 
 
 def _expression_heredocs(text: str) -> list[str]:
@@ -103,34 +107,45 @@ def _expression_heredocs(text: str) -> list[str]:
     literal newline) never matches across them anyway, so a heredoc needs
     its own scan.
 
-    One marker search per line, then one forward pass over the following
-    lines to find the terminator, exactly like ``_iter_comments``'s block
-    handling and ``script_scan``'s heredoc scanner -- no backtracking, and
-    each line is examined at most twice (once as a candidate opener, once
-    while a heredoc consumes it as a body/terminator line)."""
+    Lines are tokenized left to right (string literal or heredoc opener),
+    so a ``<<WORD`` inside a literal is never an opener. A heredoc body
+    is skipped; its terminator line is re-scanned after the marker (and
+    hcl2's synthetic closing quote), because hcl2 puts the next opener
+    there (``EOT"}, {x = "<<EOT``). Terminators are looked up in a
+    per-leading-word index, so the pass is O(n log n) and an unterminated
+    opener is just skipped, never abandoning later heredocs."""
     spans: list[str] = []
     lines = text.split("\n")
-    i, n = 0, len(lines)
-    while i < n:
-        m = _HEREDOC_MARKER_RE.search(lines[i])
-        if not m:
-            i += 1
-            continue
-        marker = m.group(1)
-        end_re = re.compile(rf"[ \t]*{re.escape(marker)}\b")
-        j = i + 1
-        while j < n and not end_re.match(lines[j]):
-            j += 1
-        if j == n:  # unterminated -- no well-defined end
-            break
-        close = end_re.match(lines[j])
-        assert close is not None
-        spans.append(
-            "\n".join(
-                [lines[i][m.start() :], *lines[i + 1 : j], lines[j][: close.end()]]
+    ends: dict[str, list[int]] = {}
+    for k, line in enumerate(lines):
+        lead = _LEADING_WORD_RE.match(line)
+        if lead:
+            ends.setdefault(lead.group(1), []).append(k)
+    i, col = 0, 0
+    while i < len(lines):
+        line = lines[i]
+        next_i, next_col = i + 1, 0
+        for m in _LITERAL_OR_HEREDOC_RE.finditer(line, col):
+            marker = m.group(1)
+            if marker is None:
+                continue
+            cands = ends.get(marker, [])
+            idx = bisect.bisect_right(cands, i)
+            if idx == len(cands):  # unterminated -- skip this opener
+                continue
+            j = cands[idx]
+            close = _LEADING_WORD_RE.match(lines[j])
+            assert close is not None
+            spans.append(
+                "\n".join(
+                    [line[m.start() :], *lines[i + 1 : j], lines[j][: close.end()]]
+                )
             )
-        )
-        i = j + 1
+            next_i, next_col = j, close.end()
+            if lines[j][next_col : next_col + 1] == '"':
+                next_col += 1
+            break
+        i, col = next_i, next_col
     return spans
 
 
