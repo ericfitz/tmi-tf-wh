@@ -1,0 +1,32 @@
+# Static script rules (#14). pattern: Python regex, MULTILINE|IGNORECASE.
+# severity: Low|Medium|High|Critical. threat_hint: one STRIDE letter.
+# secret: true when the match itself is a credential (masked before any external send).
+rules:
+  - {id: curl_pipe_sh, category: download_exec, title: "curl output piped to a shell", pattern: 'curl\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da)?sh\b', severity: High, threat_hint: T, secret: false}
+  - {id: wget_pipe_sh, category: download_exec, title: "wget output piped to a shell", pattern: 'wget\b[^\n|]*\|\s*(sudo\s+)?(ba|z|da)?sh\b', severity: High, threat_hint: T, secret: false}
+  - {id: download_then_exec, category: download_exec, title: "downloaded file made executable and run", pattern: '(curl|wget)\b[^\n]*(&&|;)[^\n]*chmod\s+\+x[^\n]*(&&|;)', severity: High, threat_hint: T, secret: false}
+  - {id: base64_decode_exec, category: decode_exec, title: "base64-decoded content executed", pattern: 'base64\s+(-d|--decode)\b[^\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b', severity: Critical, threat_hint: T, secret: false}
+  - {id: xxd_decode_exec, category: decode_exec, title: "hex-decoded content executed", pattern: 'xxd\s+-r\b[^\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b', severity: Critical, threat_hint: T, secret: false}
+  - {id: eval_dynamic, category: decode_exec, title: "eval of dynamically built command", pattern: '\beval\s+["$`(]', severity: Medium, threat_hint: T, secret: false}
+  - {id: dev_tcp_shell, category: reverse_shell, title: "shell bound to /dev/tcp socket", pattern: '/dev/tcp/', severity: Critical, threat_hint: E, secret: false}
+  - {id: netcat_exec, category: reverse_shell, title: "netcat with command execution", pattern: '\b(nc|ncat|netcat)\b[^\n]*\s-(e|c)\s', severity: Critical, threat_hint: E, secret: false}
+  - {id: python_reverse_shell, category: reverse_shell, title: "python socket + subprocess one-liner", pattern: 'python[23]?\s+-c\s+.*socket.*subprocess', severity: Critical, threat_hint: E, secret: false}
+  - {id: setenforce_off, category: security_disable, title: "SELinux set to permissive", pattern: '\bsetenforce\s+(0|permissive)\b', severity: High, threat_hint: E, secret: false}
+  - {id: selinux_disabled, category: security_disable, title: "SELinux disabled in config", pattern: '^\s*SELINUX\s*=\s*disabled', severity: High, threat_hint: E, secret: false}
+  - {id: firewall_disabled, category: security_disable, title: "host firewall disabled", pattern: '\b(ufw\s+disable|systemctl\s+(stop|disable)\s+firewalld)\b', severity: High, threat_hint: E, secret: false}
+  - {id: iptables_flush, category: security_disable, title: "iptables rules flushed", pattern: '\biptables\s+(-F|--flush)\b', severity: Medium, threat_hint: E, secret: false}
+  - {id: stop_security_service, category: security_disable, title: "audit/security agent stopped", pattern: '\bsystemctl\s+(stop|disable|mask)\s+(auditd|apparmor|falco|osqueryd|amazon-ssm-agent|clamav[\w-]*)\b', severity: High, threat_hint: R, secret: false}
+  - {id: chmod_777, category: weak_perms, title: "world-writable permissions", pattern: '\bchmod\s+(-R\s+)?[0-7]?777\b', severity: Medium, threat_hint: T, secret: false}
+  - {id: sudoers_nopasswd_all, category: weak_perms, title: "passwordless sudo for all commands", pattern: 'NOPASSWD:\s*ALL\b', severity: High, threat_hint: E, secret: false}
+  - {id: aws_access_key_id, category: hardcoded_secret, title: "AWS access key id literal", pattern: '\b(AKIA|ASIA)[A-Z0-9]{16}\b', severity: Critical, threat_hint: I, secret: true}
+  - {id: aws_secret_key, category: hardcoded_secret, title: "AWS secret access key literal", pattern: 'aws_secret_access_key\s*[=:]\s*["'']?[A-Za-z0-9/+]{40}\b', severity: Critical, threat_hint: I, secret: true}
+  - {id: password_assignment, category: hardcoded_secret, title: "password literal", pattern: '\b(password|passwd|pwd)\s*[=:]\s*["'']?(?![\$`{])[^\s"''$]{6,}', severity: High, threat_hint: I, secret: true}
+  - {id: private_key_block, category: hardcoded_secret, title: "private key material", pattern: '-----BEGIN [A-Z ]*PRIVATE KEY-----', severity: Critical, threat_hint: I, secret: true}
+  - {id: bearer_token, category: hardcoded_secret, title: "bearer token literal", pattern: 'Bearer\s+(?![\$`{])[A-Za-z0-9._~+/-]{20,}', severity: High, threat_hint: I, secret: true}
+  - {id: xmrig, category: crypto_miner, title: "xmrig miner", pattern: '\bxmrig\b', severity: Critical, threat_hint: E, secret: false}
+  - {id: stratum_pool, category: crypto_miner, title: "mining pool stratum URL", pattern: 'stratum\+(tcp|ssl)://', severity: Critical, threat_hint: E, secret: false}
+  - {id: imds_credentials, category: metadata_creds, title: "EC2 IMDS IAM credentials fetched", pattern: '169\.254\.169\.254/latest/meta-data/iam/security-credentials', severity: High, threat_hint: I, secret: false}
+  - {id: gcp_metadata_token, category: metadata_creds, title: "GCE metadata service-account token fetched", pattern: 'metadata\.google\.internal/computeMetadata/v1/instance/service-accounts/[^\s/]+/token', severity: High, threat_hint: I, secret: false}
+  - {id: azure_imds_token, category: metadata_creds, title: "Azure IMDS identity token fetched", pattern: '169\.254\.169\.254/metadata/identity/oauth2/token', severity: High, threat_hint: I, secret: false}
+  - {id: cron_remote, category: persistence, title: "cron entry runs remote content", pattern: 'crontab[^\n]*(curl|wget)[^\n]*\|', severity: High, threat_hint: T, secret: false}
+  - {id: authorized_keys_remote, category: persistence, title: "authorized_keys appended from remote content", pattern: '(curl|wget)[^\n]*>>?\s*[^\n]*authorized_keys', severity: High, threat_hint: S, secret: false}
