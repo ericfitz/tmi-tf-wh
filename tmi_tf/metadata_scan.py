@@ -57,6 +57,7 @@ class InjectionHit:
     text: str
     digest: str
     quoted: bool = True
+    name_like: bool = False
 
 
 def detect(text: str, name_like: bool = False) -> list[str]:
@@ -367,12 +368,22 @@ def _digest(text: str) -> str:
 def scan_metadata(
     inventory: StaticInventory, tf_contents: dict[str, str]
 ) -> list[InjectionHit]:
+    return scan_strings(collect_metadata_strings(inventory, tf_contents))
+
+
+def scan_strings(strings: list[MetaString]) -> list[InjectionHit]:
     hits: list[InjectionHit] = []
-    for ms in collect_metadata_strings(inventory, tf_contents):
+    for ms in strings:
         for detector in detect(ms.text, ms.name_like):
             hits.append(
                 InjectionHit(
-                    detector, ms.location, ms.file, ms.text, _digest(ms.text), ms.quoted
+                    detector,
+                    ms.location,
+                    ms.file,
+                    ms.text,
+                    _digest(ms.text),
+                    ms.quoted,
+                    ms.name_like,
                 )
             )
     if hits:

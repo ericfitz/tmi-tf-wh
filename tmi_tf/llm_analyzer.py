@@ -22,9 +22,10 @@ from tmi_tf.cvss_scorer import score_cvss4_vector
 from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.metadata_scan import (
     InjectionHit,
+    MetaString,
     collect_metadata_strings,
     redact_contents,
-    scan_metadata,
+    scan_strings,
 )
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
@@ -246,9 +247,14 @@ class LLMAnalyzer:
         list[ScriptBlob],
         list[InjectionHit],
         dict[str, list[RuleHit]],
+        list[MetaString],
         str,
     ]:
         """Redact injection strings, extract scripts, run static rules.
+
+        Also returns the *pre*-redaction metadata strings (the ones the
+        injection scan judged), so the Jev shadow judges the same text under
+        the same locations rather than our redaction markers.
 
         Any failure degrades to "nothing scanned" (raw text goes on unchanged)
         so a scanner bug never aborts the run -- but is reported back via the
@@ -257,7 +263,8 @@ class LLMAnalyzer:
         """
         try:
             static = parse_terraform(tf_contents)
-            hits = scan_metadata(static, tf_contents)
+            meta = collect_metadata_strings(static, tf_contents)
+            hits = scan_strings(meta)
             if hits:
                 tf_contents = redact_contents(tf_contents, hits)
                 static = parse_terraform(tf_contents)
@@ -278,7 +285,7 @@ class LLMAnalyzer:
                     len(missed),
                     ", ".join(b.id for b in missed),
                 )
-            return tf_contents, static, blobs, hits, static_hits, ""
+            return tf_contents, static, blobs, hits, static_hits, meta, ""
         except Exception as e:
             # Never log/return str(e): the exception may echo attacker-
             # controlled script or metadata text. The type name is enough to
@@ -287,7 +294,15 @@ class LLMAnalyzer:
                 "Prescan failed (%s); continuing without script/metadata scan",
                 type(e).__name__,
             )
-            return tf_contents, None, [], [], {}, f"prescan failed: {type(e).__name__}"
+            return (
+                tf_contents,
+                None,
+                [],
+                [],
+                {},
+                [],
+                f"prescan failed: {type(e).__name__}",
+            )
 
     def _review_scripts(
         self,
@@ -360,6 +375,7 @@ class LLMAnalyzer:
                 blobs,
                 injection_hits,
                 static_hits,
+                meta_strings,
                 prescan_error,
             ) = self._prescan(
                 tf_contents, repo_root if isinstance(repo_root, Path) else None
@@ -370,14 +386,9 @@ class LLMAnalyzer:
             meta: dict[str, str] = {}
             if self.jev_shadow is not None:
                 try:
-                    meta = (
-                        {
-                            m.location: m.text
-                            for m in collect_metadata_strings(static, tf_contents)
-                        }
-                        if static
-                        else {}
-                    )
+                    # Pre-redaction text under the scan's own locations, so
+                    # keys match `ours` below; JevClient masks secrets.
+                    meta = {m.location: m.text for m in meta_strings}
                     self.jev_shadow.start(blobs, meta)
                 except Exception as e:
                     # Never log str(e): see _prescan.

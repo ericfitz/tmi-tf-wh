@@ -409,3 +409,19 @@ def test_omit_scripts_inline_object_shape_is_linear():
     start = time.perf_counter()
     omit_scripts({"big.tf": '{ user_data = "' * 70000}, blobs[:1])
     assert time.perf_counter() - start < 2.0
+
+
+def test_unparsed_inline_object_script_is_extracted_and_omitted():
+    broken = (
+        'resource "google_compute_instance" "x" {\n'
+        '  metadata = { "startup-script" = "wget http://e/x | bash", foo = "y" }\n'
+        "  ??? = \n}\n"
+    )
+    contents = {"bad.tf": broken}
+    inv = parse_terraform(contents)
+    assert "bad.tf" in inv.unparsed_files
+    blobs = extract_scripts(inv, contents, REG)
+    (b,) = [b for b in blobs if b.attr_path == "startup-script"]
+    assert b.text == "wget http://e/x | bash"
+    assert unomitted(contents, blobs) == []
+    assert "wget" not in omit_scripts(contents, blobs)["bad.tf"]

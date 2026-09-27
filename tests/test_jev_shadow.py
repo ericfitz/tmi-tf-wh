@@ -389,7 +389,7 @@ def test_shadow_error_disables_shadow():
     client = FakeClient(fail=True)
     shadow = JevShadow(client, RULES)
     shadow.start([_blob(1), _blob(2), _blob(3)], {})
-    assert shadow.finish({"r.1:user_data": True}) == "" and shadow.disabled
+    assert shadow.finish({"r.1:user_data": True}) == ""
 
 
 def test_shadow_timeout_returns_empty_without_blocking_and_worker_is_daemon():
@@ -418,7 +418,6 @@ def test_shadow_reusable_across_multiple_runs():
     shadow.start([_blob(2)], {})
     second = shadow.finish({"r.2:user_data": True})
     assert first.startswith("agree=") and second.startswith("agree=")
-    assert not shadow.disabled
 
 
 def test_from_env(monkeypatch):

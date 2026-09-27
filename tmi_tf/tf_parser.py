@@ -47,6 +47,8 @@ class ParsedDataSource:
     address: str
     file: str
     attributes: dict[str, Any]
+    # Raw hcl2 body (pre-clean_value): script digests hash the raw value.
+    raw_attributes: dict[str, Any]
     references: list[str]
 
 
@@ -73,6 +75,8 @@ class ParsedModule:
     source: str
     inputs: dict[str, Any]
     file: str
+    # Raw hcl2 body minus source/meta-args (pre-clean_value): see ParsedDataSource.
+    raw_inputs: dict[str, Any]
 
 
 @dataclass
@@ -186,6 +190,7 @@ def _collect(inv: StaticInventory, path: str, parsed: dict[str, Any]) -> None:
                         address=address,
                         file=path,
                         attributes=clean_value(body),
+                        raw_attributes=body,
                         references=find_references(body, exclude=address),
                     )
                 )
@@ -212,12 +217,27 @@ def _collect(inv: StaticInventory, path: str, parsed: dict[str, Any]) -> None:
             )
     for item in parsed.get("module", []):
         for name, body in _labelled(item):
-            attrs = clean_value(body)
-            source = str(attrs.pop("source", ""))
-            for meta in ("version", "providers", "depends_on", "count", "for_each"):
-                attrs.pop(meta, None)
+            raw = {
+                k: v
+                for k, v in body.items()
+                if k
+                not in (
+                    "source",
+                    "version",
+                    "providers",
+                    "depends_on",
+                    "count",
+                    "for_each",
+                )
+            }
             inv.modules.append(
-                ParsedModule(name=name, source=source, inputs=attrs, file=path)
+                ParsedModule(
+                    name=name,
+                    source=str(clean_value(body.get("source", ""))),
+                    inputs=clean_value(raw),
+                    file=path,
+                    raw_inputs=raw,
+                )
             )
     for item in parsed.get("provider", []):
         for name, body in _labelled(item):

@@ -247,6 +247,35 @@ class TestFilteredHcl:
         assert "[script omitted: sha256:" in res.filtered_files["aws.tf"]
         assert blob.digest in res.filtered_files["aws.tf"]
 
+    def test_data_and_module_script_digests_match_scriptblob(self, registry):
+        contents = {
+            "m.tf": (
+                'data "cloudinit_config" "ci" {\n'
+                "  part {\n"
+                "    content = <<-EOT\n"
+                "      #!/bin/bash\n"
+                "      echo hi\n"
+                "    EOT\n"
+                "  }\n"
+                "}\n"
+                'module "vm" {\n'
+                '  source    = "./vm"\n'
+                '  user_data = "echo mod"\n'
+                "}\n"
+            )
+        }
+        static = parse_terraform(contents)
+        res = filter_terraform(static, contents, registry)
+        blobs = {b.id: b.digest for b in extract_scripts(static, contents, registry)}
+        ci_digest = blobs["data.cloudinit_config.ci:part.content"]
+        mod_digest = blobs["module.vm:user_data"]
+        ci = _component(res, "data.cloudinit_config.ci")
+        assert ci["configuration"]["part"][0]["content"] == ci_digest
+        mod = _component(res, "module.vm")
+        assert mod["configuration"]["inputs"]["user_data"] == mod_digest
+        assert ci_digest in res.filtered_files["m.tf"]
+        assert mod_digest in res.filtered_files["m.tf"]
+
     def test_dynamic_block_is_kept_in_filtered_hcl_and_configuration(self, registry):
         # Finding 1: hcl2 parses `dynamic "ingress" { ... }` under the key
         # "dynamic", which is neither a registry attr nor a meta-arg, so it

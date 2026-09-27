@@ -400,17 +400,23 @@ def _prebuilt_inventory(
                 registry.category(d.data_type),
                 registry.provider_name(d.data_type),
                 d.file,
-                _hash_scripts(
-                    d.attributes,
-                    registry.hash_only_attrs | registry.data_hash_only_attrs,
-                    quoted=False,
+                # Hash the raw body, then clean (as _configuration does), so
+                # digests match the filtered HCL and ScriptBlob.
+                clean_value(
+                    _hash_scripts(
+                        d.raw_attributes,
+                        registry.hash_only_attrs | registry.data_hash_only_attrs,
+                        quoted=False,
+                    )
                 ),
                 d.references,
             )
         )
     for m in inventory.modules:
         references = find_references({"inputs": _requote(m.inputs)})
-        inputs = _hash_scripts(m.inputs, registry.hash_only_attrs, quoted=False)
+        inputs = clean_value(
+            _hash_scripts(m.raw_inputs, registry.hash_only_attrs, quoted=False)
+        )
         components.append(
             _component(
                 f"module.{m.name}",

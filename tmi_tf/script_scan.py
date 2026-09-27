@@ -31,7 +31,7 @@ CATEGORIES = frozenset(
 )
 SEVERITIES = ("Low", "Medium", "High", "Critical")
 MASKED = "[masked-secret]"
-_EVIDENCE_CHARS = 120
+EVIDENCE_CHARS = 120
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,7 @@ def match_rules(text: str, rules: list[ScriptRule]) -> list[RuleHit]:
         evidence = (
             MASKED
             if rule.secret
-            else mask_secrets(raw_evidence, rules)[:_EVIDENCE_CHARS]
+            else mask_secrets(raw_evidence, rules)[:EVIDENCE_CHARS]
         )
         hits.append(
             RuleHit(
@@ -164,10 +164,8 @@ _B64_LITERAL_RE = re.compile(r"^[A-Za-z0-9+/=\s]{8,}$")
 # self-delimited value span (quotes, or heredoc markers, included) rather
 # than just the inner body/marker, so the span is an exact source substring
 # `omit_scripts` can find again verbatim.
-_LITERAL_LINE_RE = re.compile(
-    r'^[ \t]*"?(?P<attr>[\w-]+)"?[ \t]*=[ \t]*(?P<full>"(?P<body>(?:[^"\\]|\\.)*)")'
-)
-# Omission-side literal finder: every `attr = "..."` on a line, not just one
+# Literal finder shared by extraction (unparsed files) and omission (any
+# file), so the two always agree: every `attr = "..."` on a line, not just one
 # at line start, so a key inside an inline object constructor
 # (`metadata = { "startup-script" = "...", foo = "x" }`) is found too. The
 # key must follow line start or a `{`/`,`/`(`/whitespace delimiter. Other
@@ -218,9 +216,9 @@ def _iter_unparsed_assignments(text: str):
             )
             i = j + 1
             continue
-        m = _LITERAL_LINE_RE.match(lines[i])
-        if m:
-            yield m.group("attr"), m.group("body"), m.group("full")
+        for m in _INLINE_LITERAL_RE.finditer(lines[i]):
+            if m.group("attr"):
+                yield m.group("attr"), m.group("full")[1:-1], m.group("full")
         i += 1
 
 

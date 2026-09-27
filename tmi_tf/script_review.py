@@ -6,9 +6,10 @@ import secrets
 from typing import Any
 
 from tmi_tf.json_extract import extract_json_array
-from tmi_tf.metadata_scan import InjectionHit
+from tmi_tf.metadata_scan import InjectionHit, redaction_marker
 from tmi_tf.script_scan import (
     CATEGORIES,
+    EVIDENCE_CHARS,
     SEVERITIES,
     RuleHit,
     ScriptBlob,
@@ -31,7 +32,8 @@ _REQUIRED_STR_FIELDS = (
 )
 _MAX_TITLE = 200
 _MAX_REASON = 1000
-_MAX_EVIDENCE = 200
+# Shortest LLM-prose substring treated as a quote of the script itself.
+_QUOTE_CHARS = 20
 
 _rules_cache: list[ScriptRule] | None = None
 
@@ -123,10 +125,10 @@ def parse_review(
     would otherwise crash a membership test with an unhashable value), or
     missing fields all yield []/discard rather than raising.
 
-    Surviving findings have title/reason/evidence length-bounded and
-    evidence run through the same secret-masking rules the static scanner
+    Surviving findings have title/reason/evidence length-bounded and all
+    three run through the same secret-masking rules the static scanner
     uses, so an unbounded or credential-bearing LLM answer can't push
-    unbounded or secret text into downstream threat descriptions.
+    unbounded or secret text into downstream threat names/descriptions.
     """
     parsed = extract_json_array(text) or []
     sent = set(sent_ids)
@@ -160,16 +162,64 @@ def parse_review(
         valid.append(
             {
                 "script_id": script_id,
-                "title": _truncate(item["title"], _MAX_TITLE),
+                "title": _truncate(
+                    mask_secrets(item["title"], active_rules), _MAX_TITLE
+                ),
                 "category": category,
                 "severity": severity,
                 "evidence": _truncate(
-                    mask_secrets(item["evidence"], active_rules), _MAX_EVIDENCE
+                    mask_secrets(item["evidence"], active_rules), EVIDENCE_CHARS
                 ),
-                "reason": _truncate(item["reason"], _MAX_REASON),
+                "reason": _truncate(
+                    mask_secrets(item["reason"], active_rules), _MAX_REASON
+                ),
             }
         )
     return valid
+
+
+def _norm(s: str) -> str:
+    return " ".join(s.split())
+
+
+def _quotes_script(prose: str, script: str) -> bool:
+    """True if ``prose`` (bounded LLM text) shares any _QUOTE_CHARS-long
+    substring with ``script``, whitespace-normalized. One set of prose
+    windows, one slide over the script: O(len(script) * _QUOTE_CHARS)."""
+    p, s = _norm(prose), _norm(script)
+    grams = {p[i : i + _QUOTE_CHARS] for i in range(len(p) - _QUOTE_CHARS + 1)}
+    return bool(grams) and any(
+        s[i : i + _QUOTE_CHARS] in grams for i in range(len(s) - _QUOTE_CHARS + 1)
+    )
+
+
+def _safe_prose(prose: str, b: ScriptBlob, fallback: str) -> str:
+    """LLM prose for a threat name/description, or ``fallback`` if it quotes
+    the script: descriptions are rendered into the analysis note, which must
+    never carry script text."""
+    return fallback if _quotes_script(prose, b.text) else prose
+
+
+def _redacted_locations(hits: list[InjectionHit]) -> dict[str, str]:
+    """Original -> post-redaction location for name-like hits (a resource/
+    variable/module address ending in the flagged name), matching the id the
+    re-parsed, redacted inventory uses: the flagged identifier itself must
+    never surface in threats or notes."""
+    return {
+        h.location: h.location[: len(h.location) - len(h.text)]
+        + redaction_marker(h.text)
+        for h in hits
+        if h.name_like and h.location.endswith(h.text)
+    }
+
+
+def _display_location(loc: str, renamed: dict[str, str]) -> str:
+    """``loc`` with a renamed name-like prefix swapped in (e.g. a tag on a
+    resource whose name was itself flagged)."""
+    for orig, new in renamed.items():
+        if loc == orig or loc.startswith(orig + "."):
+            return new + loc[len(orig) :]
+    return loc
 
 
 def merge_findings(
@@ -178,7 +228,10 @@ def merge_findings(
     llm_findings: list[dict[str, Any]],
     injection_hits: list[InjectionHit],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Raw threats (phase-3a shape + finding_source/rule_id/digest) and note rows."""
+    """Raw threats (phase-3a shape + finding_source/rule_id/digest) and note rows.
+
+    Never puts script text in a description: static-rule descriptions carry
+    no evidence, and LLM prose that quotes the script is dropped."""
     by_id = {b.id: b for b in blobs}
     threats: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []
@@ -188,11 +241,11 @@ def merge_findings(
         for h in hits:
             llm = llm_by_key.pop((sid, h.category), None)
             desc = (
-                f"Static rule {h.rule_id} ({h.title}) matched {h.count}x in script {b.digest} "
-                f"on {b.component_id} ({b.attr_path}, {b.file}). Evidence: {h.evidence}"
+                f"Static rule {h.rule_id} ({h.title}, {h.category}) matched {h.count}x "
+                f"in script {b.digest} on {b.component_id} ({b.attr_path}, {b.file})."
             )
             if llm:
-                desc += f" LLM review: {llm.get('reason', '')}"
+                desc += f" LLM review: {_safe_prose(llm['reason'], b, '(omitted: quotes script)')}"
             threats.append(
                 {
                     "name": f"{h.title} in {b.component_id} {b.attr_path}",
@@ -219,10 +272,10 @@ def merge_findings(
         b = by_id[f["script_id"]]
         threats.append(
             {
-                "name": f"{f['title']} in {b.component_id} {b.attr_path}",
+                "name": f"{_safe_prose(f['title'], b, f['category'])} in {b.component_id} {b.attr_path}",
                 "description": (
-                    f"LLM script review of {b.digest} on {b.component_id} ({b.file}): "
-                    f"{f.get('reason', '')} Evidence: {str(f.get('evidence', ''))[:200]}"
+                    f"LLM script review ({f['category']}) of {b.digest} on {b.component_id} ({b.file}): "
+                    f"{_safe_prose(f['reason'], b, '(omitted: quotes script)')}"
                 ),
                 "affected_components": [b.component_id],
                 "finding_source": "script-review",
@@ -241,16 +294,18 @@ def merge_findings(
                 "severity": f["severity"],
             }
         )
+    renamed = _redacted_locations(injection_hits)
     for h in injection_hits:
+        loc = _display_location(h.location, renamed)
         threats.append(
             {
-                "name": f"Suspected prompt injection in {h.location}",
+                "name": f"Suspected prompt injection in {loc}",
                 "description": (
-                    f"Metadata scan detector '{h.detector}' flagged the string at {h.location} "
+                    f"Metadata scan detector '{h.detector}' flagged the string at {loc} "
                     f"({h.file}), sha256:{h.digest}. The string was redacted from all LLM input; "
                     "it may be an attempt to manipulate automated review tooling."
                 ),
-                "affected_components": [h.location],
+                "affected_components": [loc],
                 "finding_source": "injection-scan",
                 "rule_id": h.detector,
                 "digest": h.digest,
@@ -261,7 +316,7 @@ def merge_findings(
             {
                 "source": "injection-scan",
                 "rule": h.detector,
-                "component": h.location,
+                "component": loc,
                 "file": h.file,
                 "digest": h.digest,
                 "severity": "Medium",

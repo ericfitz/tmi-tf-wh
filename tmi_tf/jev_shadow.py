@@ -244,7 +244,6 @@ class JevShadow:
             timeout,
             max_workers,
         )
-        self.disabled = False
         self._results: queue.Queue[Any] = queue.Queue()
         self._threads: list[threading.Thread] = []
         self._expected = 0
@@ -304,7 +303,6 @@ class JevShadow:
                 self._expected - len(results),
                 self.timeout,
             )
-            self.disabled = True
             return ""
         verdicts: list[JevVerdict] = []
         for r in results:
@@ -315,7 +313,6 @@ class JevShadow:
                     "jev_shadow: disabled for this run after error: %s",
                     type(r).__name__,
                 )
-                self.disabled = True
                 return ""
             verdicts += r if isinstance(r, list) else [r]
         counts = {"agree": 0, "disagree": 0, "review": 0}
