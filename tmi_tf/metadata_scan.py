@@ -38,12 +38,12 @@ class MetaString:
     text: str
     name_like: bool = False
     # False only for text that is *not* wrapped in real quotes at its
-    # declaration site: a comment body, or the full raw span of a heredoc
-    # or an unquoted expression (`merge(...)`, a bare reference). Everything
-    # else -- a plain quoted literal, a block label (resource/variable/
-    # module name), an unparsed-file literal -- is quoted=True. Drives
-    # which source span `redact_contents` matches and how it must be
-    # replaced to keep the file parseable.
+    # declaration site: a comment body, or the full raw span of a heredoc.
+    # Everything else -- a plain quoted literal, a block label (resource/
+    # variable/module name), an unparsed-file literal, or a string-literal
+    # leaf extracted from inside an expression (see `_strings`) -- is
+    # quoted=True. Drives which source span `redact_contents` matches and
+    # how it must be replaced to keep the file parseable.
     quoted: bool = True
 
 
@@ -78,12 +78,31 @@ def _is_quoted_source(raw: Any) -> bool:
     return isinstance(raw, str) and raw.startswith('"') and not raw.startswith('"<<')
 
 
+def _is_expression(raw: str) -> bool:
+    """Same criterion ``clean_value`` uses to decide a string is *entirely*
+    one interpolated expression (as opposed to a plain literal, or a
+    literal with an embedded ``${...}`` among other text)."""
+    return raw.startswith("${") and raw.endswith("}") and raw.count("${") == 1
+
+
 def _strings(value: Any, loc: str, out: list[tuple[str, str, bool]]) -> None:
     """(location, text, quoted) for every string leaf under ``value`` (the
     *raw*, pre-``clean_value`` hcl2 structure), recursing through nested
     dicts/lists exactly like ``clean_value`` does, but keeping each leaf's
-    raw form just long enough to classify it via ``_is_quoted_source``."""
+    raw form just long enough to classify it via ``_is_quoted_source``.
+
+    An expression (`merge(var.t, {Note = "..."})`, a bare reference, ...)
+    is re-serialized by hcl2 and essentially never matches the source
+    verbatim, so scanning it whole would never find its redaction target
+    in the file. Instead extract its string-literal leaves with
+    ``_STRING_RE`` and scan/redact each one individually -- `var.t` (no
+    quotes) is correctly left alone.
+    """
     if isinstance(value, str):
+        if _is_expression(value):
+            for i, m in enumerate(_STRING_RE.finditer(value)):
+                out.append((f"{loc}[expr{i}]", m.group(1), True))
+            return
         text = clean_value(value)
         if isinstance(text, str):
             out.append((loc, text, _is_quoted_source(value)))
@@ -98,24 +117,42 @@ def _strings(value: Any, loc: str, out: list[tuple[str, str, bool]]) -> None:
             _strings(item, f"{loc}[{i}]", out)
 
 
-def _declaration_files(
+def _var_output_metadata(
     inventory: StaticInventory,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """name -> file for every ``variable``/``output`` block, in one pass over
-    the parsed per-file HCL. ``ParsedVariable``/``ParsedOutput`` carry no
-    file field, and every entry in ``inventory.variables``/``.outputs`` was
-    necessarily parsed from one of these files (an unparsed file never
-    populates them), so this always resolves."""
+) -> tuple[dict[str, str], list[MetaString]]:
+    """(variable name -> file, description/default MetaStrings for both
+    variables and outputs), all in one pass over the raw per-file HCL.
+    ``ParsedVariable``/``ParsedOutput`` carry no file field, and only the
+    already-``clean_value``-d text, which loses the quoted/heredoc/
+    expression distinction ``_strings`` needs -- so both are built here
+    from ``inventory.parsed_files`` instead, the same way tag values are.
+    (Outputs have no bare-name ``MetaString`` of their own -- unlike a
+    resource/variable/module, an output isn't addressed by name elsewhere
+    -- so no output -> file map is needed.)"""
     var_file: dict[str, str] = {}
-    output_file: dict[str, str] = {}
+    out: list[MetaString] = []
     for path, parsed in inventory.parsed_files.items():
         for item in parsed.get("variable", []):
-            for name_q in item:
-                var_file[unquote_literal(name_q)] = path
+            for name_q, body in item.items():
+                name = unquote_literal(name_q)
+                var_file[name] = path
+                for key in ("description", "default"):
+                    if key not in body:
+                        continue
+                    pairs: list[tuple[str, str, bool]] = []
+                    _strings(body[key], f"variable.{name}.{key}", pairs)
+                    out += [
+                        MetaString(loc, path, text, quoted=q) for loc, text, q in pairs
+                    ]
         for item in parsed.get("output", []):
-            for name_q in item:
-                output_file[unquote_literal(name_q)] = path
-    return var_file, output_file
+            for name_q, body in item.items():
+                name = unquote_literal(name_q)
+                if "description" not in body:
+                    continue
+                pairs = []
+                _strings(body["description"], f"output.{name}.description", pairs)
+                out += [MetaString(loc, path, text, quoted=q) for loc, text, q in pairs]
+    return var_file, out
 
 
 def _find_comment_start(line: str) -> tuple[int, str] | None:
@@ -219,39 +256,17 @@ def _provider_default_tags(inventory: StaticInventory) -> list[MetaString]:
 def collect_metadata_strings(
     inventory: StaticInventory, tf_contents: dict[str, str]
 ) -> list[MetaString]:
-    var_file, output_file = _declaration_files(inventory)
-    out: list[MetaString] = []
+    var_file, var_output_meta = _var_output_metadata(inventory)
+    out: list[MetaString] = list(var_output_meta)
     for var in inventory.variables:
-        file = var_file.get(var.name, "")
-        if var.description:
-            out.append(
-                MetaString(
-                    f"variable.{var.name}.description",
-                    file,
-                    var.description,
-                    quoted=not var.description.startswith("<<"),
-                )
+        out.append(
+            MetaString(
+                f"variable.{var.name}",
+                var_file.get(var.name, ""),
+                var.name,
+                name_like=True,
             )
-        if isinstance(var.default, str):
-            out.append(
-                MetaString(
-                    f"variable.{var.name}.default",
-                    file,
-                    var.default,
-                    quoted=not var.default.startswith("<<"),
-                )
-            )
-        out.append(MetaString(f"variable.{var.name}", file, var.name, name_like=True))
-    for o in inventory.outputs:
-        if o.description:
-            out.append(
-                MetaString(
-                    f"output.{o.name}.description",
-                    output_file.get(o.name, ""),
-                    o.description,
-                    quoted=not o.description.startswith("<<"),
-                )
-            )
+        )
     for r in inventory.resources:
         out.append(MetaString(r.address, r.file, r.local_name, name_like=True))
         for key in _TAG_KEYS & set(r.raw_attributes):
@@ -298,12 +313,38 @@ def redaction_marker(text: str) -> str:
     return _MARKER.format(_digest(text))
 
 
-def _compile(spans) -> re.Pattern[str] | None:
+def _compile(spans, bounded: bool = False) -> re.Pattern[str] | None:
     """One alternation, longest span first so a longer match always wins
     over a shorter one it contains (e.g. flagging `disregard` must not
-    also truncate a match against `disregard-this-flag`)."""
+    also truncate a match against `disregard-this-flag`).
+
+    ``bounded`` (the bare pass only) adds lookarounds so a short bare
+    text can never match as a mere substring of a longer identifier or
+    literal it isn't equal to -- flagging `disregard` (from a comment)
+    must not touch `disregard_me` used as a resource name, a bare
+    reference to it (`aws_instance.disregard_me.id`), or an unrelated
+    quoted literal (`"disregard_me"`, already excluded by the quoted
+    pass's own exact-match requirement, but not by a plain substring
+    search). A quote or word character immediately before/after the
+    match means it's part of something bigger, so neither side may be
+    one.
+    """
     spans = sorted(set(spans), key=len, reverse=True)
-    return re.compile("|".join(re.escape(s) for s in spans)) if spans else None
+    if not spans:
+        return None
+    alt = "|".join(re.escape(s) for s in spans)
+    return re.compile(rf'(?<![\w"])(?:{alt})(?![\w"])' if bounded else alt)
+
+
+def _bare_marker(text: str) -> str:
+    """A heredoc span (the only bare-pass text that stands alone as an
+    entire attribute value -- expressions are no longer scanned whole,
+    see `_strings`) needs its replacement wrapped in quotes to remain a
+    valid, self-contained expression; it's the only bare text that starts
+    with `<<`. Everything else reaching the bare pass is a comment body,
+    which accepts any text as-is -- no need to add quotes there."""
+    marker = redaction_marker(text)
+    return f'"{marker}"' if text.startswith("<<") else marker
 
 
 def redact_contents(
@@ -322,32 +363,29 @@ def redact_contents(
     1. Every flagged text's quoted form (`"text"`) -> a quoted marker, run
        first and against every file, so a legitimately quoted occurrence
        is always caught regardless of which hit (if any) it was
-       individually attributed to.
-    2. The bare form of only the texts that had at least one *unquoted*
-       occurrence (a comment body, or the full raw span of a heredoc or
-       an unquoted expression like `merge(...)`) -> the same quoted
-       marker. By this point pass 1 has already consumed every real
-       quoted occurrence of that text, so whatever bare text remains
-       can't be sitting inside someone else's string -- replacing it with
-       a marker that carries its own quotes keeps a heredoc or a bare
-       expression a valid, self-contained string literal. A text that was
-       *only* ever seen quoted (a resource/variable/module name) never
-       reaches this pass, so an unrelated bare reference elsewhere that
-       merely contains the same word (`aws_instance.web.id`) is never
-       touched.
+       individually attributed to. Naturally exact-match (the closing
+       quote must immediately follow), so it can't clip a longer literal
+       that merely contains the text.
+    2. The bounded bare form (see `_compile`) of only the texts that had
+       at least one *unquoted* occurrence (a comment body, or the full
+       raw span of a heredoc) -> `_bare_marker`. A text that was *only*
+       ever seen quoted (a resource/variable/module name) never reaches
+       this pass, so an unrelated bare reference elsewhere that merely
+       contains the same word is never touched.
     """
     if not hits:
         return dict(tf_contents)
-    marker = redaction_marker
     texts = {h.text for h in hits}
     bare_texts = {h.text for h in hits if not h.quoted}
     quoted_pattern = _compile(f'"{t}"' for t in texts)
-    bare_pattern = _compile(bare_texts)
+    bare_pattern = _compile(bare_texts, bounded=True)
     out: dict[str, str] = {}
     for path, text in tf_contents.items():
         if quoted_pattern is not None:
-            text = quoted_pattern.sub(lambda m: f'"{marker(m.group(0)[1:-1])}"', text)
+            text = quoted_pattern.sub(
+                lambda m: f'"{redaction_marker(m.group(0)[1:-1])}"', text
+            )
         if bare_pattern is not None:
-            text = bare_pattern.sub(lambda m: f'"{marker(m.group(0))}"', text)
+            text = bare_pattern.sub(lambda m: _bare_marker(m.group(0)), text)
         out[path] = text
     return out
