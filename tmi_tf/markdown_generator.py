@@ -84,107 +84,8 @@ class MarkdownGenerator:
     def __init__(self, registry: Registry | None = None) -> None:
         self._registry = registry or load_registry()
 
-    def generate_report(
-        self,
-        threat_model_name: str,
-        threat_model_id: str,
-        analyses: list[TerraformAnalysis],
-    ) -> str:
-        """
-        Generate comprehensive markdown report from analysis results.
-
-        Args:
-            threat_model_name: Name of the threat model
-            threat_model_id: UUID of the threat model
-            analyses: List of TerraformAnalysis results
-
-        Returns:
-            Markdown content
-        """
-        logger.info(f"Generating markdown report for {len(analyses)} repositories")
-
-        # Build sections
-        sections = []
-
-        # Header (just title + threat model name)
-        sections.append(self._generate_header(threat_model_name))
-
-        # Individual Repository Analyses
-        sections.append(self._generate_repository_sections(analyses))
-
-        # Consolidated Findings
-        sections.append(self._generate_consolidated_findings(analyses))
-
-        # Analysis Job Information (all metadata at the end)
-        sections.append(self._generate_analysis_job_info(threat_model_id, analyses))
-
-        return "\n\n---\n\n".join(sections)
-
-    def _generate_header(
-        self,
-        threat_model_name: str,
-    ) -> str:
-        """Generate report header with just title and threat model name."""
-        return f"""# Terraform Infrastructure Analysis
-
-**Threat Model**: {threat_model_name}"""
-
-    def _generate_repository_sections(self, analyses: list[TerraformAnalysis]) -> str:
-        """Generate individual repository analysis sections from structured JSON."""
-        sections = []
-
-        for i, analysis in enumerate(analyses, 1):
-            header = f"""## Repository {i}: {analysis.repo_name}
-
-**URL**: [{analysis.repo_url}]({analysis.repo_url})"""
-
-            if not analysis.success:
-                sections.append(
-                    f"{header}\n\n*Analysis failed: {analysis.error_message}*"
-                )
-                continue
-
-            # Assemble markdown from structured JSON outputs
-            body_parts = [header]
-
-            # Architecture Summary (from Phase 2)
-            arch_summary = analysis.infrastructure.get("architecture_summary", "")
-            if arch_summary:
-                body_parts.append(f"### Architecture Summary\n\n{arch_summary}")
-
-            # Mermaid Diagram (from Phase 2)
-            mermaid = analysis.infrastructure.get("mermaid_diagram", "")
-            if mermaid:
-                # Ensure it's wrapped in mermaid code fence
-                if not mermaid.strip().startswith("```"):
-                    mermaid = f"```mermaid\n{mermaid}\n```"
-                body_parts.append(f"### Architecture Diagram\n\n{mermaid}")
-
-            # Infrastructure Inventory (from Phase 1)
-            body_parts.append(self._format_inventory_section(analysis.inventory))
-
-            # Component Relationships (from Phase 2)
-            body_parts.append(
-                self._format_relationships_section(analysis.infrastructure)
-            )
-
-            # Data Flows (from Phase 2)
-            body_parts.append(self._format_data_flows_section(analysis.infrastructure))
-
-            # Trust Boundaries (from Phase 2)
-            body_parts.append(
-                self._format_trust_boundaries_section(analysis.infrastructure)
-            )
-
-            # Security Observations (from Phase 3)
-            body_parts.append(self._format_security_section(analysis.security_findings))
-
-            sections.append("\n\n".join(part for part in body_parts if part))
-
-        return "\n\n---\n\n".join(sections)
-
     def _format_inventory_section(self, inventory: dict[str, Any]) -> str:
-        """Format inventory JSON into markdown section with HTML tables."""
+        """Format inventory JSON into a markdown section of pipe tables."""
         parts = ["### Infrastructure Inventory"]
 
         components = inventory.get("components", [])
@@ -223,10 +124,17 @@ class MarkdownGenerator:
             rows: list[list[str]] = []
             for comp in group:
                 resource_type = comp.get("resource_type") or ""
+                resource_type_cell = (
+                    "`"
+                    + html_escape(resource_type, quote=True).replace("|", "\\|")
+                    + "`"
+                    if resource_type
+                    else "—"
+                )
                 rows.append(
                     [
                         _md_cell(comp.get("name") or comp.get("id") or "Unknown"),
-                        f"`{resource_type}`" if resource_type else "—",
+                        resource_type_cell,
                         _md_cell(comp.get("purpose")),
                         _config_cell(
                             comp.get("configuration"),
@@ -501,9 +409,9 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         analyses: list[TerraformAnalysis],
         environment_name: str | None = None,
     ) -> str:
-        """Generate inventory-only markdown report."""
+        """Inventory note: every table (components, services, relationships,
+        data flows, trust boundaries, dependencies) plus job info."""
         sections = []
-
         title = "Terraform Infrastructure Inventory"
         if environment_name:
             title += f" - {environment_name}"
@@ -516,8 +424,14 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
                     f"{header}\n\n*Analysis failed: {analysis.error_message}*"
                 )
                 continue
-            parts = [header]
-            parts.append(self._format_inventory_section(analysis.inventory))
+            parts = [
+                header,
+                self._format_inventory_section(analysis.inventory),
+                self._format_relationships_section(analysis.infrastructure),
+                self._format_data_flows_section(analysis.infrastructure),
+                self._format_trust_boundaries_section(analysis.infrastructure),
+                self._format_dependencies_section(analysis.inventory),
+            ]
             sections.append("\n\n".join(part for part in parts if part))
 
         sections.append(self._generate_analysis_job_info(threat_model_id, analyses))
@@ -529,10 +443,11 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         threat_model_id: str,
         analyses: list[TerraformAnalysis],
         environment_name: str | None = None,
+        inventory_note_name: str | None = None,
     ) -> str:
-        """Generate analysis markdown report (architecture, relationships, security)."""
+        """Analysis note: architecture narrative, diagram, pointer to the
+        inventory note, security findings, consolidated findings, job info."""
         sections = []
-
         title = "Terraform Infrastructure Analysis"
         if environment_name:
             title += f" - {environment_name}"
@@ -545,25 +460,21 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
                     f"{header}\n\n*Analysis failed: {analysis.error_message}*"
                 )
                 continue
-
             parts = [header]
-
             arch_summary = analysis.infrastructure.get("architecture_summary", "")
             if arch_summary:
                 parts.append(f"### Architecture Summary\n\n{arch_summary}")
-
             mermaid = analysis.infrastructure.get("mermaid_diagram", "")
             if mermaid:
                 if not mermaid.strip().startswith("```"):
                     mermaid = f"```mermaid\n{mermaid}\n```"
                 parts.append(f"### Architecture Diagram\n\n{mermaid}")
-
-            parts.append(self._format_relationships_section(analysis.infrastructure))
-            parts.append(self._format_data_flows_section(analysis.infrastructure))
-            parts.append(self._format_trust_boundaries_section(analysis.infrastructure))
-            parts.append(self._format_dependencies_section(analysis.inventory))
+            if inventory_note_name:
+                parts.append(
+                    "Inventory, relationships, data flows, trust boundaries and "
+                    f"dependencies: see note *{inventory_note_name}*."
+                )
             parts.append(self._format_security_section(analysis.security_findings))
-
             sections.append("\n\n".join(part for part in parts if part))
 
         sections.append(self._generate_consolidated_findings(analyses))

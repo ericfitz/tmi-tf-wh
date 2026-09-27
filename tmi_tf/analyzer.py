@@ -462,6 +462,7 @@ def run_analysis(
             threat_model_id=threat_model_id,
             analyses=analyses,
             environment_name=selected_env_name,
+            inventory_note_name=inventory_note_name,
         )
 
         # Create notes in TMI

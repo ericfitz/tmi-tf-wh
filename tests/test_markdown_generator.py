@@ -1,4 +1,4 @@
-"""Tests for the HTML table generation in MarkdownGenerator."""
+"""Tests for markdown report generation."""
 
 from typing import ClassVar
 
@@ -140,6 +140,22 @@ class TestMarkdownGeneratorInventory:
         result = gen._format_inventory_section(inventory)
         assert "| thing | `vendor_widget` | p | — |" in result
         assert "secret" not in result
+
+    def test_resource_type_escapes_pipe(self):
+        gen = MarkdownGenerator(_fake_registry())
+        inventory = {
+            "components": [
+                {
+                    "type": "other",
+                    "name": "thing",
+                    "resource_type": "vendor|widget",
+                    "purpose": "p",
+                    "configuration": {},
+                }
+            ]
+        }
+        result = gen._format_inventory_section(inventory)
+        assert "| thing | `vendor\\|widget` | p | — |" in result
 
     def test_name_falls_back_to_id(self):
         gen = MarkdownGenerator(_fake_registry())
@@ -337,93 +353,118 @@ class TestMarkdownGeneratorMetrics:
         assert "<table" not in result
 
 
+INFRA_HEADINGS = (
+    "### Component Relationships",
+    "### Data Flows",
+    "### Trust Boundaries",
+    "### External Dependencies",
+)
+
+
 class TestGenerateInventoryReport:
-    def test_includes_inventory_section(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
-        assert "Infrastructure Inventory" in report
+    def test_contains_all_tables(self):
+        gen = MarkdownGenerator(_fake_registry())
+        analysis = _make_analysis()
+        analysis.infrastructure["trust_boundaries"] = [
+            {"name": "Edge", "boundary_type": "network", "component_ids": ["web"]}
+        ]
+        report = gen.generate_inventory_report("TM", "tm-1", [analysis])
+        assert "### Infrastructure Inventory" in report
         assert "web-server" in report
-
-    def test_includes_services(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
         assert "web-service" in report
+        for heading in INFRA_HEADINGS:
+            assert heading in report
+        assert "Edge" in report
+        assert "EC2" in report
+        assert "## Analysis Job Information" in report
 
-    def test_excludes_security_findings(self):
-        gen = MarkdownGenerator()
+    def test_section_order(self):
+        gen = MarkdownGenerator(_fake_registry())
+        analysis = _make_analysis()
+        analysis.infrastructure["trust_boundaries"] = [
+            {"name": "Edge", "boundary_type": "network", "component_ids": ["web"]}
+        ]
+        report = gen.generate_inventory_report("TM", "tm-1", [analysis])
+        positions = [
+            report.index(h) for h in ("### Infrastructure Inventory", *INFRA_HEADINGS)
+        ]
+        assert positions == sorted(positions)
+
+    def test_excludes_analysis_sections(self):
+        gen = MarkdownGenerator(_fake_registry())
         report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
         assert "Security Observations" not in report
         assert "Open port" not in report
-
-    def test_excludes_architecture_summary(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
         assert "Architecture Summary" not in report
+        assert "Consolidated Findings" not in report
 
-    def test_includes_environment_name_in_title(self):
-        gen = MarkdownGenerator()
+    def test_environment_name_in_title(self):
+        gen = MarkdownGenerator(_fake_registry())
         report = gen.generate_inventory_report(
             "TM", "tm-1", [_make_analysis()], environment_name="oci-private"
         )
-        assert "oci-private" in report
+        assert "# Terraform Infrastructure Inventory - oci-private" in report
 
-    def test_includes_job_info(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_inventory_report("TM", "tm-1", [_make_analysis()])
-        assert "Analysis Job Information" in report
+    def test_failed_analysis(self):
+        gen = MarkdownGenerator(_fake_registry())
+        failed = TerraformAnalysis(
+            repo_name="bad",
+            repo_url="https://x/bad",
+            success=False,
+            error_message="boom",
+        )
+        report = gen.generate_inventory_report("TM", "tm-1", [failed])
+        assert "*Analysis failed: boom*" in report
 
 
 class TestGenerateAnalysisReport:
-    def test_includes_architecture(self):
-        gen = MarkdownGenerator()
+    def test_contains_narrative_and_findings(self):
+        gen = MarkdownGenerator(_fake_registry())
         report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "Architecture Summary" in report
+        assert "### Architecture Summary" in report
         assert "simple web app" in report
-
-    def test_includes_security_findings(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "Security Observations" in report
+        assert "```mermaid" in report
+        assert "### Security Observations" in report
         assert "Open port" in report
+        assert "## Consolidated Findings" in report
+        assert "## Analysis Job Information" in report
 
-    def test_includes_relationships(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "Component Relationships" in report
-
-    def test_includes_data_flows(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "Data Flows" in report
-
-    def test_excludes_inventory(self):
-        gen = MarkdownGenerator()
+    def test_excludes_inventory_tables(self):
+        gen = MarkdownGenerator(_fake_registry())
         report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
         assert "Infrastructure Inventory" not in report
+        for heading in INFRA_HEADINGS:
+            assert heading not in report
+        assert "EC2" not in report
 
-    def test_includes_environment_name_in_title(self):
-        gen = MarkdownGenerator()
+    def test_pointer_line(self):
+        gen = MarkdownGenerator(_fake_registry())
+        report = gen.generate_analysis_report(
+            "TM",
+            "tm-1",
+            [_make_analysis()],
+            inventory_note_name="Terraform Inventory (m, 2026-09-26 00:00:00 UTC)",
+        )
+        assert (
+            "Inventory, relationships, data flows, trust boundaries and dependencies: "
+            "see note *Terraform Inventory (m, 2026-09-26 00:00:00 UTC)*."
+        ) in report
+        assert report.index("see note *") < report.index("### Security Observations")
+
+    def test_no_pointer_without_name(self):
+        gen = MarkdownGenerator(_fake_registry())
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "see note *" not in report
+
+    def test_environment_name_in_title(self):
+        gen = MarkdownGenerator(_fake_registry())
         report = gen.generate_analysis_report(
             "TM", "tm-1", [_make_analysis()], environment_name="aws-public"
         )
-        assert "aws-public" in report
+        assert "# Terraform Infrastructure Analysis - aws-public" in report
 
-    def test_includes_consolidated_findings(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "Consolidated Findings" in report
-
-    def test_includes_job_info(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "Analysis Job Information" in report
-
-    def test_includes_external_dependencies(self):
-        gen = MarkdownGenerator()
-        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
-        assert "External Dependencies" in report
-        assert "AWS" in report
-        assert "EC2" in report
+    def test_combined_report_removed(self):
+        assert not hasattr(MarkdownGenerator, "generate_report")
 
 
 class TestMdCell:
