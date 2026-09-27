@@ -248,6 +248,11 @@ class MarkdownGenerator:
             # Data Flows (from Phase 2)
             body_parts.append(self._format_data_flows_section(analysis.infrastructure))
 
+            # Trust Boundaries (from Phase 2)
+            body_parts.append(
+                self._format_trust_boundaries_section(analysis.infrastructure)
+            )
+
             # Security Observations (from Phase 3)
             body_parts.append(self._format_security_section(analysis.security_findings))
 
@@ -334,117 +339,72 @@ class MarkdownGenerator:
         return "\n\n".join(parts)
 
     def _format_relationships_section(self, infrastructure: dict[str, Any]) -> str:
-        """Format relationships JSON into markdown section with HTML tables."""
+        """Format relationships JSON into a markdown section, grouped by type."""
         relationships = infrastructure.get("relationships", [])
         if not relationships:
             return ""
-
-        parts = ["### Component Relationships"]
-
-        # Group by relationship type
         by_type: dict[str, list[dict[str, Any]]] = {}
         for rel in relationships:
-            rel_type = rel.get("relationship_type", "other")
-            if rel_type not in by_type:
-                by_type[rel_type] = []
-            by_type[rel_type].append(rel)
-
+            by_type.setdefault(rel.get("relationship_type", "other"), []).append(rel)
+        parts = ["### Component Relationships"]
         for rel_type, rels in by_type.items():
-            parts.append(f"\n#### {rel_type.replace('_', ' ').title()}")
-
-            rows: list[list[str]] = []
-            for rel in rels:
-                source = _esc(rel.get("source_id", "?"))
-                target = _esc(rel.get("target_id", "?"))
-                desc = _esc(rel.get("description", ""))
-                rows.append([source, target, desc])
-
-            parts.append(
-                _html_table(
-                    ["Source", "Target", "Description"],
-                    rows,
-                    col_widths=["25%", "25%", "50%"],
-                )
-            )
-
-        return "\n".join(parts)
+            parts.append(f"#### {rel_type.replace('_', ' ').title()}")
+            rows = [
+                [
+                    _md_cell(rel.get("source_id", "?")),
+                    _md_cell(rel.get("target_id", "?")),
+                    _md_cell(rel.get("description")),
+                ]
+                for rel in rels
+            ]
+            parts.append(_md_table(["Source", "Target", "Description"], rows))
+        return "\n\n".join(parts)
 
     def _format_data_flows_section(self, infrastructure: dict[str, Any]) -> str:
-        """Format data flows JSON into markdown section with HTML tables."""
+        """Format data flows JSON into a markdown table section."""
         flows = infrastructure.get("data_flows", [])
         if not flows:
             return ""
-
-        parts = ["### Data Flows"]
-
-        rows: list[list[str]] = []
-        for flow in flows:
-            rows.append(
-                [
-                    _esc(flow.get("name", "")),
-                    _esc(flow.get("source_id", "")),
-                    _esc(flow.get("target_id", "")),
-                    _esc(flow.get("protocol", "")),
-                    _esc(str(flow.get("port", ""))),
-                    _esc(flow.get("data_type", "")),
-                ]
-            )
-
-        parts.append(
-            _html_table(
-                ["Flow", "Source", "Target", "Protocol", "Port", "Data Type"],
-                rows,
-                col_widths=["20%", "15%", "15%", "10%", "10%", "30%"],
-            )
+        keys = ("name", "source_id", "target_id", "protocol", "port", "data_type")
+        rows = [[_md_cell(flow.get(k)) for k in keys] for flow in flows]
+        return "### Data Flows\n\n" + _md_table(
+            ["Flow", "Source", "Target", "Protocol", "Port", "Data Type"], rows
         )
 
-        # Trust boundaries
+    def _format_trust_boundaries_section(self, infrastructure: dict[str, Any]) -> str:
+        """Format trust boundaries JSON into a markdown table section."""
         boundaries = infrastructure.get("trust_boundaries", [])
-        if boundaries:
-            parts.append("#### Trust Boundaries")
-
-            rows = []
-            for boundary in boundaries:
-                name = _esc(boundary.get("name", ""))
-                btype = _esc(boundary.get("boundary_type", ""))
-                component_ids = boundary.get("component_ids", [])
-                rows.append([name, btype, _html_list(component_ids)])
-
-            parts.append(
-                _html_table(
-                    ["Boundary", "Type", "Components"],
-                    rows,
-                    col_widths=["25%", "20%", "55%"],
-                )
-            )
-
-        return "\n\n".join(parts)
+        if not boundaries:
+            return ""
+        rows = [
+            [
+                _md_cell(b.get("name")),
+                _md_cell(b.get("boundary_type")),
+                _md_cell(b.get("component_ids", [])),
+            ]
+            for b in boundaries
+        ]
+        return "### Trust Boundaries\n\n" + _md_table(
+            ["Boundary", "Type", "Components"], rows
+        )
 
     def _format_dependencies_section(self, inventory: dict[str, Any]) -> str:
-        """Format external dependencies into markdown section with HTML table."""
+        """Format external dependencies into a markdown table section."""
         dependencies = inventory.get("dependencies", [])
         if not dependencies:
             return ""
-
-        parts = ["### External Dependencies"]
-
-        rows: list[list[str]] = []
-        for dep in dependencies:
-            dep_type = _esc(dep.get("type", ""))
-            provider = _esc(dep.get("provider", ""))
-            service = _esc(dep.get("service", ""))
-            components = dep.get("dependent_components", [])
-            rows.append([dep_type, provider, service, _html_list(components)])
-
-        parts.append(
-            _html_table(
-                ["Type", "Provider", "Service", "Dependent Components"],
-                rows,
-                col_widths=["10%", "15%", "20%", "55%"],
-            )
+        rows = [
+            [
+                _md_cell(dep.get("type")),
+                _md_cell(dep.get("provider")),
+                _md_cell(dep.get("service")),
+                _md_cell(dep.get("dependent_components", [])),
+            ]
+            for dep in dependencies
+        ]
+        return "### External Dependencies\n\n" + _md_table(
+            ["Type", "Provider", "Service", "Dependent Components"], rows
         )
-
-        return "\n\n".join(parts)
 
     def _format_security_section(self, security_findings: list[dict[str, Any]]) -> str:
         """Format security findings JSON into markdown section with HTML tables."""
@@ -698,6 +658,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 
             parts.append(self._format_relationships_section(analysis.infrastructure))
             parts.append(self._format_data_flows_section(analysis.infrastructure))
+            parts.append(self._format_trust_boundaries_section(analysis.infrastructure))
             parts.append(self._format_dependencies_section(analysis.inventory))
             parts.append(self._format_security_section(analysis.security_findings))
 

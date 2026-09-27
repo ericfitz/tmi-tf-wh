@@ -298,16 +298,41 @@ class TestMarkdownGeneratorInventory:
         assert "<ul>" not in result
 
 
+class TestMarkdownGeneratorRelationships:
+    """Test component relationships section generation."""
+
+    def test_empty(self):
+        gen = MarkdownGenerator(_fake_registry())
+        assert gen._format_relationships_section({"relationships": []}) == ""
+
+    def test_grouped_table(self):
+        gen = MarkdownGenerator(_fake_registry())
+        infra = {
+            "relationships": [
+                {
+                    "source_id": "web",
+                    "target_id": "db",
+                    "relationship_type": "connects_to",
+                    "description": "Web | DB",
+                },
+            ]
+        }
+        result = gen._format_relationships_section(infra)
+        assert "### Component Relationships" in result
+        assert "#### Connects To" in result
+        assert "| Source | Target | Description |" in result
+        assert "| web | db | Web \\| DB |" in result
+
+
 class TestMarkdownGeneratorDataFlows:
     """Test data flows section generation."""
 
     def test_empty_flows(self):
-        gen = MarkdownGenerator()
-        result = gen._format_data_flows_section({"data_flows": []})
-        assert result == ""
+        gen = MarkdownGenerator(_fake_registry())
+        assert gen._format_data_flows_section({"data_flows": []}) == ""
 
     def test_flows_table(self):
-        gen = MarkdownGenerator()
+        gen = MarkdownGenerator(_fake_registry())
         infra = {
             "data_flows": [
                 {
@@ -321,37 +346,35 @@ class TestMarkdownGeneratorDataFlows:
             ]
         }
         result = gen._format_data_flows_section(infra)
-        assert "<table" in result
-        assert "Web Traffic" in result
-        assert "HTTPS" in result
+        assert "### Data Flows" in result
+        assert "| Flow | Source | Target | Protocol | Port | Data Type |" in result
+        assert "| Web Traffic | lb-1 | web-1 | HTTPS | 443 | API requests |" in result
+        assert "Trust Boundaries" not in result
 
-    def test_trust_boundaries_uses_list(self):
-        gen = MarkdownGenerator()
+
+class TestMarkdownGeneratorTrustBoundaries:
+    """Test trust boundaries section generation."""
+
+    def test_empty(self):
+        gen = MarkdownGenerator(_fake_registry())
+        assert gen._format_trust_boundaries_section({}) == ""
+
+    def test_trust_boundaries_without_flows(self):
+        gen = MarkdownGenerator(_fake_registry())
         infra = {
-            "data_flows": [
-                {
-                    "name": "f",
-                    "source_id": "a",
-                    "target_id": "b",
-                    "protocol": "TCP",
-                    "port": 80,
-                    "data_type": "data",
-                }
-            ],
+            "data_flows": [],
             "trust_boundaries": [
                 {
                     "name": "Public Zone",
                     "boundary_type": "network",
-                    "component_ids": ["lb-1", "web-1", "web-2"],
+                    "component_ids": ["lb-1", "web-1"],
                 }
             ],
         }
-        result = gen._format_data_flows_section(infra)
-        assert "Public Zone" in result
-        # Component IDs should be a list, not comma-separated
-        assert "<ul>" in result
-        assert "<li>lb-1</li>" in result
-        assert "<li>web-1</li>" in result
+        result = gen._format_trust_boundaries_section(infra)
+        assert "### Trust Boundaries" in result
+        assert "| Boundary | Type | Components |" in result
+        assert "| Public Zone | network | lb-1<br>web-1 |" in result
 
 
 class TestMarkdownGeneratorSecurity:
@@ -665,17 +688,12 @@ class TestMarkdownGeneratorDependencies:
     """Test external dependencies section generation."""
 
     def test_empty_dependencies(self):
-        gen = MarkdownGenerator()
-        result = gen._format_dependencies_section({"dependencies": []})
-        assert result == ""
-
-    def test_no_dependencies_key(self):
-        gen = MarkdownGenerator()
-        result = gen._format_dependencies_section({})
-        assert result == ""
+        gen = MarkdownGenerator(_fake_registry())
+        assert gen._format_dependencies_section({"dependencies": []}) == ""
+        assert gen._format_dependencies_section({}) == ""
 
     def test_dependencies_table(self):
-        gen = MarkdownGenerator()
+        gen = MarkdownGenerator(_fake_registry())
         inventory = {
             "dependencies": [
                 {
@@ -696,15 +714,9 @@ class TestMarkdownGeneratorDependencies:
             ]
         }
         result = gen._format_dependencies_section(inventory)
-        assert "External Dependencies" in result
-        assert "<table" in result
-        assert "AWS" in result
-        assert "S3" in result
-        assert "cloud" in result
-        assert "Google" in result
-        assert "Sign-In" in result
-        assert "saas" in result
-        # Dependent components should be rendered as a list
-        assert "<ul>" in result
-        assert "<li>aws_s3_bucket.logs</li>" in result
-        assert "<li>aws_s3_bucket.data</li>" in result
+        assert "### External Dependencies" in result
+        assert "| Type | Provider | Service | Dependent Components |" in result
+        assert (
+            "| cloud | AWS | S3 | aws_s3_bucket.logs<br>aws_s3_bucket.data |" in result
+        )
+        assert "| saas | Google | Sign-In | aws_lambda.auth |" in result
