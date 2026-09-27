@@ -1,5 +1,6 @@
 """Markdown report generation from structured analysis JSON."""
 
+import json
 import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ from html import escape as html_escape
 from typing import Any
 
 from tmi_tf.llm_analyzer import TerraformAnalysis
+from tmi_tf.tf_filter import Registry, _attr_tree, _select, load_registry
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,51 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
     lines += ["| " + " | ".join(row) + " |" for row in rows]
     return "\n".join(lines)
+
+
+_VALUE_MAX = 120
+
+
+def _flatten(value: Any, prefix: str = "") -> list[tuple[str, Any]]:
+    """(dot.path, leaf) pairs. Single-element lists drop their index (hcl2
+    renders nested blocks as one-element lists); longer lists use ``path[i]``."""
+    if isinstance(value, dict) and value:
+        return [
+            leaf
+            for k, v in value.items()
+            if not k.startswith("__")
+            for leaf in _flatten(v, f"{prefix}.{k}" if prefix else k)
+        ]
+    if isinstance(value, list) and value:
+        if len(value) == 1:
+            return _flatten(value[0], prefix)
+        return [
+            leaf for i, v in enumerate(value) for leaf in _flatten(v, f"{prefix}[{i}]")
+        ]
+    return [(prefix, value)]
+
+
+def _leaf_text(value: Any) -> str:
+    """Value text for a code span: whitespace collapsed, truncated, and
+    ``|``/backtick made safe (code spans are not HTML-escaped)."""
+    text = value if isinstance(value, str) else json.dumps(value)
+    text = " ".join(text.split())
+    if len(text) > _VALUE_MAX:
+        text = text[:_VALUE_MAX] + "…"
+    return text.replace("`", "'").replace("|", "\\|")
+
+
+def _config_cell(config: Any, attrs: list[str] | None) -> str:
+    """Configuration column: registry security_attrs re-applied at render
+    time (so the full-LLM fallback path is filtered too), one
+    `` `path = value` `` per leaf, joined with <br>."""
+    if attrs is None or not isinstance(config, dict):
+        return "—"
+    selected = _select(config, _attr_tree(attrs))
+    if not selected:
+        return "—"
+    lines = [f"`{path} = {_leaf_text(v)}`" for path, v in _flatten(selected)]
+    return "<br>".join(lines) or "—"
 
 
 def _html_list(items: Sequence[str]) -> str:
@@ -110,6 +157,9 @@ def _config_nested_table(config: dict[str, Any]) -> str:
 
 class MarkdownGenerator:
     """Generates markdown reports from structured analysis results."""
+
+    def __init__(self, registry: Registry | None = None) -> None:
+        self._registry = registry or load_registry()
 
     def generate_report(
         self,

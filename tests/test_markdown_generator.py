@@ -1,15 +1,21 @@
 """Tests for the HTML table generation in MarkdownGenerator."""
 
+from typing import ClassVar
+
 from tmi_tf.llm_analyzer import TerraformAnalysis
 from tmi_tf.markdown_generator import (
     MarkdownGenerator,
+    _config_cell,
     _config_nested_table,
     _esc,
+    _flatten,
     _html_list,
     _html_table,
+    _leaf_text,
     _md_cell,
     _md_table,
 )
+from tmi_tf.tf_filter import Registry
 
 
 def _make_analysis() -> TerraformAnalysis:
@@ -508,6 +514,114 @@ class TestMdTable:
 
     def test_empty_rows_still_has_header_and_separator(self):
         assert _md_table(["A"], []) == "| A |\n|---|"
+
+
+def _fake_registry() -> Registry:
+    return Registry(
+        providers={},
+        resources={
+            "aws_instance": {
+                "category": "compute",
+                "security_attrs": [
+                    "ami",
+                    "root_block_device.encrypted",
+                    "metadata_options",
+                ],
+            }
+        },
+        hash_only_attrs=frozenset(),
+        data_hash_only_attrs=frozenset(),
+    )
+
+
+class TestFlatten:
+    def test_scalar(self):
+        assert _flatten({"a": 1}) == [("a", 1)]
+
+    def test_nested_dict_dot_path(self):
+        assert _flatten({"a": {"b": {"c": "x"}}}) == [("a.b.c", "x")]
+
+    def test_single_element_list_omits_index(self):
+        assert _flatten({"blk": [{"enc": True}]}) == [("blk.enc", True)]
+
+    def test_multi_element_list_indexes(self):
+        assert _flatten({"ids": ["x", "y"]}) == [("ids[0]", "x"), ("ids[1]", "y")]
+
+    def test_empty_containers_are_leaves(self):
+        assert _flatten({"a": {}, "b": []}) == [("a", {}), ("b", [])]
+
+    def test_bookkeeping_keys_skipped(self):
+        assert _flatten({"__is_block__": True, "a": 1}) == [("a", 1)]
+
+
+class TestLeafText:
+    def test_bool_and_none_are_json(self):
+        assert _leaf_text(True) == "true"
+        assert _leaf_text(None) == "null"
+
+    def test_truncates_at_120(self):
+        text = _leaf_text("x" * 200)
+        assert text == "x" * 120 + "…"
+
+    def test_leaf_text_escapes_pipe_backtick_newline(self):
+        assert _leaf_text("a|b") == "a\\|b"
+        assert _leaf_text("a`b") == "a'b"
+        assert _leaf_text("a\n  b") == "a b"
+
+
+class TestConfigCell:
+    ATTRS: ClassVar[list[str]] = [
+        "ami",
+        "root_block_device.encrypted",
+        "metadata_options",
+    ]
+
+    def test_drops_non_security_attr(self):
+        cell = _config_cell({"ami": "ami-1", "instance_type": "t3.micro"}, self.ATTRS)
+        assert cell == "`ami = ami-1`"
+
+    def test_unknown_type_is_dash(self):
+        assert _config_cell({"ami": "ami-1"}, None) == "—"
+
+    def test_non_dict_config_is_dash(self):
+        assert _config_cell(None, self.ATTRS) == "—"
+        assert _config_cell("t3.micro", self.ATTRS) == "—"
+
+    def test_nothing_kept_is_dash(self):
+        assert _config_cell({"instance_type": "t3.micro"}, self.ATTRS) == "—"
+
+    def test_nested_block_flattens_to_dot_path(self):
+        cfg = {"root_block_device": [{"encrypted": True, "volume_size": 10}]}
+        assert _config_cell(cfg, self.ATTRS) == "`root_block_device.encrypted = true`"
+
+    def test_whole_subtree_kept_and_joined_with_br(self):
+        cfg = {
+            "ami": "ami-1",
+            "metadata_options": [{"http_tokens": "required", "hop": 1}],
+        }
+        assert _config_cell(cfg, self.ATTRS) == (
+            "`ami = ami-1`<br>`metadata_options.http_tokens = required`"
+            "<br>`metadata_options.hop = 1`"
+        )
+
+    def test_llm_fallback_shaped_config_is_filtered(self):
+        # Fallback path: arbitrary LLM dict, no registry filtering upstream.
+        cfg = {"instance_type": "t3.micro", "ami": "ami-1", "tags": {"Name": "web"}}
+        assert _config_cell(cfg, self.ATTRS) == "`ami = ami-1`"
+
+    def test_long_value_truncates(self):
+        cell = _config_cell({"ami": "a" * 200}, self.ATTRS)
+        assert cell == "`ami = " + "a" * 120 + "…`"
+
+
+class TestGeneratorRegistry:
+    def test_default_registry_is_loaded(self):
+        gen = MarkdownGenerator()
+        assert gen._registry.security_attrs("aws_instance") is not None
+
+    def test_injected_registry(self):
+        reg = _fake_registry()
+        assert MarkdownGenerator(reg)._registry is reg
 
 
 class TestMarkdownGeneratorDependencies:
