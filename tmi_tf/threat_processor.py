@@ -64,6 +64,9 @@ class SecurityThreat:
         mitigation: str | None = None,
         affected_components: list[str] | None = None,
         status: str = "Open",
+        finding_source: str = "",
+        rule_id: str = "",
+        digest: str = "",
     ):
         """
         Initialize security threat.
@@ -79,6 +82,9 @@ class SecurityThreat:
             mitigation: Recommended mitigation strategies
             affected_components: List of affected infrastructure component names
             status: Threat status (Open, In Progress, Resolved, Accepted)
+            finding_source: Provenance of the finding (static-rule, script-review, injection-scan)
+            rule_id: Identifier of the static rule that produced the finding, if any
+            digest: Script digest associated with the finding, if any
         """
         self.name = name
         self.description = description
@@ -95,6 +101,9 @@ class SecurityThreat:
         self.mitigation = mitigation
         self.affected_components = affected_components or []
         self.status = status
+        self.finding_source = finding_source
+        self.rule_id = rule_id
+        self.digest = digest
 
     def __repr__(self) -> str:
         """Return string representation."""
@@ -246,6 +255,9 @@ class ThreatProcessor:
                 mitigation=finding.get("mitigation"),
                 affected_components=finding.get("affected_components"),
                 status="Open",
+                finding_source=finding.get("finding_source", ""),
+                rule_id=finding.get("rule_id", ""),
+                digest=finding.get("digest", ""),
             )
             threats.append(threat)
         logger.info(f"Converted {len(threats)} threats from {repo_name}")
@@ -279,6 +291,18 @@ class ThreatProcessor:
         created_threats = []
         for threat in threats:
             try:
+                extra = [
+                    {"key": k, "value": v}
+                    for k, v in (
+                        ("finding-source", threat.finding_source),
+                        ("rule-id", threat.rule_id),
+                        ("script-digest", threat.digest),
+                    )
+                    if v
+                ]
+                threat_metadata = (
+                    list(metadata or []) + extra if (metadata or extra) else None
+                )
                 created_threat = tmi_client.create_threat(
                     threat_model_id=threat_model_id,
                     name=threat.name,
@@ -291,7 +315,7 @@ class ThreatProcessor:
                     cwe_id=threat.cwe_id,
                     status=threat.status,
                     diagram_id=diagram_id,
-                    metadata=metadata,
+                    metadata=threat_metadata,
                 )
                 created_threats.append(created_threat)
                 logger.info(f"Created threat: {threat.name}")

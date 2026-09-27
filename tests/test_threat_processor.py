@@ -1,8 +1,13 @@
 """Tests for CWE validation in tmi_tf.threat_processor."""
 
 import re
+from unittest.mock import MagicMock
 
-from tmi_tf.threat_processor import SecurityThreat, filter_valid_cwe_ids
+from tmi_tf.threat_processor import (
+    SecurityThreat,
+    ThreatProcessor,
+    filter_valid_cwe_ids,
+)
 
 
 class TestFilterValidCweIds:
@@ -84,3 +89,57 @@ def test_threat_analysis_prompt_lists_every_allowed_id():
     prompt = LLMAnalyzer(MagicMock()).threat_analysis_system
     listed = prompt[prompt.index("# Allowed CWE IDs") :]
     assert {int(x) for x in re.findall(r"\b\d+\b", listed)} == set(ALLOWED_CWE_IDS)
+
+
+class TestFindingSourceMetadata:
+    def test_threats_from_findings_carries_source(self):
+        tp = ThreatProcessor(MagicMock())
+        (t,) = tp.threats_from_findings(
+            [
+                {
+                    "name": "n",
+                    "description": "d",
+                    "threat_type": "Tampering",
+                    "finding_source": "static-rule",
+                    "rule_id": "curl_pipe_sh",
+                    "digest": "[script omitted: sha256:abc, 3 chars]",
+                }
+            ],
+            "r",
+        )
+        assert (t.finding_source, t.rule_id, t.digest) == (
+            "static-rule",
+            "curl_pipe_sh",
+            "[script omitted: sha256:abc, 3 chars]",
+        )
+
+    def test_create_threats_appends_per_threat_metadata(self):
+        tp = ThreatProcessor(MagicMock())
+        client = MagicMock()
+        client.create_threat.return_value = {"id": "1"}
+        base = [{"key": "llm-profile", "value": "p"}]
+        tp.create_threats_in_tmi(
+            [
+                SecurityThreat(
+                    "a",
+                    "d",
+                    "Tampering",
+                    finding_source="injection-scan",
+                    rule_id="instruction",
+                    digest="abc",
+                ),
+                SecurityThreat("b", "d", "Tampering"),
+            ],
+            "tm",
+            client,
+            metadata=base,
+        )
+        first, second = [
+            c.kwargs["metadata"] for c in client.create_threat.call_args_list
+        ]
+        assert first == base + [
+            {"key": "finding-source", "value": "injection-scan"},
+            {"key": "rule-id", "value": "instruction"},
+            {"key": "script-digest", "value": "abc"},
+        ]
+        assert second == base and base == [{"key": "llm-profile", "value": "p"}]
