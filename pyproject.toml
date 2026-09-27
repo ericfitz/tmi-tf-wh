@@ -29,6 +29,11 @@ dependencies = [
     "python-hcl2>=8.1.4",
 ]
 
+[project.optional-dependencies]
+# Jev (TypeSafe System One) shadow comparison for #14 detectors -- never
+# installed by default; `uv sync --extra jev` opts in.
+jev = ["typesafe-sdk>=0.1"]
+
 [project.scripts]
 tmi-tf = "tmi_tf.cli:cli"
 
