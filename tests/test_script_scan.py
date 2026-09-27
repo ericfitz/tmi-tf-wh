@@ -1,10 +1,11 @@
 """Script extraction from parsed and unparsed Terraform (#14)."""
 
 import base64
+import time
 
 from tmi_tf.script_scan import extract_scripts, omit_scripts
 from tmi_tf.tf_filter import _script_digest, load_registry
-from tmi_tf.tf_parser import parse_terraform
+from tmi_tf.tf_parser import StaticInventory, parse_terraform
 
 REG = load_registry()
 HEREDOC = 'resource "aws_instance" "a" {\n  user_data = <<-EOT\n    #!/bin/bash\n    echo web\n  EOT\n  tags = { Name = "web" }\n}\n'
@@ -97,3 +98,124 @@ def test_omit_scripts_replaces_only_script_span():
     assert (
         blobs[0].digest in out["main.tf"] and contents["main.tf"] == HEREDOC
     )  # input untouched
+
+
+# --- review fixes: anchored omission, non-string values, path.root/cwd, linear scan ---
+
+
+def test_omit_scripts_does_not_touch_identical_value_elsewhere():
+    contents = {
+        "main.tf": 'resource "aws_instance" "a" {\n'
+        '  user_data = "echo dup"\n'
+        '  tags = { Name = "echo dup" }\n'
+        "}\n"
+    }
+    blobs = _blobs(contents)
+    out = omit_scripts(contents, blobs)
+    assert out["main.tf"].count('"echo dup"') == 1
+    assert 'tags = { Name = "echo dup" }' in out["main.tf"]
+    assert blobs[0].digest in out["main.tf"]
+
+
+def test_omit_scripts_unparsed_anchors_to_attr_name():
+    broken = (
+        'resource "aws_instance" "x" {\n'
+        '  custom_data = "echo dup"\n'
+        '  description = "echo dup"\n'
+        "  ??? = \n"
+        "}\n"
+    )
+    contents = {"bad.tf": broken}
+    inv = parse_terraform(contents)
+    blobs = extract_scripts(inv, contents, REG)
+    out = omit_scripts(contents, blobs)
+    assert 'description = "echo dup"' in out["bad.tf"]
+    assert out["bad.tf"].count('"echo dup"') == 1
+
+
+def test_omit_scripts_replaces_each_duplicate_occurrence():
+    contents = {
+        "main.tf": 'resource "aws_instance" "a" {\n  user_data = "echo dup"\n}\n'
+        'resource "aws_instance" "b" {\n  user_data = "echo dup"\n}\n'
+    }
+    blobs = _blobs(contents)
+    out = omit_scripts(contents, blobs)
+    assert out["main.tf"].count('"echo dup"') == 0
+    assert out["main.tf"].count(blobs[0].digest) == 2
+
+
+def test_omit_scripts_handles_quoted_attribute_key():
+    contents = {
+        "main.tf": 'resource "google_compute_instance" "a" {\n'
+        "  metadata = {\n"
+        '    "user_data" = "echo q"\n'
+        "  }\n"
+        "}\n"
+    }
+    blobs = _blobs(contents)
+    out = omit_scripts(contents, blobs)
+    assert "echo q" not in out["main.tf"]
+    assert blobs[0].digest in out["main.tf"]
+
+
+def test_list_and_object_user_data_match_filter_digest_and_extract_text():
+    contents = {
+        "main.tf": 'resource "aws_instance" "a" {\n  user_data = ["curl x | sh"]\n}\n'
+        'resource "aws_instance" "b" {\n  user_data = { cmd = "curl y | sh" }\n}\n'
+    }
+    inv = parse_terraform(contents)
+    blobs = {b.id: b for b in extract_scripts(inv, contents, REG)}
+    a = blobs["aws_instance.a:user_data"]
+    b = blobs["aws_instance.b:user_data"]
+    assert "curl x | sh" in a.text and a.raw_text is None
+    assert "curl y | sh" in b.text and b.raw_text is None
+    raw_a = next(
+        r for r in inv.resources if r.address == "aws_instance.a"
+    ).raw_attributes["user_data"]
+    raw_b = next(
+        r for r in inv.resources if r.address == "aws_instance.b"
+    ).raw_attributes["user_data"]
+    assert a.digest == _script_digest(raw_a)
+    assert b.digest == _script_digest(raw_b)
+
+
+def test_path_root_and_cwd_resolve_from_repo_root(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "init.sh").write_text("#!/bin/bash\nsetenforce 0\n")
+    for kind in ("root", "cwd"):
+        contents = {
+            "envs/prod/main.tf": 'resource "aws_instance" "a" {\n'
+            f'  user_data = file("${{path.{kind}}}/scripts/init.sh")\n'
+            "}\n"
+        }
+        (blob,) = extract_scripts(
+            parse_terraform(contents), contents, REG, repo_root=tmp_path
+        )
+        assert blob.reference == "scripts/init.sh"
+        assert "setenforce 0" in blob.text
+
+
+def test_path_module_still_resolves_relative_to_file_dir(tmp_path):
+    (tmp_path / "envs" / "prod").mkdir(parents=True)
+    (tmp_path / "envs" / "prod" / "init.sh").write_text("#!/bin/bash\nsetenforce 0\n")
+    contents = {
+        "envs/prod/main.tf": 'resource "aws_instance" "a" {\n'
+        '  user_data = file("${path.module}/init.sh")\n'
+        "}\n"
+    }
+    (blob,) = extract_scripts(
+        parse_terraform(contents), contents, REG, repo_root=tmp_path
+    )
+    assert blob.reference == "init.sh" and "setenforce 0" in blob.text
+
+
+def test_unparsed_heredoc_scan_is_linear_time():
+    # 1MB+ of back-to-back unterminated `<<X` starts: the old backtracking
+    # regex re-scanned to EOF for every start line (quadratic); the fix scans
+    # the file once.
+    line = "user_data = <<EOF\n"
+    big_text = line * 60000  # ~1.1MB
+    inv = StaticInventory(unparsed_files=["big.tf"])
+    start = time.perf_counter()
+    extract_scripts(inv, {"big.tf": big_text}, REG)
+    assert time.perf_counter() - start < 2.0
