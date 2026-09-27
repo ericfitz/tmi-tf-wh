@@ -1,13 +1,10 @@
 """Script extraction and static rule scan for Terraform scripts (#14)."""
 
-import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml  # pyright: ignore[reportMissingModuleSource]
-
-logger = logging.getLogger(__name__)
 
 RULES_PATH = Path(__file__).parent / "data" / "script_rules.yaml"
 CATEGORIES = frozenset(
@@ -26,6 +23,10 @@ CATEGORIES = frozenset(
 SEVERITIES = ("Low", "Medium", "High", "Critical")
 MASKED = "[masked-secret]"
 _EVIDENCE_CHARS = 120
+# Defense in depth: a pathological single-line script (no newlines) could
+# otherwise drive some patterns' bounded-but-still-large gaps into a slow
+# scan; truncating each line keeps match_rules() near-instant regardless.
+_MAX_LINE_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,11 @@ def load_rules(path: Path = RULES_PATH) -> list[ScriptRule]:
     """Fail fast (like the resource registry) on an invalid rule file."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     rules: list[ScriptRule] = []
+    seen_ids: set[str] = set()
     for entry in raw["rules"]:
+        if entry["id"] in seen_ids:
+            raise ValueError(f"script rules: duplicate rule id {entry['id']!r}")
+        seen_ids.add(entry["id"])
         if entry["category"] not in CATEGORIES:
             raise ValueError(
                 f"script rules: {entry['id']} invalid category {entry['category']!r}"
@@ -80,15 +85,27 @@ def load_rules(path: Path = RULES_PATH) -> list[ScriptRule]:
     return rules
 
 
+def _cap_scan_text(text: str) -> str:
+    """Truncate each line before scanning (see ``_MAX_LINE_CHARS``)."""
+    return "\n".join(line[:_MAX_LINE_CHARS] for line in text.split("\n"))
+
+
 def match_rules(text: str, rules: list[ScriptRule]) -> list[RuleHit]:
     """One grouped hit per rule that matches ``text``."""
+    capped = _cap_scan_text(text)
     hits: list[RuleHit] = []
     for rule in rules:
-        matches = list(rule.pattern.finditer(text))
+        matches = list(rule.pattern.finditer(capped))
         if not matches:
             continue
+        raw_evidence = matches[0].group(0).strip()
+        # Mask any secret a non-secret rule's match happens to contain
+        # (e.g. a Bearer token inside a curl-pipe-to-shell command); a
+        # secret rule's own match is always fully masked.
         evidence = (
-            MASKED if rule.secret else matches[0].group(0).strip()[:_EVIDENCE_CHARS]
+            MASKED
+            if rule.secret
+            else mask_secrets(raw_evidence, rules)[:_EVIDENCE_CHARS]
         )
         hits.append(
             RuleHit(

