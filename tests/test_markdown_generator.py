@@ -644,3 +644,47 @@ class TestMarkdownGeneratorDependencies:
             "| cloud | AWS | S3 | aws_s3_bucket.logs<br>aws_s3_bucket.data |" in result
         )
         assert "| saas | Google | Sign-In | aws_lambda.auth |" in result
+
+
+class TestNoteSize:
+    TMI_NOTE_CAP = 262_144
+
+    def test_150_components_fit_under_note_cap(self):
+        gen = MarkdownGenerator()  # real registry
+        components = [
+            {
+                "id": f"aws_instance.web_{i}",
+                "name": f"web-{i}",
+                "type": "compute",
+                "resource_type": "aws_instance",
+                "purpose": "Serves web traffic for tenant " + "x" * 40,
+                "configuration": {
+                    "ami": f"ami-{i:08d}",
+                    "instance_type": "t3.micro",
+                    "subnet_id": f"aws_subnet.private_{i}.id",
+                    "vpc_security_group_ids": [f"aws_security_group.web_{i}.id"],
+                    "root_block_device": [{"encrypted": True, "volume_size": 20}],
+                    "metadata_options": [
+                        {"http_tokens": "required", "http_endpoint": "enabled"}
+                    ],
+                    "user_data": "sha256:" + "ab" * 32,
+                    "tags": {"Name": f"web-{i}", "Team": "platform"},
+                },
+            }
+            for i in range(150)
+        ]
+        analysis = _make_analysis()
+        analysis.inventory["components"] = components
+        analysis.infrastructure["relationships"] = [
+            {
+                "source_id": f"aws_instance.web_{i}",
+                "target_id": "aws_db_instance.main",
+                "relationship_type": "connects_to",
+                "description": "app to database",
+            }
+            for i in range(150)
+        ]
+        report = gen.generate_inventory_report("TM", "tm-1", [analysis])
+        assert len(report) < self.TMI_NOTE_CAP // 2
+        assert "t3.micro" not in report
+        assert "`root_block_device.encrypted = true`" in report
