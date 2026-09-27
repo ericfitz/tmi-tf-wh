@@ -368,6 +368,142 @@ class TestFilteredHcl:
         assert res.filtered_files["bad.tf"] == contents["bad.tf"]
         assert 'resource "aws_kms_alias" "a"' in res.filtered_files["good.tf"]
         assert any("bad.tf" in r.message for r in caplog.records)
+        assert "bad.tf" in res.prebuilt_inventory["unparsed_files"]
+        assert "good.tf" not in res.prebuilt_inventory["unparsed_files"]
+
+    def test_hash_scripts_matches_quoted_keys_in_object_literals(self, registry):
+        # python-hcl2 8.x keeps object-literal keys quoted ('"user_data"'),
+        # unlike ordinary attribute names -- the match must unquote first.
+        contents = {
+            "m.tf": (
+                'resource "google_compute_instance" "w" {\n'
+                '  machine_type = "e2-medium"\n'
+                '  metadata     = { "user_data" = "echo RESOURCESECRET" }\n'
+                "}\n"
+                'data "template_file" "x" {\n'
+                '  vars = { "template" = "echo DATASECRET" }\n'
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "RESOURCESECRET" not in hcl
+        assert "DATASECRET" not in hcl
+        assert hcl.count("[script omitted: sha256:") == 2
+        dumped = json.dumps(res.prebuilt_inventory)
+        assert "RESOURCESECRET" not in dumped and "DATASECRET" not in dumped
+
+    def test_hash_scripts_skips_dynamic_content_block_recurses_into_it(self, registry):
+        # `dynamic "part" { content { ... } }` nests a real content BLOCK
+        # under the key "content" -- which is also a hash-only name for data
+        # blocks. Hashing the whole block would produce an invalid dynamic
+        # block and lose content_type; it must recurse instead, hashing only
+        # the innermost string attribute that's actually named "content".
+        contents = {
+            "m.tf": (
+                'data "cloudinit_config" "y" {\n'
+                '  dynamic "part" {\n'
+                "    for_each = var.parts\n"
+                "    content {\n"
+                '      content_type = "text/x-shellscript"\n'
+                '      content      = "echo PARTSECRET"\n'
+                "    }\n"
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "PARTSECRET" not in hcl
+        assert "[script omitted: sha256:" in hcl
+        assert "content_type" in hcl
+        reparsed = hcl2.loads(hcl)
+        part = reparsed["data"][0]['"cloudinit_config"']['"y"']["dynamic"][0]['"part"']
+        assert isinstance(part["content"], list)  # still a block, not a string
+        assert part["content"][0]["content_type"] == '"text/x-shellscript"'
+
+    def test_http_request_body_is_hashed(self, registry):
+        contents = {
+            "m.tf": (
+                'data "http" "x" {\n'
+                '  url          = "https://example.com"\n'
+                '  request_body = "echo HTTPSECRET"\n'
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "HTTPSECRET" not in hcl
+        assert "[script omitted: sha256:" in hcl
+
+    def test_external_program_is_hashed(self, registry):
+        contents = {
+            "m.tf": (
+                'data "external" "x" {\n  program = ["echo", "PROGRAMSECRET"]\n}\n'
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "PROGRAMSECRET" not in hcl
+        assert "[script omitted: sha256:" in hcl
+
+    def test_variable_validation_counts_all_dropped_blocks(self, registry):
+        contents = {
+            "m.tf": (
+                'variable "x" {\n'
+                "  type = string\n"
+                "  validation {\n"
+                "    condition     = length(var.x) > 0\n"
+                '    error_message = "must not be empty"\n'
+                "  }\n"
+                "  validation {\n"
+                '    condition     = can(regex("^a", var.x))\n'
+                '    error_message = "must start with a"\n'
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "# 2 non-security attributes omitted" in hcl
+        assert res.omitted_attributes == 2
+        reparsed = hcl2.loads(hcl)  # must still be valid HCL
+        assert "validation" not in json.dumps(reparsed)
+
+    def test_validation_only_variable_renders_valid_hcl(self, registry):
+        contents = {
+            "m.tf": (
+                'variable "x" {\n'
+                "  validation {\n"
+                "    condition     = true\n"
+                '    error_message = "e"\n'
+                "  }\n"
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "# 1 non-security attributes omitted" in hcl
+        reparsed = hcl2.loads(hcl)
+        assert reparsed["variable"][0]['"x"']
+
+    def test_module_content_and_template_not_hashed(self, registry):
+        # data_hash_only_attrs applies only to data blocks -- module inputs
+        # only ever get the general hash_only_attrs.
+        contents = {
+            "m.tf": (
+                'module "m" {\n'
+                '  source   = "../mod"\n'
+                '  content  = "echo MODCONTENT"\n'
+                '  template = "echo MODTEMPLATE"\n'
+                "}\n"
+            )
+        }
+        res = filter_terraform(parse_terraform(contents), contents, registry)
+        hcl = res.filtered_files["m.tf"]
+        assert "echo MODCONTENT" in hcl
+        assert "echo MODTEMPLATE" in hcl
+        assert "[script omitted" not in hcl
 
     def test_module_input_scripts_are_hashed_everywhere(self, registry):
         contents = {

@@ -1589,3 +1589,5 @@ defaults:
   data_hash_only_attrs:
     - template
     - content
+    - request_body
+    - program

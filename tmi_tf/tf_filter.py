@@ -162,15 +162,29 @@ def _script_digest(value: Any) -> str:
     return f"[script omitted: sha256:{digest}, {len(text)} chars]"
 
 
+def _is_block(v: Any) -> bool:
+    """hcl2's nested-block shape: a list of dicts each marked __is_block__, or
+    (defensively) a lone dict already carrying the marker. A name matching
+    `names` (e.g. `content`, the required sub-block name of a `dynamic`
+    block) must not collapse a block into a digest string -- recurse instead."""
+    if isinstance(v, dict):
+        return bool(v.get(BLOCK_MARKER))
+    if isinstance(v, list):
+        return any(isinstance(item, dict) and item.get(BLOCK_MARKER) for item in v)
+    return False
+
+
 def _hash_scripts(value: Any, names: frozenset[str], quoted: bool) -> Any:
     """Replace script-carrying attributes at any depth by a digest string.
 
     ``quoted`` wraps the digest in quotes so ``hcl2.dumps`` emits a literal.
+    Object-literal keys keep their quotes (``{"content"} = ...``), so the
+    match unquotes ``k`` first.
     """
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if k in names:
+            if unquote_literal(k) in names and not _is_block(v):
                 digest = _script_digest(v)
                 out[k] = f'"{digest}"' if quoted else digest
             else:
@@ -200,13 +214,15 @@ def _render_resource(
 def _render_variable(name_q: str, body: dict[str, Any]) -> tuple[str, int]:
     """Variable blocks pass through except `validation` (config detail with no
     security value); comment style matches _render_resource."""
-    if "validation" not in body:
+    validation = body.get("validation")
+    if not validation:
         return hcl2.dumps({"variable": [{name_q: body}]}).rstrip(), 0
+    count = len(validation) if isinstance(validation, list) else 1
     kept = {k: v for k, v in body.items() if k != "validation"}
     text = hcl2.dumps({"variable": [{name_q: kept}]}).rstrip()
     if text.endswith("}"):
-        text = f"{text[:-1].rstrip()}\n  # 1 non-security attributes omitted\n}}"
-    return text, 1
+        text = f"{text[:-1].rstrip()}\n  # {count} non-security attributes omitted\n}}"
+    return text, count
 
 
 _TOP_LEVEL_BLOCK_TYPES = frozenset(
@@ -433,9 +449,11 @@ def filter_terraform(
                 text, omitted = _render_file(inventory.parsed_files[path], registry)
             except Exception as e:
                 # One file's render bug must not abandon the static path for
-                # every other file -- fall back to its raw content instead.
+                # every other file -- fall back to its raw content instead,
+                # reported the same way as any other unparsed file.
                 logger.warning("Static HCL render failed for %s: %s", path, e)
                 result.filtered_files[path] = tf_contents[path]
+                result.prebuilt_inventory["unparsed_files"].append(path)
                 continue
             result.filtered_files[path] = text
             result.omitted_attributes += omitted
