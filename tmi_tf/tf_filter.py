@@ -336,14 +336,22 @@ def _configuration(
 ) -> dict[str, Any]:
     """Select on the raw (pre-clean_value) body -- _select's find_references
     check only matches "${...}" expressions, so a cleaned body would wrongly
-    drop reference-bearing attributes not in the registry's security_attrs."""
+    drop reference-bearing attributes not in the registry's security_attrs.
+
+    Script attrs are hashed on this same raw value, before clean_value runs,
+    so this digest matches the one the filtered HCL (_render_resource) and
+    ScriptBlob (script_scan.py) compute for the same attribute -- all three
+    hash the identical pre-clean_value hcl2 value. clean_value is a no-op on
+    an already-substituted digest string (it isn't quoted or a "${...}"
+    expression), so it passes through unchanged.
+    """
     attrs = registry.security_attrs(resource_type)
     selected = (
         raw_attributes if attrs is None else _select(raw_attributes, _attr_tree(attrs))
     )
-    cfg = clean_value(selected)
-    cfg = {k: v for k, v in cfg.items() if k not in _CONFIG_EXCLUDED}
-    return _hash_scripts(cfg, registry.hash_only_attrs, quoted=False)
+    hashed = _hash_scripts(selected, registry.hash_only_attrs, quoted=False)
+    cfg = clean_value(hashed)
+    return {k: v for k, v in cfg.items() if k not in _CONFIG_EXCLUDED}
 
 
 def _component(

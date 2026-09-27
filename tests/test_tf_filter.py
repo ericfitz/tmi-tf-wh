@@ -8,6 +8,7 @@ from pathlib import Path
 import hcl2
 import pytest  # type: ignore
 
+from tmi_tf.script_scan import extract_scripts
 from tmi_tf.tf_filter import (
     ALLOWED_CATEGORIES,
     REGISTRY_PATH,
@@ -229,6 +230,22 @@ class TestFilteredHcl:
         assert oci["configuration"]["metadata"]["user_data"].startswith(
             "[script omitted: sha256:"
         )
+
+    def test_configuration_digest_matches_scriptblob_digest(self, registry):
+        # #14 fix: _configuration used to hash the clean_value'd (unquoted)
+        # script text, producing a different digest than the filtered HCL
+        # (_render_resource) and ScriptBlob (script_scan.py) -- both of which
+        # hash the raw, pre-clean_value hcl2 value. All three must agree so
+        # the same script isn't shown under two different digests.
+        contents = _load("aws.tf")
+        static = parse_terraform(contents)
+        res = filter_terraform(static, contents, registry)
+        blobs = extract_scripts(static, contents, registry)
+        blob = next(b for b in blobs if b.id == "aws_instance.web:user_data")
+        aws = _component(res, "aws_instance.web")
+        assert aws["configuration"]["user_data"] == blob.digest
+        assert "[script omitted: sha256:" in res.filtered_files["aws.tf"]
+        assert blob.digest in res.filtered_files["aws.tf"]
 
     def test_dynamic_block_is_kept_in_filtered_hcl_and_configuration(self, registry):
         # Finding 1: hcl2 parses `dynamic "ingress" { ... }` under the key

@@ -346,6 +346,26 @@ def test_omit_scripts_warns_and_reports_a_miss(caplog):
     assert all("missing" not in m for m in messages)  # never log script text
 
 
+def test_omit_scripts_warn_false_suppresses_per_blob_warning(caplog):
+    # The pipeline logs one summary warning itself (via unomitted()) and
+    # passes warn=False so omit_scripts doesn't also warn per missed blob.
+    blob = ScriptBlob(
+        "aws_instance.x:user_data",
+        "aws_instance.x",
+        "user_data",
+        "main.tf",
+        _script_digest('"missing"'),
+        "missing",
+        '"missing"',
+    )
+    contents = {"main.tf": 'resource "aws_instance" "x" {\n  other = "value"\n}\n'}
+    with caplog.at_level(logging.WARNING, logger="tmi_tf.script_scan"):
+        out = omit_scripts(contents, [blob], warn=False)
+    assert out["main.tf"] == contents["main.tf"]
+    assert unomitted(contents, [blob]) == [blob]  # still reports the miss
+    assert caplog.records == []  # but never logs it itself
+
+
 def test_omit_scripts_handles_inline_object_keys(caplog):
     contents = {
         "main.tf": 'resource "google_compute_instance" "g" {\n'

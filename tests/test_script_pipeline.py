@@ -1,7 +1,10 @@
+# pyright: reportPrivateImportUsage=false
 """End-to-end: redaction reaches no prompt, scripts are digests in phases 2/3a, findings reach 3b (#14)."""
 
 import json
 from unittest.mock import MagicMock
+
+import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
 from tmi_tf.providers import LLMResponse
@@ -153,3 +156,131 @@ def test_terraform_analysis_defaults():
     assert (
         a.script_findings == [] and a.script_review_error == "" and a.jev_summary == ""
     )
+
+
+_THREAT_ANALYSIS = {
+    "threat_type": "Tampering",
+    "severity": "High",
+    "cvss_vector": "",
+    "cwe_id": ["CWE-94"],
+    "mitigation": "m",
+    "category": "c",
+}
+
+
+def _repo():
+    repo = MagicMock()
+    repo.name, repo.url = "r", "u"
+    repo.get_terraform_content.return_value = {"main.tf": TF}
+    repo.clone_path = None
+    return repo
+
+
+def _phase123_responses():
+    return [
+        _resp(
+            {
+                "components": [
+                    {"id": "aws_instance.web", "name": "Web", "purpose": "p"}
+                ],
+                "services": [],
+                "dependencies": [],
+            }
+        ),  # phase 1 semantic
+        _resp(
+            {"relationships": [], "data_flows": [], "trust_boundaries": []}
+        ),  # phase 2
+        _resp(
+            [
+                {
+                    "name": "Public",
+                    "description": "d",
+                    "affected_components": ["aws_instance.web"],
+                }
+            ]
+        ),  # 3a
+    ]
+
+
+def test_prescan_failure_surfaces_error_and_run_completes(monkeypatch):
+    """A prescan crash must not abort the run, but must be reported: the spec's
+    error-handling requirement says silently skipping the scan (raw script/
+    metadata text then reaching phases 2/3a unredacted) must not pass unnoticed."""
+    monkeypatch.setattr(
+        "tmi_tf.llm_analyzer.scan_metadata",
+        MagicMock(side_effect=RuntimeError("leaked secret text")),
+    )
+    provider = MagicMock()
+    provider.model, provider.provider = "anthropic/m", "anthropic"
+    # No scripts are extracted (prescan crashed before extract_scripts), so no
+    # review call happens and no extra static/injection threats are added:
+    # just phases 1-3a plus one 3b call for the single phase-3a threat.
+    provider.complete.side_effect = [*_phase123_responses(), _resp(_THREAT_ANALYSIS)]
+    result = LLMAnalyzer(provider).analyze_repository(_repo())
+    assert result.success, result.error_message
+    assert "RuntimeError" in result.script_review_error
+    assert "leaked secret text" not in result.script_review_error
+    assert any(f["name"] == "Public" for f in result.security_findings)
+
+
+def test_review_transient_error_is_retried_and_findings_intact(monkeypatch):
+    monkeypatch.setattr("tmi_tf.retry.time.sleep", lambda *_a, **_kw: None)
+    review = json.dumps(
+        [
+            {
+                "script_id": "aws_instance.web:user_data",
+                "title": "RCE",
+                "category": "download_exec",
+                "severity": "Critical",
+                "evidence": "curl",
+                "reason": "pipes",
+            }
+        ]
+    )
+    provider = MagicMock()
+    provider.model, provider.provider = "anthropic/m", "anthropic"
+    transient = litellm.ServiceUnavailableError(
+        message="503", llm_provider="anthropic", model="anthropic/m"
+    )
+    provider.complete.side_effect = [
+        *_phase123_responses(),
+        transient,  # review attempt 1: transient failure
+        LLMResponse(
+            text=review,
+            input_tokens=10,
+            output_tokens=5,
+            cost=0.001,
+            finish_reason="stop",
+        ),  # review attempt 2 (retried): success
+        _resp(_THREAT_ANALYSIS),
+        _resp(_THREAT_ANALYSIS),
+        _resp(_THREAT_ANALYSIS),  # 3b x3 (Public, static+LLM merged, injection)
+    ]
+    result = LLMAnalyzer(provider).analyze_repository(_repo())
+    assert result.success, result.error_message
+    assert result.script_review_error == ""
+    static = next(
+        f for f in result.security_findings if f.get("finding_source") == "static-rule"
+    )
+    assert static["rule_id"] == "curl_pipe_sh" and "pipes" in static["description"]
+
+
+def test_review_hard_failure_keeps_static_findings_reaching_3b():
+    """A non-transient exception from the review LLM call (not a garbage/
+    malformed response, an actual raise) must not drop the static-rule and
+    injection-scan findings already computed before the review call."""
+    provider = MagicMock()
+    provider.model, provider.provider = "anthropic/m", "anthropic"
+    provider.complete.side_effect = [
+        *_phase123_responses(),
+        ValueError("some secret leak"),  # review: hard failure, never retried
+        _resp(_THREAT_ANALYSIS),
+        _resp(_THREAT_ANALYSIS),
+        _resp(_THREAT_ANALYSIS),  # 3b x3 (Public, static-rule, injection)
+    ]
+    result = LLMAnalyzer(provider).analyze_repository(_repo())
+    assert result.success, result.error_message
+    assert "ValueError" in result.script_review_error
+    assert "secret leak" not in result.script_review_error
+    sources = {f.get("finding_source") for f in result.security_findings}
+    assert {"static-rule", "injection-scan"} <= sources

@@ -238,11 +238,14 @@ class LLMAnalyzer:
         list[ScriptBlob],
         list[InjectionHit],
         dict[str, list[RuleHit]],
+        str,
     ]:
         """Redact injection strings, extract scripts, run static rules.
 
         Any failure degrades to "nothing scanned" (raw text goes on unchanged)
-        so a scanner bug never aborts the run.
+        so a scanner bug never aborts the run -- but is reported back via the
+        returned error string (never ""), since silently leaving scripts/
+        metadata unscanned means raw script text reaches later phases.
         """
         try:
             static = parse_terraform(tf_contents)
@@ -267,12 +270,16 @@ class LLMAnalyzer:
                     len(missed),
                     ", ".join(b.id for b in missed),
                 )
-            return tf_contents, static, blobs, hits, static_hits
+            return tf_contents, static, blobs, hits, static_hits, ""
         except Exception as e:
+            # Never log/return str(e): the exception may echo attacker-
+            # controlled script or metadata text. The type name is enough to
+            # diagnose and is always safe to surface.
             logger.warning(
-                "Prescan failed (%s); continuing without script/metadata scan", e
+                "Prescan failed (%s); continuing without script/metadata scan",
+                type(e).__name__,
             )
-            return tf_contents, None, [], [], {}
+            return tf_contents, None, [], [], {}, f"prescan failed: {type(e).__name__}"
 
     def _review_scripts(
         self,
@@ -296,8 +303,9 @@ class LLMAnalyzer:
                 timeout=600.0,
             )
         except Exception as e:
-            logger.error("Script review failed: %s", e)
-            return [], 0, 0, 0.0, f"script review failed: {e}"
+            # Never log/return str(e): see _prescan.
+            logger.error("Script review failed: %s", type(e).__name__)
+            return [], 0, 0, 0.0, f"script review failed: {type(e).__name__}"
         findings = parse_review(response.text or "", included, self.rules)
         return (
             findings,
@@ -338,12 +346,21 @@ class LLMAnalyzer:
             # Get and format Terraform contents
             tf_contents = terraform_repo.get_terraform_content()
             repo_root = getattr(terraform_repo, "clone_path", None)
-            tf_contents, static, blobs, injection_hits, static_hits = self._prescan(
+            (
+                tf_contents,
+                static,
+                blobs,
+                injection_hits,
+                static_hits,
+                prescan_error,
+            ) = self._prescan(
                 tf_contents, repo_root if isinstance(repo_root, Path) else None
             )
             # Script-omit tf_contents itself (not just terraform_text): tf_filter
             # sends unparsed files' raw text as-is, so it must already be safe.
-            tf_contents = omit_scripts(tf_contents, blobs)
+            # warn=False: _prescan already logged one summary warning for any
+            # misses via unomitted(); omit_scripts must not repeat it per-blob.
+            tf_contents = omit_scripts(tf_contents, blobs, warn=False)
             terraform_text = self._format_terraform_contents(tf_contents)
 
             # Phase 1: Inventory Extraction (static analysis + semantic LLM,
@@ -442,8 +459,11 @@ class LLMAnalyzer:
             # Script review (isolated call) + static/injection findings -> raw threats
             if status_callback:
                 status_callback("Script review started")
-            llm_findings, sr_in, sr_out, sr_cost, script_review_error = (
-                self._review_scripts(terraform_repo.name, blobs, static_hits)
+            llm_findings, sr_in, sr_out, sr_cost, review_error = self._review_scripts(
+                terraform_repo.name, blobs, static_hits
+            )
+            script_review_error = "; ".join(
+                e for e in (prescan_error, review_error) if e
             )
             sec_tokens_in += sr_in
             sec_tokens_out += sr_out

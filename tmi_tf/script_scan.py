@@ -470,7 +470,7 @@ def _omit(
 
 
 def omit_scripts(
-    tf_contents: dict[str, str], blobs: list[ScriptBlob]
+    tf_contents: dict[str, str], blobs: list[ScriptBlob], warn: bool = True
 ) -> dict[str, str]:
     """Copy of tf_contents with each blob's raw span replaced by its digest
     marker, anchored to that attribute's own assignment.
@@ -478,15 +478,18 @@ def omit_scripts(
     A blob whose span can't be found and replaced is logged (id/file only,
     never the script text) rather than failing silently; call
     `unomitted(tf_contents, blobs)` to get that list back programmatically.
+    Pass ``warn=False`` when the caller already reports misses itself (e.g.
+    one summary warning covering the whole run), so they aren't logged twice.
     """
     out, misses = _omit(tf_contents, blobs)
-    for b in misses:
-        logger.warning(
-            "Script omission: %s (attr %r in %s) not found -- left unredacted",
-            b.id,
-            b.attr_path.rsplit(".", 1)[-1],
-            b.file,
-        )
+    if warn:
+        for b in misses:
+            logger.warning(
+                "Script omission: %s (attr %r in %s) not found -- left unredacted",
+                b.id,
+                b.attr_path.rsplit(".", 1)[-1],
+                b.file,
+            )
     return out
 
 
