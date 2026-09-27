@@ -167,6 +167,19 @@ _B64_LITERAL_RE = re.compile(r"^[A-Za-z0-9+/=\s]{8,}$")
 _LITERAL_LINE_RE = re.compile(
     r'^[ \t]*"?(?P<attr>[\w-]+)"?[ \t]*=[ \t]*(?P<full>"(?P<body>(?:[^"\\]|\\.)*)")'
 )
+# Omission-side literal finder: every `attr = "..."` on a line, not just one
+# at line start, so a key inside an inline object constructor
+# (`metadata = { "startup-script" = "...", foo = "x" }`) is found too. The
+# key must follow line start or a `{`/`,`/`(`/whitespace delimiter. Other
+# strings and `#`/`//` comments are consumed whole (leftmost match) so an
+# assignment-shaped fragment inside them is never matched. finditer on one
+# line: each failed attempt is bounded by that line, and a string body can
+# only fail to close once per line (after the last quote), so linear.
+_INLINE_LITERAL_RE = re.compile(
+    r'(?:^|(?<=[{,(\s]))"?(?P<attr>[\w-]+)"?[ \t]*=[ \t]*(?P<full>"(?:[^"\\]|\\.)*")'
+    r'|"(?:[^"\\]|\\.)*"'
+    r"|(?:#|//).*"
+)
 _HEREDOC_START_LINE_RE = re.compile(
     r'^[ \t]*"?(?P<attr>[\w-]+)"?[ \t]*=[ \t]*(?P<open><<-?(?P<marker>\w+).*)$'
 )
@@ -420,18 +433,14 @@ def _rebuild_without_scripts(
                 out_lines.extend(lines[i : j + 1])
             i = j + 1
             continue
-        m = _LITERAL_LINE_RE.match(line)
-        if m:
-            queue = wanted.get((m.group("attr"), m.group("full")))
+        parts: list[str] = []
+        pos = 0
+        for m in _INLINE_LITERAL_RE.finditer(line):
+            queue = m.group("attr") and wanted.get((m.group("attr"), m.group("full")))
             if queue:
-                out_lines.append(
-                    line[: m.start("full")]
-                    + _marker_for(queue.pop(0))
-                    + line[m.end("full") :]
-                )
-                i += 1
-                continue
-        out_lines.append(line)
+                parts += [line[pos : m.start("full")], _marker_for(queue.pop(0))]
+                pos = m.end("full")
+        out_lines.append("".join(parts) + line[pos:])
         i += 1
     return "\n".join(out_lines)
 

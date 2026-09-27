@@ -344,3 +344,48 @@ def test_omit_scripts_warns_and_reports_a_miss(caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert any("aws_instance.x:user_data" in m for m in messages)
     assert all("missing" not in m for m in messages)  # never log script text
+
+
+def test_omit_scripts_handles_inline_object_keys(caplog):
+    contents = {
+        "main.tf": 'resource "google_compute_instance" "g" {\n'
+        '  metadata = { "startup-script" = "curl a | sh", foo = "x" }\n}\n'
+        'resource "aws_instance" "a" {\n  tags = { "user_data" = "curl b | sh" }\n}\n'
+    }
+    blobs = _blobs(contents)
+    assert {b.id for b in blobs} == {
+        "google_compute_instance.g:metadata.startup-script",
+        "aws_instance.a:tags.user_data",
+    }
+    with caplog.at_level(logging.WARNING, logger="tmi_tf.script_scan"):
+        out = omit_scripts(contents, blobs)["main.tf"]
+    assert "curl a" not in out and "curl b" not in out
+    assert 'foo = "x" }' in out
+    assert not unomitted(contents, blobs) and not caplog.records
+
+
+def test_omit_scripts_inline_object_shape_is_linear():
+    n = 20000
+    text = "".join(f'tags = {{ "user_data" = "x{i}", foo = "y" }}\n' for i in range(n))
+    blobs = [
+        ScriptBlob(
+            f"r{i}:tags.user_data",
+            f"r{i}",
+            "tags.user_data",
+            "big.tf",
+            _script_digest(f'"x{i}"'),
+            f"x{i}",
+            f'"x{i}"',
+        )
+        for i in range(n)
+    ]
+    contents = {"big.tf": text}
+    start = time.perf_counter()
+    out = omit_scripts(contents, blobs)
+    assert time.perf_counter() - start < 2.0
+    assert not unomitted(contents, blobs)
+    assert '"x0"' not in out["big.tf"] and out["big.tf"].count('foo = "y"') == n
+    # ~1MB single line of unterminated inline assignments: still linear.
+    start = time.perf_counter()
+    omit_scripts({"big.tf": '{ user_data = "' * 70000}, blobs[:1])
+    assert time.perf_counter() - start < 2.0
