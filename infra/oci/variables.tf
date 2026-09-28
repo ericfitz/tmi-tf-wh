@@ -103,7 +103,7 @@ variable "llm_profile" {
 variable "llm_api_key_names" {
   description = "Env var names of the LLM keys profiles reference; one vault secret each (values set out of band)"
   type        = list(string)
-  default     = ["OPENAI_CYBER_API_KEY", "ANTHROPIC_API_KEY"]
+  default     = ["OPENAI_CYBER_API_KEY", "ANTHROPIC_CYBER_API_KEY"]
 }
 
 variable "tmi_server_url" {

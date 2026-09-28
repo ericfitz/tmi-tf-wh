@@ -62,7 +62,7 @@ profiles:
     provider: anthropic
     model: claude-opus-4-8
     auth: api_key
-    api_key: ANTHROPIC_API_KEY
+    api_key: ANTHROPIC_CYBER_API_KEY
   grok-oci:
     provider: oci
     model: xai.grok-4
@@ -165,7 +165,7 @@ Deleted: `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY` handling in `Config`
 
 Example failure statuses:
 - `unknown LLM profile "gpt5cyber" (available: gpt56cyber, grok-oci, opus48)`
-- `LLM profile "opus48" needs ANTHROPIC_API_KEY, which is not set`
+- `LLM profile "opus48" needs ANTHROPIC_CYBER_API_KEY, which is not set`
 
 ## Metadata
 
@@ -227,3 +227,12 @@ Unit tests (TDD):
 Post-deploy check: two prod invocations on TM 02909291 with different
 profiles (`gpt56cyber`, then an Anthropic profile), confirmed via the
 `llm-model` / `llm-profile` artifact metadata.
+
+## Decision: API key classes (Eric, 2026-09-27; human-made)
+
+Key env var names encode what the key can do:
+
+- `<PROVIDER>_CYBER_API_KEY` (`OPENAI_CYBER_API_KEY`, `ANTHROPIC_CYBER_API_KEY`): access to cyber models post-trained on security tasks (Mythos, `gpt-*-cyber`) and reduced safety guardrails (fewer refusals).
+- `<PROVIDER>_TAC_API_KEY` / `<PROVIDER>_CVP_API_KEY` (`OPENAI_TAC_API_KEY`, `ANTHROPIC_CVP_API_KEY`): reduced guardrails, no cyber-model access.
+
+`ANTHROPIC_API_KEY` was renamed `ANTHROPIC_CYBER_API_KEY` in profiles and in the AWS deployment Secret. `ANTHROPIC_CVP_API_KEY` backs `fable51`. `OPENAI_TAC_API_KEY` is reserved; no profile uses it yet.

@@ -46,7 +46,7 @@ cp .env.example .env
 
 3. Edit `.env` and set your API keys:
 ```bash
-ANTHROPIC_API_KEY=your_actual_anthropic_api_key_here
+OPENAI_CYBER_API_KEY=your_openai_cyber_api_key_here  # names match api_key in llm-profiles.yaml
 GITHUB_TOKEN=your_github_token_here  # Optional
 ```
 
