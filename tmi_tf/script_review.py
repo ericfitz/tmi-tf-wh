@@ -3,6 +3,7 @@
 import html
 import logging
 import secrets
+from collections.abc import Sequence
 from typing import Any
 
 from tmi_tf.json_extract import extract_json_array
@@ -227,6 +228,7 @@ def merge_findings(
     static_hits: dict[str, list[RuleHit]],
     llm_findings: list[dict[str, Any]],
     injection_hits: list[InjectionHit],
+    refused: Sequence[str] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Raw threats (phase-3a shape + finding_source/rule_id/digest) and note rows.
 
@@ -292,6 +294,33 @@ def merge_findings(
                 "file": b.file,
                 "digest": b.digest,
                 "severity": f["severity"],
+            }
+        )
+    for sid in refused:
+        b = by_id[sid]
+        threats.append(
+            {
+                "name": f"Model refused to review script in {b.component_id} {b.attr_path}",
+                "description": (
+                    f"The LLM refused to review script {b.digest} on {b.component_id} "
+                    f"({b.attr_path}, {b.file}) (finish_reason=content_filter). A refusal "
+                    "usually means the script looks malicious: manual review required."
+                ),
+                "affected_components": [b.component_id],
+                "finding_source": "llm-refusal",
+                "rule_id": "content_filter",
+                "digest": b.digest,
+                "severity": "High",
+            }
+        )
+        rows.append(
+            {
+                "source": "llm-refusal",
+                "rule": "content_filter",
+                "component": b.component_id,
+                "file": b.file,
+                "digest": b.digest,
+                "severity": "High",
             }
         )
     renamed = _redacted_locations(injection_hits)

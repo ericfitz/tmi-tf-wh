@@ -82,7 +82,7 @@ class SecurityThreat:
             mitigation: Recommended mitigation strategies
             affected_components: List of affected infrastructure component names
             status: Threat status (Open, In Progress, Resolved, Accepted)
-            finding_source: Provenance of the finding (static-rule, script-review, injection-scan)
+            finding_source: Provenance of the finding (static-rule, script-review, llm-refusal, injection-scan)
             rule_id: Identifier of the static rule that produced the finding, if any
             digest: Script digest associated with the finding, if any
         """

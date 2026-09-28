@@ -231,26 +231,30 @@ def evaluate_llm(
     provider: Any,
     rules: list[ScriptRule],
     cap: int = REVIEW_CAP,
-) -> tuple[dict[str, bool], list[int], float, list[str]]:
-    """(verdicts, per-call latencies, total cost, omitted-blob ids).
+) -> tuple[dict[str, bool], list[int], float, list[str], list[str]]:
+    """(verdicts, per-call latencies, total cost, omitted-blob ids, refused ids).
 
     A blob omitted by the per-call char cap is still counted as not flagged
     (`verdicts[id] = False`, same as before) -- it just never reached the
     LLM to be flagged -- but its id is also collected and returned so the
     caller can report how many scripts the cap silently excluded.
+
+    Mirrors production (#88): a refused (content_filter) chunk is re-reviewed
+    one script at a time, and a script refused on its own counts as flagged.
     """
     system = (prompts_dir() / "script_review_system.txt").read_text(encoding="utf-8")
     template = (prompts_dir() / "script_review_user.txt").read_text(encoding="utf-8")
     verdicts: dict[str, bool] = {}
     latencies: list[int] = []
     omitted: list[str] = []
-    cost = 0.0
-    for i in range(0, len(samples), 10):  # 10 scripts per call keeps each request small
-        chunk = samples[i : i + 10]
-        blobs = [_blob(s) for s in chunk]
+    refused: list[str] = []
+    costs: list[float] = []
+
+    def review(blobs: list[ScriptBlob]) -> tuple[bool, list[str], set[str]]:
+        """(refused, included ids, flagged ids) for one call."""
         static = {b.id: h for b in blobs if (h := match_rules(b.text, rules))}
         scripts, nonce, included, chunk_omitted = build_review_input(blobs, static, cap)
-        omitted += chunk_omitted
+        omitted.extend(chunk_omitted)
         t0 = time.monotonic()
         resp = provider.complete(
             system,
@@ -261,10 +265,32 @@ def evaluate_llm(
             600.0,
         )
         latencies.append(int((time.monotonic() - t0) * 1000))
-        cost += resp.cost
-        flagged = {f["script_id"] for f in parse_review(resp.text or "", included)}
-        verdicts.update({b.id: b.id in flagged for b in blobs})
-    return verdicts, latencies, cost, omitted
+        costs.append(resp.cost)
+        if not resp.text and getattr(resp, "finish_reason", "") == "content_filter":
+            return True, included, set()
+        return (
+            False,
+            included,
+            {f["script_id"] for f in parse_review(resp.text or "", included)},
+        )
+
+    for i in range(0, len(samples), 10):  # 10 scripts per call keeps each request small
+        blobs = [_blob(s) for s in samples[i : i + 10]]
+        verdicts.update({b.id: False for b in blobs})
+        was_refused, included, flagged = review(blobs)
+        if was_refused and len(included) > 1:
+            for b in blobs:
+                if b.id not in included:
+                    continue
+                solo_refused, _, solo_flagged = review([b])
+                if solo_refused:
+                    refused.append(b.id)
+                flagged |= solo_flagged
+        elif was_refused:
+            refused += included
+        verdicts.update({k: True for k in flagged | set(refused) if k in verdicts})
+    # Omitted ids were collected again by the per-script calls; keep one each.
+    return verdicts, latencies, sum(costs), list(dict.fromkeys(omitted)), refused
 
 
 def evaluate_jev(
@@ -541,7 +567,9 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(2)
         provider = get_llm_provider(profile)
-        llm, lat, cost, llm_omitted = evaluate_llm(scripts, provider, rules)
+        llm, lat, cost, llm_omitted, llm_refused = evaluate_llm(
+            scripts, provider, rules
+        )
         llm_row = _row(
             f"LLM script review ({args.profile})",
             llm,
@@ -552,6 +580,25 @@ def main(argv: list[str] | None = None) -> None:
             cost,
         )
         rows.append(llm_row)
+        if llm_refused:
+            # The headline row counts a refusal as a flag (production, #88);
+            # this row shows what the review alone found.
+            rows.append(
+                _row(
+                    f"LLM script review ({args.profile}) [refusal = miss]",
+                    {k: v and k not in llm_refused for k, v in llm.items()},
+                    truth_s,
+                    scripts,
+                    _pct(lat, 0.5),
+                    _pct(lat, 0.95),
+                    cost,
+                )
+            )
+            notes.append(
+                f"LLM review: the model refused (content_filter) {len(llm_refused)} "
+                f"script(s), counted as flagged in the headline row: "
+                f"{', '.join(llm_refused)}"
+            )
         if llm_omitted:
             notes.append(
                 f"LLM review: {len(llm_omitted)} script(s) omitted by the per-call char "

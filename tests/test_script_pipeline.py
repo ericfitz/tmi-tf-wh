@@ -401,3 +401,73 @@ def test_shadow_receives_pre_redaction_metadata_keyed_like_ours():
     assert meta["variable.x.description"] == INJECT
     assert ours["variable.x.description"] is True
     assert set(meta) <= set(ours)
+
+
+def _refused():
+    return LLMResponse(
+        text=None,
+        input_tokens=10,
+        output_tokens=0,
+        cost=0.001,
+        finish_reason="content_filter",
+    )
+
+
+def _run_with(respond, tf=TF):
+    """Phases 1-3a answer in order; later calls go to ``respond(user_prompt)``."""
+    fixed = _phase123_responses()
+    provider = MagicMock()
+    provider.model, provider.provider = "anthropic/m", "anthropic"
+    provider.complete.side_effect = lambda s, u, *a: (
+        fixed.pop(0) if fixed else respond(u)
+    )
+    repo = _repo()
+    repo.get_terraform_content.return_value = {"main.tf": tf}
+    return LLMAnalyzer(provider).analyze_repository(repo)
+
+
+def _review_or_3b(on_review):
+    return lambda u: (
+        on_review(u) if "untrusted-script" in u else _resp(_THREAT_ANALYSIS)
+    )
+
+
+def test_refused_script_review_becomes_a_manual_review_finding():
+    result = _run_with(_review_or_3b(lambda u: _refused()))
+    assert result.success, result.error_message
+    assert result.script_review_error == ""
+    refusal = next(
+        f for f in result.security_findings if f.get("finding_source") == "llm-refusal"
+    )
+    assert refusal["rule_id"] == "content_filter"
+    assert "manual review" in refusal["description"]
+    assert "curl http://evil" not in json.dumps(result.security_findings)
+    # Static rules still apply to the refused script.
+    assert any(
+        f.get("finding_source") == "static-rule" for f in result.security_findings
+    )
+    assert {r["source"] for r in result.script_findings} >= {
+        "llm-refusal",
+        "static-rule",
+    }
+    assert "script review: 1 script(s)" in result.refusals
+
+
+TWO_SCRIPTS = TF + (
+    'resource "aws_instance" "ok" {\n  ami = "ami-2"\n  user_data = <<-EOT\n'
+    "    #!/bin/bash\n    echo hello-from-ok\n  EOT\n}\n"
+)
+
+
+def test_refused_chunk_is_split_and_only_the_refused_script_flagged():
+    def on_review(u):
+        # Refuse any review that contains the malicious script.
+        return _refused() if "curl http://evil" in u else _resp([])
+
+    result = _run_with(_review_or_3b(on_review), tf=TWO_SCRIPTS)
+    assert result.success, result.error_message
+    refused = [
+        f for f in result.security_findings if f.get("finding_source") == "llm-refusal"
+    ]
+    assert [f["affected_components"] for f in refused] == [["aws_instance.web"]]
+    assert "script review: 1 script(s)" in result.refusals

@@ -130,6 +130,44 @@ class TestPhase3Decomposition:
         assert provider.complete.call_count == 4
         assert result.security_findings == []
 
+    def test_phase2_refusal_fails_the_run_without_retry(self):
+        refused = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=0,
+            cost=0.01,
+            finish_reason="content_filter",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps({"components": [], "services": []})),
+            refused,
+        ]
+
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        assert result.success is False
+        assert provider.complete.call_count == 2
+        assert "refused" in result.error_message
+        assert "content_filter" in result.error_message
+
+    def test_phase3b_refusal_is_counted_and_run_continues(self):
+        refused = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=0,
+            cost=0.01,
+            finish_reason="content_filter",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = self._one_threat_responses(refused)
+
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        assert result.success is True
+        assert result.security_findings == []
+        assert result.refusals == "phase 3b: 1 threat(s)"
+
     def test_phase3a_empty_produces_no_findings(self):
         inventory = {"components": [], "services": []}
         infrastructure = {"relationships": [], "data_flows": []}

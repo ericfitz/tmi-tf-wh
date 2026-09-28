@@ -606,6 +606,19 @@ class TestScriptsSection:
             "id", [self._analysis()]
         )
 
+    def test_refusals_row_in_job_info(self):
+        gen = MarkdownGenerator()
+        info = gen._generate_analysis_job_info(
+            "id", [self._analysis(refusals="script review: 2 script(s)")]
+        )
+        assert (
+            "**Model refusals (content_filter)**: repo: script review: 2 script(s)"
+            in info
+        )
+        assert "Model refusals" not in gen._generate_analysis_job_info(
+            "id", [self._analysis()]
+        )
+
     def test_findings_survive_sanitizer_with_special_chars_in_file_path(self):
         """digest/rule/file all route through _md_cell; the sanitizer must see
         entities, never raw <, & or | that it could mangle or that could break

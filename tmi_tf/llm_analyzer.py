@@ -63,6 +63,15 @@ def format_terraform_contents(tf_contents: dict[str, str]) -> str:
     return "\n".join(sections)
 
 
+class LLMRefusalError(Exception):
+    """The model refused (finish_reason=content_filter, no text). Carries the
+    response so callers can still count its tokens and cost."""
+
+    def __init__(self, message: str, response: LLMResponse):
+        super().__init__(message)
+        self.response = response
+
+
 class TerraformAnalysis:
     """Result of Terraform analysis (3-phase structured output)."""
 
@@ -87,6 +96,7 @@ class TerraformAnalysis:
         script_findings: list[dict[str, Any]] | None = None,
         script_review_error: str = "",
         jev_summary: str = "",
+        refusals: str = "",
     ):
         """
         Initialize analysis result.
@@ -113,6 +123,8 @@ class TerraformAnalysis:
             jev_summary: Jev shadow comparison summary line (#14 Task 10),
                 e.g. "agree=5 disagree=1 review=0 p50=120ms"; "" when the
                 shadow is disabled/absent or errored during this run
+            refusals: Model refusals (content_filter) during this run, e.g.
+                "script review: 2 script(s); phase 3b: 1 threat(s)"
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
@@ -133,6 +145,7 @@ class TerraformAnalysis:
         self.script_findings = script_findings or []
         self.script_review_error = script_review_error
         self.jev_summary = jev_summary
+        self.refusals = refusals
 
     @property
     def analysis_content(self) -> str:
@@ -305,39 +318,79 @@ class LLMAnalyzer:
                 f"prescan failed: {type(e).__name__}",
             )
 
+    def _review_call(
+        self,
+        repo_name: str,
+        blobs: list[ScriptBlob],
+        static_hits: dict[str, list[RuleHit]],
+    ) -> tuple[LLMResponse, list[str]]:
+        scripts, nonce, included, _ = build_review_input(blobs, static_hits)
+        user = self.script_review_user_template.format(
+            repo_name=repo_name, count=len(included), nonce=nonce, scripts=scripts
+        )
+        response = self._call_llm(
+            self.script_review_system,
+            user,
+            "script_review",
+            max_tokens=16000,
+            timeout=600.0,
+        )
+        return response, included
+
     def _review_scripts(
         self,
         repo_name: str,
         blobs: list[ScriptBlob],
         static_hits: dict[str, list[RuleHit]],
-    ) -> tuple[list[dict[str, Any]], int, int, float, str]:
-        """One isolated LLM call; (findings, tokens_in, tokens_out, cost, error)."""
+    ) -> tuple[list[dict[str, Any]], int, int, float, str, list[str]]:
+        """One isolated LLM call; (findings, tokens_in, tokens_out, cost, error,
+        refused script ids). A refused chunk is re-reviewed one script at a
+        time, so only the scripts the model won't look at are reported."""
         if not blobs:
-            return [], 0, 0, 0.0, ""
-        scripts, nonce, included, _ = build_review_input(blobs, static_hits)
-        user = self.script_review_user_template.format(
-            repo_name=repo_name, count=len(included), nonce=nonce, scripts=scripts
-        )
-        try:
-            response = self._call_llm(
-                self.script_review_system,
-                user,
-                "script_review",
-                max_tokens=16000,
-                timeout=600.0,
+            return [], 0, 0, 0.0, "", []
+        by_id = {b.id: b for b in blobs}
+        findings: list[dict[str, Any]] = []
+        refused: list[str] = []
+        errors: list[str] = []
+        t_in = t_out = 0
+        cost = 0.0
+        # ponytail: one call per script of a refused chunk; batch if repos with
+        # many scripts hit refusals often.
+        pending: list[list[ScriptBlob]] = [blobs]
+        while pending:
+            chunk = pending.pop(0)
+            try:
+                response, included = self._review_call(repo_name, chunk, static_hits)
+            except LLMRefusalError as e:
+                t_in += e.response.input_tokens
+                t_out += e.response.output_tokens
+                cost += e.response.cost
+                _, _, included, _ = build_review_input(chunk, static_hits)
+                if len(included) == 1:
+                    refused += included
+                else:
+                    logger.warning(
+                        "Script review refused for %d scripts; reviewing one at a time",
+                        len(included),
+                    )
+                    pending += [[by_id[i]] for i in included]
+                continue
+            except Exception as e:
+                # Never log/return str(e): see _prescan.
+                logger.error("Script review failed: %s", type(e).__name__)
+                errors.append(f"script review failed: {type(e).__name__}")
+                continue
+            t_in += response.input_tokens
+            t_out += response.output_tokens
+            cost += response.cost
+            findings += parse_review(response.text or "", included, self.rules)
+        if refused:
+            logger.warning(
+                "Script review: model refused %d script(s): %s",
+                len(refused),
+                ", ".join(refused),
             )
-        except Exception as e:
-            # Never log/return str(e): see _prescan.
-            logger.error("Script review failed: %s", type(e).__name__)
-            return [], 0, 0, 0.0, f"script review failed: {type(e).__name__}"
-        findings = parse_review(response.text or "", included, self.rules)
-        return (
-            findings,
-            response.input_tokens,
-            response.output_tokens,
-            response.cost,
-            "",
-        )
+        return findings, t_in, t_out, cost, "; ".join(dict.fromkeys(errors)), refused
 
     def analyze_repository(
         self,
@@ -498,9 +551,14 @@ class LLMAnalyzer:
             # Script review (isolated call) + static/injection findings -> raw threats
             if status_callback:
                 status_callback("Script review started")
-            llm_findings, sr_in, sr_out, sr_cost, review_error = self._review_scripts(
-                terraform_repo.name, blobs, static_hits
-            )
+            (
+                llm_findings,
+                sr_in,
+                sr_out,
+                sr_cost,
+                review_error,
+                refused_scripts,
+            ) = self._review_scripts(terraform_repo.name, blobs, static_hits)
             script_review_error = "; ".join(
                 e for e in (prescan_error, review_error) if e
             )
@@ -511,7 +569,7 @@ class LLMAnalyzer:
             total_output_tokens += sr_out
             total_cost += sr_cost
             extra_threats, script_findings = merge_findings(
-                blobs, static_hits, llm_findings, injection_hits
+                blobs, static_hits, llm_findings, injection_hits, refused_scripts
             )
             raw_threats = list(raw_threats) + extra_threats
             logger.info(
@@ -538,6 +596,7 @@ class LLMAnalyzer:
             if status_callback:
                 status_callback("Phase 3b (Per-Threat Analysis) started")
             security_findings: list[dict[str, Any]] = []
+            refused_threats = 0
 
             for i, raw_threat in enumerate(raw_threats, 1):
                 threat_name = raw_threat.get("name", "Unnamed Threat")
@@ -611,13 +670,21 @@ class LLMAnalyzer:
                             'IDs" list. Redo the CWE mapping using only allowed '
                             "IDs and return the complete JSON object again."
                         )
-                        retry_result, r_in, r_out, r_cost = self._call_llm_json(
-                            system_prompt=self.threat_analysis_system,
-                            user_prompt=retry_user,
-                            phase_name=f"threat_analysis_{i}_cwe_retry",
-                            max_tokens=4000,
-                            timeout=120.0,
-                        )
+                        try:
+                            retry_result, r_in, r_out, r_cost = self._call_llm_json(
+                                system_prompt=self.threat_analysis_system,
+                                user_prompt=retry_user,
+                                phase_name=f"threat_analysis_{i}_cwe_retry",
+                                max_tokens=4000,
+                                timeout=120.0,
+                            )
+                        except LLMRefusalError as e:
+                            # Keep the first analysis; leftover CWEs are
+                            # dropped later by SecurityThreat.
+                            retry_result = None
+                            r_in = e.response.input_tokens
+                            r_out = e.response.output_tokens
+                            r_cost = e.response.cost
                         sec_tokens_in += r_in
                         sec_tokens_out += r_out
                         sec_cost += r_cost
@@ -676,6 +743,18 @@ class LLMAnalyzer:
                     }
                     security_findings.append(finding)
 
+                except LLMRefusalError as e:
+                    refused_threats += 1
+                    sec_tokens_in += e.response.input_tokens
+                    sec_tokens_out += e.response.output_tokens
+                    sec_cost += e.response.cost
+                    total_input_tokens += e.response.input_tokens
+                    total_output_tokens += e.response.output_tokens
+                    total_cost += e.response.cost
+                    logger.warning(
+                        "Phase 3b: model refused to analyze threat '%s'", threat_name
+                    )
+                    continue
                 except Exception as e:
                     logger.error(
                         "Phase 3b: Failed to analyze threat '%s': %s", threat_name, e
@@ -687,6 +766,14 @@ class LLMAnalyzer:
                 len(security_findings),
                 len(raw_threats),
             )
+            refusal_parts = []
+            if refused_scripts:
+                refusal_parts.append(f"script review: {len(refused_scripts)} script(s)")
+            if refused_threats:
+                refusal_parts.append(f"phase 3b: {refused_threats} threat(s)")
+            refusals = "; ".join(refusal_parts)
+            if refusals and status_callback:
+                status_callback(f"Model refusals (content_filter): {refusals}")
             if status_callback:
                 status_callback("Phase 3 (Security) complete")
 
@@ -722,6 +809,7 @@ class LLMAnalyzer:
                 script_findings=script_findings,
                 script_review_error=script_review_error,
                 jev_summary=jev_summary,
+                refusals=refusals,
             )
 
         except Exception as e:
@@ -869,6 +957,11 @@ class LLMAnalyzer:
                 input_tokens=first.input_tokens + response.input_tokens,
                 output_tokens=first.output_tokens + response.output_tokens,
                 cost=first.cost + response.cost,
+            )
+        if not response.text and response.finish_reason == "content_filter":
+            raise LLMRefusalError(
+                f"Phase {phase_name}: model refused (finish_reason=content_filter)",
+                response,
             )
         logger.info(
             "Phase %s: %d input, %d output tokens, finish_reason=%s, $%.4f",

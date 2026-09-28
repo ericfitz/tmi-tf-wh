@@ -401,6 +401,9 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         jev = next((a.jev_summary for a in successful if a.jev_summary), "")
         if jev:
             parts.append(f"**Jev shadow**: {jev}")
+        refusals = [f"{a.repo_name}: {a.refusals}" for a in successful if a.refusals]
+        if refusals:
+            parts.append(f"**Model refusals (content_filter)**: {'; '.join(refusals)}")
 
         # Per-repository metrics table
         if successful:
