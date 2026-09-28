@@ -234,5 +234,6 @@ Key env var names encode what the key can do:
 
 - `<PROVIDER>_CYBER_API_KEY` (`OPENAI_CYBER_API_KEY`, `ANTHROPIC_CYBER_API_KEY`): access to cyber models post-trained on security tasks (Mythos, `gpt-*-cyber`) and reduced safety guardrails (fewer refusals).
 - `<PROVIDER>_TAC_API_KEY` / `<PROVIDER>_CVP_API_KEY` (`OPENAI_TAC_API_KEY`, `ANTHROPIC_CVP_API_KEY`): reduced guardrails, no cyber-model access.
+- `<PROVIDER>_API_KEY` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`): standard keys; no cyber-model access, standard guardrails.
 
 `ANTHROPIC_API_KEY` was renamed `ANTHROPIC_CYBER_API_KEY` in profiles and in the AWS deployment Secret. `ANTHROPIC_CVP_API_KEY` backs `fable51`. `OPENAI_TAC_API_KEY` is reserved; no profile uses it yet.
