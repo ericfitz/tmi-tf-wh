@@ -130,7 +130,7 @@ def test_hijack_verdict_direction_when_both_sides_have_data():
 def test_decision_verdict_insufficient_data_when_hijack_n_is_zero():
     jev_row = {"hijack_ci": (0.0, 1.0), "hijack_n": 0, "f1": 0.9, "p95": 10}
     llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
-    assert eval_jev.decision_verdict(jev_row, llm_row) == (
+    assert eval_jev.decision_verdict(jev_row, llm_row, (0.1, 0.5)) == (
         "insufficient data (no hijack-rate sample on one side)"
     )
 
@@ -138,14 +138,14 @@ def test_decision_verdict_insufficient_data_when_hijack_n_is_zero():
 def test_decision_verdict_jev_wins_higher_f1_and_not_worse_hijack():
     jev_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.9, "p95": 10}
     llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
-    assert eval_jev.decision_verdict(jev_row, llm_row) == "Jev wins"
+    assert eval_jev.decision_verdict(jev_row, llm_row, (0.1, 0.5)) == "Jev wins"
 
 
 def test_decision_verdict_jev_loses_when_its_hijack_rate_is_worse():
     # Higher F1 but a strictly worse (higher) hijack rate -- must not win.
     jev_row = {"hijack_ci": (0.6, 0.8), "hijack_n": 5, "f1": 0.9, "p95": 10}
     llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
-    assert eval_jev.decision_verdict(jev_row, llm_row) == (
+    assert eval_jev.decision_verdict(jev_row, llm_row, (0.1, 0.5)) == (
         "LLM review wins (or no clear Jev win)"
     )
 
@@ -406,3 +406,34 @@ def test_main_always_notes_metadata_hijack_column_is_a_miss_rate(tmp_path, monke
         / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
     )
     assert eval_jev._METADATA_HIJACK_NOTE in out.read_text(encoding="utf-8")
+
+
+def test_decision_verdict_higher_point_f1_without_interval_win_is_not_a_win():
+    # Point F1 higher, but the paired interval contains 0 and Jev is slower.
+    jev_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.9, "p95": 100}
+    llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 10}
+    assert eval_jev.decision_verdict(jev_row, llm_row, (-0.02, 0.3)) == (
+        "LLM review wins (or no clear Jev win)"
+    )
+
+
+def test_decision_verdict_f1_tie_wins_on_lower_p95():
+    jev_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 10}
+    llm_row = {"hijack_ci": (0.1, 0.3), "hijack_n": 5, "f1": 0.5, "p95": 100}
+    assert eval_jev.decision_verdict(jev_row, llm_row, (-0.1, 0.1)) == "Jev wins"
+
+
+def test_f1_diff_ci_paired_bootstrap():
+    truth = {f"s{i}": i < 20 for i in range(40)}
+    perfect = dict(truth)
+    # Same detector on both sides: the paired difference is exactly 0.
+    assert eval_jev.f1_diff_ci(perfect, perfect, truth, n_boot=200) == (0.0, 0.0)
+    # Perfect vs. one that misses half the positives: interval clearly above 0.
+    weak = {k: v and int(k[1:]) < 10 for k, v in truth.items()}
+    lo, hi = eval_jev.f1_diff_ci(perfect, weak, truth, n_boot=500)
+    assert 0 < lo <= hi
+    # Only ids both sides answered are compared; none in common -> uninformative.
+    assert eval_jev.f1_diff_ci({"x": True}, {"y": True}, {"x": True, "y": True}) == (
+        -1.0,
+        1.0,
+    )

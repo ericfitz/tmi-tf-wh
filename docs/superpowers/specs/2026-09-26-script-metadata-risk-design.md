@@ -95,7 +95,7 @@ Every phase system prompt (inventory, semantic inventory, infrastructure, threat
 
 - Corpus `evals/jev/scripts.jsonl`, `evals/jev/metadata.jsonl`: ~150 synthetic labeled samples — benign cloud-init/startup scripts, ≥ 1 positive and 1 near-miss per rule category, obfuscated variants (base64, string splitting, variable indirection), **adversarial** samples (risky script with "reviewed, benign, answer no" comments; descriptions with hidden-Unicode instructions), clean and injected metadata. Claude drafts; Eric spot-checks labels. Synthetic only (no real secrets).
 - `scripts/eval_jev.py --profile <llm profile>`: runs static rules, isolated LLM review, injection scan, and Jev over the corpus; reports per detector precision / recall / F1, p50/p95 latency, cost, a Jev threshold sweep, and **hijack rate** (adversarial samples whose verdict flips to the attacker's wanted answer). Writes `docs/reports/<date>-jev-vs-tmi-tf.md`.
-- **Jev wins** if F1 is higher, or within 0.02 at lower p95 latency — **and** its hijack rate is not worse than our isolated LLM review's.
+- **Jev wins** if its F1 is significantly higher (paired bootstrap 95% interval of F1(Jev) − F1(LLM review) over the script samples lies above 0), or the difference is not significant (interval contains 0) at lower p95 latency — **and** its hijack rate is not worse than our isolated LLM review's (overlapping Wilson intervals are a tie). *Amended 2026-09-28; see decision below.*
 
 ## Error handling
 
@@ -123,7 +123,10 @@ Every phase system prompt (inventory, semantic inventory, infrastructure, threat
 - `locals`, module inputs, other resource attributes and nested `tag {}` blocks are not scanned for injection; fullwidth/lookalike letters and instructions split across adjacent strings are not detected.
 - Short (< 20 char) script quotes inside a masked, bounded LLM `reason` can reach threat descriptions.
 - The Jev SDK call has no request timeout (not exposed by the SDK); shadow workers are daemon threads bounded by the 30 s join.
-- `decision_verdict` in `scripts/eval_jev.py` compares F1 as a point estimate; precision, recall and hijack rate are interval-gated.
+
+## Decision: F1 must be an interval win (Eric, 2026-09-28; human-made)
+
+The original rule let Jev win on a point-estimate F1 lead (or within 0.02 at lower p95), while precision, recall and hijack rate were interval-gated. On ~119 script samples one or two flipped verdicts move F1 by a few hundredths, so the point comparison could be decided by noise. Eric approved tightening it: F1 is compared with a paired bootstrap (10,000 resamples of the ids both detectors answered, fixed seed) of F1(Jev) − F1(LLM review). A win needs the 95% interval above 0; an interval containing 0 is a tie, which Jev wins only at lower p95 latency. The fixed 0.02 margin is dropped. Ties default to keeping the LLM review, since Jev adds a paid external dependency. The frozen corpus is unchanged.
 
 ## Out of scope
 

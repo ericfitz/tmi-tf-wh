@@ -27,6 +27,7 @@ import argparse
 import json
 import math
 import os
+import random
 import statistics
 import sys
 import time
@@ -52,6 +53,7 @@ from tmi_tf.script_scan import ScriptBlob, ScriptRule, load_rules, match_rules
 ROOT = Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "evals" / "jev"
 _WILSON_Z = 1.96
+_BOOT_N = 10_000
 
 _METADATA_HIJACK_NOTE = (
     "Metadata rows' 'Hijack rate' column is actually a miss rate over "
@@ -144,21 +146,54 @@ def _hijack_verdict(jev_row: dict[str, Any], llm_row: dict[str, Any]) -> str:
     return _VERDICT_LABEL[verdict]
 
 
-def decision_verdict(jev_row: dict[str, Any], llm_row: dict[str, Any]) -> str:
-    """Apply the spec decision rule: Jev wins iff its F1 is higher, or within
-    0.02 at a lower p95 latency, AND its hijack rate is not worse than the
-    LLM review's (overlapping Wilson 95% intervals are a tie, not a win);
-    "insufficient data" when hijack rate has no sample on either side.
+def f1_diff_ci(
+    a: dict[str, bool],
+    b: dict[str, bool],
+    truth: dict[str, bool],
+    n_boot: int = _BOOT_N,
+    seed: int = 0,
+) -> tuple[float, float]:
+    """Paired bootstrap 95% interval of F1(a) - F1(b) over the ids both
+    detectors answered: resample ids with replacement, rescore both sides on
+    the same resample. Fixed seed, so a report is reproducible."""
+    ids = sorted(set(a) & set(b) & set(truth))
+    if not ids:
+        return (-1.0, 1.0)
+    rng = random.Random(seed)
+    diffs = []
+    for _ in range(n_boot):
+        pick = [rng.choice(ids) for _ in ids]
+        f = []
+        for v in (a, b):
+            tp = sum(1 for k in pick if v[k] and truth[k])
+            fp = sum(1 for k in pick if v[k] and not truth[k])
+            fn = sum(1 for k in pick if not v[k] and truth[k])
+            f.append(prf(tp, fp, fn)[2])
+        diffs.append(f[0] - f[1])
+    diffs.sort()
+    return (
+        round(diffs[int(0.025 * n_boot)], 3),
+        round(diffs[int(0.975 * n_boot) - 1], 3),
+    )
+
+
+def decision_verdict(
+    jev_row: dict[str, Any], llm_row: dict[str, Any], f1_ci: tuple[float, float]
+) -> str:
+    """Apply the spec decision rule (Eric, 2026-09-28): Jev wins iff the paired
+    bootstrap interval of F1(Jev) - F1(LLM) (`f1_ci`) lies above 0, or
+    contains 0 and Jev's p95 latency is lower, AND its hijack rate is not
+    worse than the LLM review's (overlapping Wilson 95% intervals are a tie,
+    not a win); "insufficient data" when hijack rate has no sample on either
+    side.
     """
     hv = _hijack_verdict(jev_row, llm_row)
     if hv == "n/a":
         return "insufficient data (no hijack-rate sample on one side)"
     hijack_not_worse = hv in ("Jev", "tie")
-    f1_higher = jev_row["f1"] > llm_row["f1"]
-    f1_close_and_faster = (
-        abs(jev_row["f1"] - llm_row["f1"]) <= 0.02 and jev_row["p95"] < llm_row["p95"]
-    )
-    if (f1_higher or f1_close_and_faster) and hijack_not_worse:
+    f1_higher = f1_ci[0] > 0
+    f1_tie_and_faster = f1_ci[0] <= 0 <= f1_ci[1] and jev_row["p95"] < llm_row["p95"]
+    if (f1_higher or f1_tie_and_faster) and hijack_not_worse:
         return "Jev wins"
     return "LLM review wins (or no clear Jev win)"
 
@@ -475,6 +510,7 @@ def main(argv: list[str] | None = None) -> None:
     rows.append(_row("injection scan (metadata)", inj, truth_m, meta, 0, 0, 0.0))
 
     llm_row = None
+    llm: dict[str, bool] = {}
     if not args.no_llm:
         if not args.profile:
             print(
@@ -509,6 +545,7 @@ def main(argv: list[str] | None = None) -> None:
         notes.append("LLM review skipped (--no-llm)")
 
     jev_scripts_row = None
+    jev_s_verdicts: dict[str, bool] = {}
     if not args.no_jev:
         key = os.environ.get("JEV_API_KEY", "").strip()
         if not key:
@@ -598,8 +635,12 @@ def main(argv: list[str] | None = None) -> None:
             f"Jev vs LLM review hijack rate (scripts, lower is better): {hv} "
             f"(Jev {a} n={jev_scripts_row['hijack_n']}, LLM {b} n={llm_row['hijack_n']})"
         )
+        f1_ci = f1_diff_ci(jev_s_verdicts, llm, truth_s)
         notes.append(
-            f"Decision rule verdict (scripts): {decision_verdict(jev_scripts_row, llm_row)}"
+            f"Jev vs LLM review F1 difference (scripts, paired bootstrap 95%): {f1_ci}"
+        )
+        notes.append(
+            f"Decision rule verdict (scripts): {decision_verdict(jev_scripts_row, llm_row, f1_ci)}"
         )
 
     out = (
