@@ -190,3 +190,61 @@ class TestGetLLMProvider:
             p = get_llm_provider(LLMProfile("g", "oci", "xai.grok-4", "oci"))
         assert p.model == "oci/xai.grok-4"
         assert p.profile == "g"
+
+
+class _FakeStream:
+    """A LiteLLM sync stream: iterable wrapper whose HTTP response hides inside."""
+
+    def __init__(self, chunks, fail: bool = False):
+        self._chunks = chunks
+        self._fail = fail
+        self.completion_stream = MagicMock()  # the provider iterator
+        self.completion_stream.close = None  # iterators have no close()
+
+    def __iter__(self):
+        yield from self._chunks
+        if self._fail:
+            raise RuntimeError("stream broke")
+
+
+class TestStreamClosed:
+    """complete() must release the HTTP response itself (#90): left to cyclic GC,
+    httpcore's close can run under its own pool lock and deadlock the thread."""
+
+    @patch("tmi_tf.providers.llm_base.litellm")
+    @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
+    def test_closes_stream_after_success(self, mock_save, mock_litellm):
+        stream = _FakeStream(["c"])
+        mock_litellm.completion.return_value = stream
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("ok")
+        mock_litellm.completion_cost.return_value = 0.0
+
+        BaseLLMProvider(provider="anthropic", model="m").complete("s", "u")
+
+        # Anthropic: the iterator's streaming_response is the line generator.
+        stream.completion_stream.streaming_response.close.assert_called_once()
+        # OpenAI responses API: its streaming_response.response is the httpx.Response.
+        stream.completion_stream.streaming_response.response.close.assert_called_once()
+
+    @patch("tmi_tf.providers.llm_base.litellm")
+    def test_closes_stream_when_iteration_fails(self, mock_litellm):
+        stream = _FakeStream(["c"], fail=True)
+        mock_litellm.completion.return_value = stream
+
+        with pytest.raises(RuntimeError, match="stream broke"):
+            BaseLLMProvider(provider="anthropic", model="m").complete("s", "u")
+
+        stream.completion_stream.streaming_response.close.assert_called_once()
+
+    @patch("tmi_tf.providers.llm_base.litellm")
+    @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
+    def test_close_errors_do_not_mask_result(self, mock_save, mock_litellm):
+        stream = _FakeStream(["c"])
+        stream.completion_stream.streaming_response.close.side_effect = OSError("x")
+        mock_litellm.completion.return_value = stream
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("ok")
+        mock_litellm.completion_cost.return_value = 0.0
+
+        result = BaseLLMProvider(provider="anthropic", model="m").complete("s", "u")
+
+        assert result.text == "ok"

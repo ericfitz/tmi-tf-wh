@@ -14,6 +14,27 @@ litellm.suppress_debug_info = True  # type: ignore[assignment]
 litellm.drop_params = False  # type: ignore[assignment]
 
 
+def _close_stream(stream: object) -> None:
+    """Release the HTTP response behind a LiteLLM sync stream (#90).
+
+    LiteLLM's sync CustomStreamWrapper has no close(). Left to cyclic GC, the
+    response's close can run while httpcore holds its connection-pool lock, and
+    it re-acquires that non-reentrant lock: the thread deadlocks for good.
+    Anthropic's iterator holds a line generator (streaming_response); the
+    responses API's holds an iterator whose .response is the httpx.Response.
+    Closing twice is a no-op for both.
+    """
+    inner = getattr(stream, "completion_stream", None)
+    wrapped = getattr(inner, "streaming_response", None)
+    for obj in (wrapped, getattr(wrapped, "response", None)):
+        close = getattr(obj, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as e:
+                logger.debug("Closing LLM stream failed: %s", e)
+
+
 class BaseLLMProvider:
     """Base class for LLM providers. Handles the litellm.completion() call."""
 
@@ -59,17 +80,19 @@ class BaseLLMProvider:
         ]
         # Stream and reassemble: long outputs (up to 64k tokens) on slower
         # models exceed provider limits for non-streaming responses.
-        chunks = list(
-            litellm.completion(  # pyright: ignore[reportArgumentType]  # sync call with stream=True; 1.103's return type also lists a Coroutine
-                model=self._model,
-                messages=messages,
-                max_tokens=max_tokens,
-                timeout=timeout,
-                stream=True,
-                stream_options={"include_usage": True},
-                **self._extra_kwargs,
-            )
+        stream = litellm.completion(
+            model=self._model,
+            messages=messages,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            stream=True,
+            stream_options={"include_usage": True},
+            **self._extra_kwargs,
         )
+        try:
+            chunks = list(stream)  # pyright: ignore[reportArgumentType]  # sync call with stream=True; 1.103's return type also lists a Coroutine
+        finally:
+            _close_stream(stream)
         response = litellm.stream_chunk_builder(chunks, messages=messages)
 
         # Extract token usage
