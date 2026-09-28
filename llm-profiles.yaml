@@ -74,3 +74,9 @@ profiles:
     api: responses
     auth: api_key
     api_key: OPENAI_CYBER_API_KEY
+  # Separate Anthropic key; ANTHROPIC_API_KEY holds the Mythos-program key.
+  fable51:
+    provider: anthropic
+    model: claude-fable-5-1
+    auth: api_key
+    api_key: ANTHROPIC_CVP_API_KEY
