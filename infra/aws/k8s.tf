@@ -4,6 +4,9 @@ resource "kubernetes_namespace_v1" "this" {
     labels = {
       app        = var.app_name
       managed_by = "terraform"
+      # The LB controller holds new pods un-Ready until their ALB target is
+      # healthy, so a rollout never removes the old pod before the new one serves.
+      "elbv2.k8s.aws/pod-readiness-gate-inject" = "enabled"
     }
   }
 }
@@ -68,6 +71,8 @@ resource "kubernetes_deployment_v1" "this" {
 
       spec {
         service_account_name = kubernetes_service_account_v1.this.metadata[0].name
+        # preStop sleep + app shutdown must fit inside this.
+        termination_grace_period_seconds = 45
 
         container {
           name  = var.app_name
@@ -165,6 +170,16 @@ resource "kubernetes_deployment_v1" "this" {
             period_seconds        = 30
           }
 
+          # Keep serving while the ALB deregisters this pod; without it the
+          # ALB sends requests to a stopped pod for a few seconds (502s).
+          lifecycle {
+            pre_stop {
+              exec {
+                command = ["sleep", "15"]
+              }
+            }
+          }
+
           readiness_probe {
             http_get {
               path = "${var.url_prefix}/health"
@@ -233,6 +248,8 @@ resource "kubernetes_ingress_v1" "this" {
       "alb.ingress.kubernetes.io/listen-ports"     = jsonencode([{ HTTPS = 443 }])
       "alb.ingress.kubernetes.io/certificate-arn"  = aws_acm_certificate_validation.webhook.certificate_arn
       "alb.ingress.kubernetes.io/healthcheck-path" = "${var.url_prefix}/health"
+      # Default 300s only slows rollouts; preStop already covers draining.
+      "alb.ingress.kubernetes.io/target-group-attributes" = "deregistration_delay.timeout_seconds=20"
       # Access logs to the account log bucket (owned by tmi's aws-persistent stack).
       # ALB attributes are group-wide: every Ingress in the group must carry the same value.
       "alb.ingress.kubernetes.io/load-balancer-attributes" = "access_logs.s3.enabled=true,access_logs.s3.bucket=${var.log_bucket},access_logs.s3.prefix=alb/${var.ingress_group}"
