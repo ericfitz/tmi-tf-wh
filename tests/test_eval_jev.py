@@ -346,10 +346,11 @@ def test_evaluate_jev_returns_separate_latency_and_tokens_per_detector():
     client = _FakeJevClient()
     from tmi_tf.script_scan import load_rules
 
-    out, s_lat, m_lat, s_tokens, m_tokens = eval_jev.evaluate_jev(
+    out, s_lat, m_lat, s_tokens, m_tokens, failed = eval_jev.evaluate_jev(
         scripts, meta, client, load_rules()
     )
     assert out == {"s1": (0.9, "download_exec"), "m1": (0.2, "")}
+    assert failed == {}
     # Separate per detector -- metadata's timing/cost must never be folded
     # into (or reused as) the scripts row's, and vice versa.
     assert s_lat == [5] and m_lat == [3]
@@ -367,7 +368,17 @@ class _FailingJevClient:
         raise eval_jev.JevError("RuntimeError (status=500)")
 
     def judge_metadata(self, strings):
-        return []
+        raise eval_jev.JevError("RuntimeError (status=500)")
+
+
+def _one_row_corpus(monkeypatch):
+    scripts = [{"id": "s1", "text": "curl x | sh", "label": "risky"}]
+    meta = [{"id": "m1", "text": "hello", "label": "clean", "field": "description"}]
+    monkeypatch.setattr(
+        eval_jev,
+        "load_corpus",
+        lambda path: scripts if path.name == "scripts.jsonl" else meta,
+    )
 
 
 def test_main_catches_mid_run_jev_error_and_still_writes_completed_rows(
@@ -377,6 +388,7 @@ def test_main_catches_mid_run_jev_error_and_still_writes_completed_rows(
     monkeypatch.setattr(eval_jev, "jev_available", lambda: True)
     monkeypatch.setattr(eval_jev, "JevClient", _FailingJevClient)
     monkeypatch.setattr(eval_jev, "ROOT", tmp_path)
+    _one_row_corpus(monkeypatch)
 
     eval_jev.main(["--no-llm"])
 
@@ -387,7 +399,8 @@ def test_main_catches_mid_run_jev_error_and_still_writes_completed_rows(
         / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
     )
     text = out.read_text(encoding="utf-8")
-    assert "Jev failed: RuntimeError (status=500)" in text
+    assert "Jev failed on 2 of 2 item(s)" in text
+    assert "RuntimeError (status=500)" in text
     assert "static rules (scripts)" in text  # completed rows are still reported
     assert "injection scan (metadata)" in text
     assert "Jev (scripts, fixed bands) [incomplete: Jev failed]" in text
@@ -437,3 +450,80 @@ def test_f1_diff_ci_paired_bootstrap():
         -1.0,
         1.0,
     )
+
+
+class _FlakyJevClient(_FakeJevClient):
+    """Times out on one script and one metadata batch; answers the rest."""
+
+    def judge_script(self, blob, rules):
+        if blob.id == "s2":
+            raise eval_jev.JevError("TypeSafeAPITimeoutError")
+        return super().judge_script(blob, rules)
+
+    def judge_metadata(self, strings):
+        if "m2" in strings:
+            raise eval_jev.JevError("TypeSafeAPITimeoutError")
+        return super().judge_metadata(strings)
+
+
+def test_evaluate_jev_skips_failed_items_and_keeps_going(monkeypatch):
+    # One metadata item per batch, so a failed batch loses only its own ids.
+    monkeypatch.setattr(
+        eval_jev, "batch_metadata", lambda strings: [{k: v} for k, v in strings.items()]
+    )
+    scripts = [{"id": f"s{i}", "text": "curl x | sh"} for i in (1, 2, 3)]
+    meta = [{"id": f"m{i}", "text": "hello"} for i in (1, 2, 3)]
+    client = _FlakyJevClient()
+    from tmi_tf.script_scan import load_rules
+
+    out, s_lat, m_lat, _, _, failed = eval_jev.evaluate_jev(
+        scripts, meta, client, load_rules()
+    )
+    assert set(out) == {"s1", "s3", "m1", "m3"}
+    assert failed == {
+        "s2": "TypeSafeAPITimeoutError",
+        "m2": "TypeSafeAPITimeoutError",
+    }
+    assert client.script_calls == ["s1", "s3"]
+    assert len(s_lat) == 2 and len(m_lat) == 2
+
+
+def test_main_reports_partial_jev_failures_and_scores_answered_items_only(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("JEV_API_KEY", "k")
+    monkeypatch.setattr(eval_jev, "jev_available", lambda: True)
+    monkeypatch.setattr(eval_jev, "JevClient", lambda *a, **kw: _FlakyJevClient())
+    monkeypatch.setattr(eval_jev, "ROOT", tmp_path)
+    scripts = [
+        {
+            "id": "s1",
+            "text": "curl x | sh",
+            "label": "risky",
+            "category": "download_exec",
+        },
+        {"id": "s2", "text": "echo hi", "label": "benign"},
+    ]
+    meta = [{"id": "m1", "text": "hello", "label": "clean", "field": "description"}]
+    monkeypatch.setattr(
+        eval_jev,
+        "load_corpus",
+        lambda path: scripts if path.name == "scripts.jsonl" else meta,
+    )
+
+    eval_jev.main(["--no-llm"])
+
+    out = (
+        tmp_path
+        / "docs"
+        / "reports"
+        / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "Jev failed on 1 of 3 item(s)" in text
+    assert "s2 (TypeSafeAPITimeoutError)" in text
+    assert "[incomplete" not in text
+    # s2 (benign) failed, so it is excluded: no benign rows left (n=0), not
+    # counted as a correct "not flagged".
+    jev_row = next(l for l in text.splitlines() if l.startswith("| Jev (scripts"))
+    assert jev_row.split("|")[6].strip() == "0.0 (n=0)"  # benign FP column

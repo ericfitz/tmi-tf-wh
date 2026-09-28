@@ -42,6 +42,7 @@ from tmi_tf.jev_shadow import (
     JevClient,
     JevError,
     band,
+    batch_metadata,
     jev_available,
 )
 from tmi_tf.llm_profiles import ProfileError, resolve_key, select_profile
@@ -54,6 +55,8 @@ ROOT = Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "evals" / "jev"
 _WILSON_Z = 1.96
 _BOOT_N = 10_000
+# Per-request SDK timeout; the SDK default (10 s) timed out real eval calls.
+_JEV_TIMEOUT_S = 60.0
 
 _METADATA_HIJACK_NOTE = (
     "Metadata rows' 'Hijack rate' column is actually a miss rate over "
@@ -269,28 +272,42 @@ def evaluate_jev(
     meta: list[dict[str, Any]],
     client: JevClient,
     rules: list[ScriptRule],
-) -> tuple[dict[str, tuple[float, str]], list[int], list[int], int, int]:
+) -> tuple[
+    dict[str, tuple[float, str]], list[int], list[int], int, int, dict[str, str]
+]:
     """(id -> (noul, category), script latencies, metadata latencies, script
-    tokens, metadata tokens). category is "" for metadata (Jev only
-    classifies scripts). Latency/tokens are kept separate per detector so the
-    scripts and metadata report rows don't share timing/cost that only one
-    of them actually incurred.
+    tokens, metadata tokens, failed id -> error). category is "" for metadata
+    (Jev only classifies scripts). Latency/tokens are kept separate per
+    detector so the scripts and metadata report rows don't share timing/cost
+    that only one of them actually incurred. A JevError skips only the
+    script, or the metadata batch, it hit; the run keeps going.
     """
     out: dict[str, tuple[float, str]] = {}
+    failed: dict[str, str] = {}
     script_lat: list[int] = []
     meta_lat: list[int] = []
     script_tokens = 0
     meta_tokens = 0
     for s in scripts:
-        v = client.judge_script(_blob(s), rules)
+        try:
+            v = client.judge_script(_blob(s), rules)
+        except JevError as e:
+            failed[s["id"]] = str(e)
+            continue
         out[s["id"]] = (v.noul, v.category)
         script_tokens += v.input_tokens
         script_lat.append(v.latency_ms)
-    for v in client.judge_metadata({m["id"]: m["text"] for m in meta}):
-        out[v.item_id] = (v.noul, "")
-        meta_tokens += v.input_tokens
-        meta_lat.append(v.latency_ms)
-    return out, script_lat, meta_lat, script_tokens, meta_tokens
+    for batch in batch_metadata({m["id"]: m["text"] for m in meta}):
+        try:
+            verdicts = client.judge_metadata(batch)
+        except JevError as e:
+            failed.update(dict.fromkeys(batch, str(e)))
+            continue
+        for v in verdicts:
+            out[v.item_id] = (v.noul, "")
+            meta_tokens += v.input_tokens
+            meta_lat.append(v.latency_ms)
+    return out, script_lat, meta_lat, script_tokens, meta_tokens, failed
 
 
 def _id_parity(item_id: str) -> int:
@@ -423,9 +440,8 @@ def _row(
 
 
 def _incomplete_row(name: str) -> dict[str, Any]:
-    """Placeholder for a Jev row when a JevError aborted the run partway
-    through -- keeps the report schema stable (so `render_report` never has
-    to special-case it) while making clear no real numbers were computed."""
+    """Placeholder for a Jev row when every Jev call failed -- keeps the
+    report schema stable (so `render_report` never has to special-case it) while making clear no real numbers were computed."""
     na = "n/a"
     return {
         "name": f"{name} [incomplete: Jev failed]",
@@ -560,15 +576,21 @@ def main(argv: list[str] | None = None) -> None:
                 file=sys.stderr,
             )
             sys.exit(2)
-        client = JevClient(key, os.environ.get("JEV_MODEL", "jev-latest"))
-        try:
-            jev, s_lat, m_lat, s_tokens, m_tokens = evaluate_jev(
-                scripts, meta, client, rules
+        client = JevClient(
+            key, os.environ.get("JEV_MODEL", "jev-latest"), timeout=_JEV_TIMEOUT_S
+        )
+        jev, s_lat, m_lat, s_tokens, m_tokens, failed = evaluate_jev(
+            scripts, meta, client, rules
+        )
+        if failed:
+            # Failed items are excluded from Jev's rows (scored over answered
+            # items only), never counted as "not flagged".
+            notes.append(
+                f"Jev failed on {len(failed)} of {len(scripts) + len(meta)} item(s), "
+                "excluded from Jev's numbers: "
+                + ", ".join(f"{k} ({v})" for k, v in failed.items())
             )
-        except JevError as e:
-            # Mid-run failure: never discard the (possibly paid-for) rows that
-            # already completed -- report the failure and still write them.
-            notes.append(f"Jev failed: {e}")
+        if not jev:
             rows += [
                 _incomplete_row("Jev (scripts, fixed bands)"),
                 _incomplete_row("Jev (metadata, fixed bands)"),
@@ -584,7 +606,7 @@ def main(argv: list[str] | None = None) -> None:
                 "Jev (scripts, fixed bands)",
                 jev_s_verdicts,
                 truth_s,
-                scripts,
+                [s for s in scripts if s["id"] in jev],
                 _pct(s_lat, 0.5),
                 _pct(s_lat, 0.95),
                 s_cost,
@@ -593,7 +615,7 @@ def main(argv: list[str] | None = None) -> None:
                 "Jev (metadata, fixed bands)",
                 jev_m_verdicts,
                 truth_m,
-                meta,
+                [m for m in meta if m["id"] in jev],
                 _pct(m_lat, 0.5),
                 _pct(m_lat, 0.95),
                 m_cost,

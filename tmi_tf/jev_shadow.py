@@ -109,10 +109,14 @@ def batch_metadata(
 
 
 class JevClient:
-    def __init__(self, api_key: str, model: str = "jev-latest"):
+    def __init__(
+        self, api_key: str, model: str = "jev-latest", timeout: float | None = None
+    ):
         if TypeSafeClient is None:
             raise RuntimeError("typesafe-sdk not installed (uv sync --extra jev)")
-        self._client = TypeSafeClient(api_key=api_key, model=model)
+        # timeout=None keeps the SDK's own per-request default (10 s).
+        extra = {} if timeout is None else {"timeout": timeout}
+        self._client = TypeSafeClient(api_key=api_key, model=model, **extra)
 
     def _call(
         self, state: Any, questions: dict[str, Any]
@@ -376,12 +380,7 @@ def jev_shadow_from_env(rules: list[ScriptRule]) -> "JevShadow | None":
             "JEV_API_KEY missing" if not key else "typesafe-sdk not installed",
         )
         return None
-    # ponytail: JevClient doesn't pass this shadow's `timeout` down to
-    # TypeSafeClient -- the real typesafe-sdk isn't installed in this repo,
-    # so whether TypeSafeClient.__init__ even accepts a timeout kwarg is
-    # unconfirmed (the one usage example available, jev-usecases/src/
-    # jev_usecases/client.py, only passes api_key/model). Upgrade once
-    # confirmed: JevClient(key, model, timeout=timeout) plumbed through to
-    # TypeSafeClient(..., timeout=timeout), so a slow SDK call fails fast
-    # instead of relying solely on JevShadow's own thread-level timeout.
+    # ponytail: the shadow keeps the SDK's default per-request timeout
+    # (10 s); JevShadow's own 30 s deadline bounds the whole run. Pass
+    # JevClient(..., timeout=...) if prod calls start timing out.
     return JevShadow(JevClient(key, os.environ.get("JEV_MODEL", "jev-latest")), rules)
