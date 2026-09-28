@@ -58,7 +58,11 @@ The model is chosen per invocation from the named profiles in
 - Override the profiles without a new image: set `llm_profiles_yaml` to the
   full file content; it is mounted from a ConfigMap and replaces the image's
   file. Changing only Secret/ConfigMap data does not restart the pod: run
-  `kubectl --context tmi-eks -n tmi-tf rollout restart deployment/tmi-tf`.
+  `kubectl --context tmi-eks -n tmi-tf rollout restart deployment/tmi-tf-wh`.
+- Key rotation: the cyber keys rotate weekly. `scripts/sync-llm-keys-aws.sh`
+  compares `~/.keys` with the running Secret (hash prefixes only), rewrites
+  the changed `llm_api_keys` lines, applies via a saved plan, and restarts the
+  pod. `--check` only compares (exit 1 if a key differs).
 - Startup logs one line per profile (`usable` or `missing key <VAR>`).
 
 ## TMI-side wiring (manual, once)

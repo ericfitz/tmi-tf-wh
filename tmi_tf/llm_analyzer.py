@@ -14,6 +14,7 @@ import json
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -840,12 +841,35 @@ class LLMAnalyzer:
             LLMResponse with text, tokens, cost, and finish_reason
         """
         logger.info("Phase %s: Calling LLM provider", phase_name)
-        response = retry_transient_llm_call(
-            lambda: self.llm_provider.complete(
-                system_prompt, user_prompt, max_tokens, timeout
-            ),
-            description=f"Phase {phase_name}",
-        )
+
+        def call() -> LLMResponse:
+            return retry_transient_llm_call(
+                lambda: self.llm_provider.complete(
+                    system_prompt, user_prompt, max_tokens, timeout
+                ),
+                description=f"Phase {phase_name}",
+            )
+
+        response = call()
+        # An empty answer that stopped normally is a provider glitch (seen on
+        # gpt-6-sol in phase 3b); retry once. "length" and "content_filter"
+        # would only repeat, so they are returned as is.
+        if not response.text and response.finish_reason not in (
+            "length",
+            "content_filter",
+        ):
+            logger.warning(
+                "Phase %s: empty response (finish_reason=%s); retrying once",
+                phase_name,
+                response.finish_reason,
+            )
+            first, response = response, call()
+            response = replace(
+                response,
+                input_tokens=first.input_tokens + response.input_tokens,
+                output_tokens=first.output_tokens + response.output_tokens,
+                cost=first.cost + response.cost,
+            )
         logger.info(
             "Phase %s: %d input, %d output tokens, finish_reason=%s, $%.4f",
             phase_name,

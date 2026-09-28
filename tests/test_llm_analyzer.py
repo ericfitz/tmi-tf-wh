@@ -76,6 +76,60 @@ class TestPhase3Decomposition:
         assert finding["score"] is not None
         assert len(finding["cvss"]) == 1
 
+    def _one_threat_responses(self, *threat_analysis_responses):
+        inventory = {"components": [{"id": "aws_s3_bucket.b"}], "services": []}
+        infrastructure = {"relationships": [], "data_flows": [], "trust_boundaries": []}
+        raw_threats = [
+            {
+                "name": "Public S3 Bucket",
+                "description": "S3 bucket is publicly accessible",
+                "affected_components": ["aws_s3_bucket.b"],
+            }
+        ]
+        return [
+            _make_llm_response(json.dumps(inventory)),
+            _make_llm_response(json.dumps(infrastructure)),
+            _make_llm_response(json.dumps(raw_threats)),
+            *threat_analysis_responses,
+        ]
+
+    def test_empty_response_is_retried_once_and_tokens_summed(self):
+        analysis = {"threat_type": "Tampering", "severity": "High", "cwe_id": []}
+        empty = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=0,
+            cost=0.01,
+            finish_reason="stop",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = self._one_threat_responses(
+            empty, _make_llm_response(json.dumps(analysis))
+        )
+
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        assert provider.complete.call_count == 5
+        assert [f["name"] for f in result.security_findings] == ["Public S3 Bucket"]
+        # 3 phases + both 3b calls: 5 x 100 input tokens.
+        assert result.input_tokens == 500
+
+    def test_content_filter_empty_response_is_not_retried(self):
+        refused = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=0,
+            cost=0.01,
+            finish_reason="content_filter",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = self._one_threat_responses(refused)
+
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        assert provider.complete.call_count == 4
+        assert result.security_findings == []
+
     def test_phase3a_empty_produces_no_findings(self):
         inventory = {"components": [], "services": []}
         infrastructure = {"relationships": [], "data_flows": []}
