@@ -6,9 +6,9 @@ import hmac
 # Events that start an analysis. Anything else (e.g. metadata.updated, which
 # TMI emits for every note-metadata write the worker itself performs) is
 # acknowledged and dropped, otherwise the worker feeds itself.
-TRIGGER_EVENTS = frozenset(
-    {"addon.invoked", "threat_model.created", "threat_model.updated"}
-)
+# threat_model.created is not a trigger: a just-created TM has no repositories,
+# and on a tmi-ux import it won the debounce and analyzed a half-imported TM.
+TRIGGER_EVENTS = frozenset({"addon.invoked", "threat_model.updated"})
 TRIGGER_EVENT_PREFIXES = ("repository.",)
 
 

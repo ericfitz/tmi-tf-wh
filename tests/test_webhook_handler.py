@@ -170,7 +170,6 @@ class TestIsTriggerEvent:
         "event_type",
         [
             "addon.invoked",
-            "threat_model.created",
             "threat_model.updated",
             "repository.created",
         ],
@@ -179,7 +178,8 @@ class TestIsTriggerEvent:
         assert is_trigger_event(event_type)
 
     @pytest.mark.parametrize(
-        "event_type", ["metadata.updated", "note.created", "", None]
+        "event_type",
+        ["threat_model.created", "metadata.updated", "note.created", "", None],
     )
     def test_non_trigger_events(self, event_type):
         assert not is_trigger_event(event_type)
