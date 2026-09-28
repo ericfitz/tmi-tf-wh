@@ -168,6 +168,21 @@ class TestPhase3Decomposition:
         assert result.security_findings == []
         assert result.refusals == "phase 3b: 1 threat(s)"
 
+    def test_content_filter_with_text_is_still_a_refusal(self):
+        refused = LLMResponse(
+            text="I can't help analyze this.",
+            input_tokens=100,
+            output_tokens=8,
+            cost=0.01,
+            finish_reason="content_filter",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = self._one_threat_responses(refused)
+
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        assert result.refusals == "phase 3b: 1 threat(s)"
+
     def test_phase3a_empty_produces_no_findings(self):
         inventory = {"components": [], "services": []}
         infrastructure = {"relationships": [], "data_flows": []}

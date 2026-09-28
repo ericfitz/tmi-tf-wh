@@ -64,7 +64,7 @@ def format_terraform_contents(tf_contents: dict[str, str]) -> str:
 
 
 class LLMRefusalError(Exception):
-    """The model refused (finish_reason=content_filter, no text). Carries the
+    """The model refused (finish_reason=content_filter). Carries the
     response so callers can still count its tokens and cost."""
 
     def __init__(self, message: str, response: LLMResponse):
@@ -958,7 +958,8 @@ class LLMAnalyzer:
                 output_tokens=first.output_tokens + response.output_tokens,
                 cost=first.cost + response.cost,
             )
-        if not response.text and response.finish_reason == "content_filter":
+        # Refusal whether or not partial text came with it.
+        if response.finish_reason == "content_filter":
             raise LLMRefusalError(
                 f"Phase {phase_name}: model refused (finish_reason=content_filter)",
                 response,

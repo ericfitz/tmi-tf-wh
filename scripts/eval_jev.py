@@ -266,7 +266,7 @@ def evaluate_llm(
         )
         latencies.append(int((time.monotonic() - t0) * 1000))
         costs.append(resp.cost)
-        if not resp.text and getattr(resp, "finish_reason", "") == "content_filter":
+        if getattr(resp, "finish_reason", "") == "content_filter":
             return True, included, set()
         return (
             False,

@@ -155,6 +155,7 @@ def test_terraform_analysis_defaults():
     assert (
         a.script_findings == [] and a.script_review_error == "" and a.jev_summary == ""
     )
+    assert a.refusals == ""
 
 
 _THREAT_ANALYSIS = {
