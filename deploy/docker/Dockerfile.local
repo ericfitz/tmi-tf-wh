@@ -8,9 +8,9 @@
 FROM cgr.dev/chainguard/wolfi-base:latest AS builder
 
 RUN apk add --no-cache \
-        python-3.12 \
-        py3.12-pip \
-        python-3.12-dev \
+        python-3.13 \
+        py3.13-pip \
+        python-3.13-dev \
         git \
         gcc \
         ca-certificates
@@ -23,7 +23,7 @@ RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-c
 # Client matching the TMI API schema version (newest same major.minor patch <= schema).
 ARG TMI_SCHEMA_URL=https://raw.githubusercontent.com/ericfitz/tmi/main/api-schema/tmi-openapi.json
 COPY scripts/select_tmi_client.py /tmp/select_tmi_client.py
-RUN python3.12 /tmp/select_tmi_client.py --schema ${TMI_SCHEMA_URL} \
+RUN python3.13 /tmp/select_tmi_client.py --schema ${TMI_SCHEMA_URL} \
         --clients /opt/tmi-clients/python-client-generated --out /opt/tmi-client
 
 WORKDIR /app
@@ -31,8 +31,8 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY tmi_tf/ tmi_tf/
 
-RUN python3.12 -m pip install --no-cache-dir --upgrade pip && \
-    python3.12 -m pip install --no-cache-dir --prefix=/install .
+RUN python3.13 -m pip install --no-cache-dir --upgrade pip && \
+    python3.13 -m pip install --no-cache-dir --prefix=/install .
 
 # Stage 2: Runtime
 FROM cgr.dev/chainguard/wolfi-base:latest
@@ -41,11 +41,11 @@ LABEL org.opencontainers.image.title="tmi-tf-wh"
 LABEL org.opencontainers.image.description="TMI Terraform Webhook Analyzer (local)"
 
 RUN apk add --no-cache \
-        python-3.12 \
+        python-3.13 \
         git \
         ca-certificates && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python
+    ln -sf /usr/bin/python3.13 /usr/bin/python3 && \
+    ln -sf /usr/bin/python3.13 /usr/bin/python
 
 # Non-root user
 RUN addgroup -S tmi-tf && \

@@ -19,7 +19,7 @@ The TMI Terraform Analysis Tool automates the analysis of Terraform infrastructu
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.13 or higher
 - [UV](https://github.com/astral-sh/uv) package manager
 - Git
 - Access to a TMI server (https://api.tmi.dev)

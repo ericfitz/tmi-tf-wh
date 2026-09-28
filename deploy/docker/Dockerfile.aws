@@ -8,15 +8,15 @@ LABEL stage="builder"
 
 RUN dnf -y update && \
     dnf -y install \
-        python3.12 \
-        python3.12-pip \
-        python3.12-devel \
+        python3.13 \
+        python3.13-pip \
+        python3.13-devel \
         gcc \
         git \
         ca-certificates && \
     dnf clean all && \
     rm -rf /var/cache/dnf && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python3
+    ln -sf /usr/bin/python3.13 /usr/bin/python3
 
 ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
 ARG TMI_CLIENT_REF=main
@@ -51,12 +51,12 @@ LABEL org.opencontainers.image.revision="${GIT_COMMIT}"
 
 RUN dnf -y update && \
     dnf -y install \
-        python3.12 \
+        python3.13 \
         git \
         ca-certificates && \
     dnf clean all && \
     rm -rf /var/cache/dnf && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python3
+    ln -sf /usr/bin/python3.13 /usr/bin/python3
 
 RUN groupadd -r tmi-tf && \
     useradd -r -g tmi-tf -m -d /home/tmi-tf -s /sbin/nologin tmi-tf

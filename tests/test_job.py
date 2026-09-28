@@ -1,6 +1,6 @@
 """Tests for Job dataclass."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from tmi_tf.job import Job
@@ -12,7 +12,7 @@ class TestJob:
             job_id="abc-123",
             threat_model_id="tm-456",
             event_type="threat_model.created",
-            enqueued_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            enqueued_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         assert job.job_id == "abc-123"
         assert job.threat_model_id == "tm-456"
@@ -29,7 +29,7 @@ class TestJob:
             repo_id="repo-789",
             callback_url="https://api.tmi.dev/invocations/inv-1/status",
             invocation_id="inv-1",
-            enqueued_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            enqueued_at=datetime(2026, 1, 1, tzinfo=UTC),
             temp_dir=Path("/tmp/tmi-tf-abc-123"),
         )
         assert job.repo_id == "repo-789"
@@ -42,7 +42,7 @@ class TestJob:
             job_id="abc-123",
             threat_model_id="tm-456",
             event_type="threat_model.created",
-            enqueued_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            enqueued_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         d = job.to_queue_message()
         restored = Job.from_queue_message(d)
@@ -57,7 +57,7 @@ class TestScopeAndEnvironment:
             job_id="j1",
             threat_model_id="tm1",
             event_type="addon.invoked",
-            enqueued_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+            enqueued_at=datetime(2026, 9, 13, tzinfo=UTC),
             **kw,
         )
 
@@ -94,12 +94,12 @@ class TestScopeAndEnvironment:
 
 
 def test_siblings_and_deadline_round_trip():
-    deadline = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+    deadline = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
     job = Job(
         job_id="p1:aws",
         threat_model_id="tm1",
         event_type="addon.invoked",
-        enqueued_at=datetime.now(timezone.utc),
+        enqueued_at=datetime.now(UTC),
         siblings=["p1:aws", "p1:gcp"],
         deadline=deadline,
     )
@@ -116,7 +116,7 @@ def test_old_message_without_siblings_or_deadline():
         "job_id": "p1",
         "threat_model_id": "tm1",
         "event_type": "addon.invoked",
-        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        "enqueued_at": datetime.now(UTC).isoformat(),
     }
     job = Job.from_queue_message(body)
     assert job.siblings is None
@@ -128,7 +128,7 @@ def test_profile_round_trips():
         job_id="j",
         threat_model_id="t",
         event_type="e",
-        enqueued_at=datetime.now(timezone.utc),
+        enqueued_at=datetime.now(UTC),
         profile="opus48",
     )
     assert Job.from_queue_message(j.to_queue_message()).profile == "opus48"

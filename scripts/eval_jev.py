@@ -32,7 +32,7 @@ import statistics
 import sys
 import time
 from collections import namedtuple
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -463,7 +463,7 @@ def _incomplete_row(name: str) -> dict[str, Any]:
 
 def render_report(rows: list[dict[str, Any]], notes: list[str]) -> str:
     lines = [
-        f"# Jev vs tmi-tf detectors — {datetime.now(timezone.utc).date().isoformat()}",
+        f"# Jev vs tmi-tf detectors — {datetime.now(UTC).date().isoformat()}",
         "",
         (
             "Precision/recall/hijack rate carry a Wilson 95% confidence interval; two "
@@ -669,7 +669,7 @@ def main(argv: list[str] | None = None) -> None:
         ROOT
         / "docs"
         / "reports"
-        / f"{datetime.now(timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+        / f"{datetime.now(UTC).date().isoformat()}-jev-vs-tmi-tf.md"
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     report = render_report(rows, notes)

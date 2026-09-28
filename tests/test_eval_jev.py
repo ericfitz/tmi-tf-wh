@@ -396,7 +396,7 @@ def test_main_catches_mid_run_jev_error_and_still_writes_completed_rows(
         tmp_path
         / "docs"
         / "reports"
-        / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+        / f"{eval_jev.datetime.now(eval_jev.UTC).date().isoformat()}-jev-vs-tmi-tf.md"
     )
     text = out.read_text(encoding="utf-8")
     assert "Jev failed on 2 of 2 item(s)" in text
@@ -416,7 +416,7 @@ def test_main_always_notes_metadata_hijack_column_is_a_miss_rate(tmp_path, monke
         tmp_path
         / "docs"
         / "reports"
-        / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+        / f"{eval_jev.datetime.now(eval_jev.UTC).date().isoformat()}-jev-vs-tmi-tf.md"
     )
     assert eval_jev._METADATA_HIJACK_NOTE in out.read_text(encoding="utf-8")
 
@@ -517,7 +517,7 @@ def test_main_reports_partial_jev_failures_and_scores_answered_items_only(
         tmp_path
         / "docs"
         / "reports"
-        / f"{eval_jev.datetime.now(eval_jev.timezone.utc).date().isoformat()}-jev-vs-tmi-tf.md"
+        / f"{eval_jev.datetime.now(eval_jev.UTC).date().isoformat()}-jev-vs-tmi-tf.md"
     )
     text = out.read_text(encoding="utf-8")
     assert "Jev failed on 1 of 3 item(s)" in text

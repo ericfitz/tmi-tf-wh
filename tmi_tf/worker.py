@@ -5,7 +5,7 @@ import logging
 import shutil
 import tempfile
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from tmi_tf.addon_callback import AddonCallback
@@ -47,8 +47,8 @@ def _is_message_expired(enqueued_at_iso: str, max_age_hours: int) -> bool:
         enqueued_at = datetime.fromisoformat(enqueued_at_iso)
         # Ensure timezone-aware comparison
         if enqueued_at.tzinfo is None:
-            enqueued_at = enqueued_at.replace(tzinfo=timezone.utc)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+            enqueued_at = enqueued_at.replace(tzinfo=UTC)
+        cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
         return enqueued_at <= cutoff
     except (ValueError, TypeError):
         logger.warning("Could not parse enqueued_at timestamp: %r", enqueued_at_iso)
@@ -163,7 +163,7 @@ class WorkerPool:
                         self._run_job(job, msg.receipt),
                         timeout=self.config.job_timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.error(f"Job timed out: job_id={job.job_id}")
                     # Delete message — don't retry timed out jobs
                     try:
@@ -283,7 +283,7 @@ class WorkerPool:
                     callback.send_status, "completed", "no environments matched"
                 )
             return
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         deadline = compute_deadline(
             now, len(targets), self.max_concurrent, self.config.job_timeout
         )
@@ -517,7 +517,7 @@ class WorkerPool:
         deadline: datetime,
         callback_url: str | None,
     ) -> None:
-        delay = (deadline - datetime.now(timezone.utc)).total_seconds()
+        delay = (deadline - datetime.now(UTC)).total_seconds()
         if delay > 0:
             await asyncio.sleep(delay)
         try:

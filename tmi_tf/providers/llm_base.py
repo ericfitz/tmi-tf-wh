@@ -60,7 +60,7 @@ class BaseLLMProvider:
         # Stream and reassemble: long outputs (up to 64k tokens) on slower
         # models exceed provider limits for non-streaming responses.
         chunks = list(
-            litellm.completion(
+            litellm.completion(  # pyright: ignore[reportArgumentType]  # sync call with stream=True; 1.103's return type also lists a Coroutine
                 model=self._model,
                 messages=messages,
                 max_tokens=max_tokens,

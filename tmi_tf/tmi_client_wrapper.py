@@ -78,6 +78,8 @@ if tmi_client_path is None:
 
 sys.path.insert(0, str(tmi_client_path))
 
+from datetime import UTC
+
 import tmi_client  # type: ignore[import-not-found]
 from tmi_client.api_client import ApiClient  # type: ignore[import-not-found]
 from tmi_client.configuration import Configuration  # type: ignore[import-not-found]
@@ -631,9 +633,9 @@ class TMIClient:
         if self.status_heartbeat is not None:
             self.status_heartbeat(message)
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         line = f"[{timestamp}] {message}"
 
         try:
@@ -1000,9 +1002,9 @@ class TMIClient:
         Unlike update_status_note, this never overwrites existing content and does
         not touch this client's first-call state; safe from a fresh client.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         line = f"[{timestamp}] {message}"
 
         try:

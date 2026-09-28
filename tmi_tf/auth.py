@@ -7,7 +7,7 @@ import logging
 import secrets
 import tempfile
 import webbrowser
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -83,7 +83,7 @@ class TokenCache:
 
     def save_token(self, token: str, expires_in: int):
         """Save token to cache file using atomic write."""
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
         cache_data = {"token": token, "expires_at": expires_at.isoformat()}
 
         # Write to temp file then rename for atomicity (os.rename is atomic on POSIX)
@@ -115,7 +115,7 @@ class TokenCache:
                 # guess, discard the entry and re-authenticate once.
                 logger.info("Cached token has a legacy naive expiry; discarding")
                 return None
-            if datetime.now(timezone.utc) < expires_at:
+            if datetime.now(UTC) < expires_at:
                 logger.info("Using cached token")
                 return cache_data["token"]
             else:

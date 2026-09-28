@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+from datetime import UTC
 from unittest.mock import MagicMock, patch
 
 import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
@@ -297,14 +298,12 @@ class TestDedup:
         assert server_module.queue_client.publish.call_count == 1  # type: ignore[union-attr]
 
     def test_open_invocation_drops_without_callback(self, client):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from tmi_tf.invocation import Debouncer, InvocationState
 
         server_module.debouncer = Debouncer(0)
-        state = InvocationState(
-            "x", True, datetime.now(timezone.utc) + timedelta(hours=1), {}
-        )
+        state = InvocationState("x", True, datetime.now(UTC) + timedelta(hours=1), {})
         tmi = MagicMock()
         with (
             patch("tmi_tf.server.read_state", return_value=state),
@@ -318,14 +317,12 @@ class TestDedup:
         assert "X-TMI-Callback" not in r.headers
 
     def test_open_but_past_deadline_is_accepted(self, client):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from tmi_tf.invocation import Debouncer, InvocationState
 
         server_module.debouncer = Debouncer(0)
-        state = InvocationState(
-            "x", True, datetime.now(timezone.utc) - timedelta(seconds=1), {}
-        )
+        state = InvocationState("x", True, datetime.now(UTC) - timedelta(seconds=1), {})
         with (
             patch("tmi_tf.server.read_state", return_value=state),
             patch("tmi_tf.server.TMIClient"),
@@ -343,14 +340,12 @@ class TestDedup:
             assert _post(client, "e").json()["status"] == "accepted"
 
     def test_threat_model_updated_drop_has_no_callback(self, client):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from tmi_tf.invocation import Debouncer, InvocationState
 
         server_module.debouncer = Debouncer(0)
-        state = InvocationState(
-            "x", True, datetime.now(timezone.utc) + timedelta(hours=1), {}
-        )
+        state = InvocationState("x", True, datetime.now(UTC) + timedelta(hours=1), {})
         with (
             patch("tmi_tf.server.read_state", return_value=state),
             patch(

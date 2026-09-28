@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, MagicMock, patch
 
 from test_invocation import FakeTMI
@@ -20,15 +20,15 @@ from tmi_tf.worker import WorkerPool, _is_message_expired
 
 class TestMessageExpiry:
     def test_fresh_message_not_expired(self):
-        enqueued = datetime.now(timezone.utc) - timedelta(hours=1)
+        enqueued = datetime.now(UTC) - timedelta(hours=1)
         assert _is_message_expired(enqueued.isoformat(), max_age_hours=24) is False
 
     def test_old_message_expired(self):
-        enqueued = datetime.now(timezone.utc) - timedelta(hours=25)
+        enqueued = datetime.now(UTC) - timedelta(hours=25)
         assert _is_message_expired(enqueued.isoformat(), max_age_hours=24) is True
 
     def test_exactly_at_boundary(self):
-        enqueued = datetime.now(timezone.utc) - timedelta(hours=24)
+        enqueued = datetime.now(UTC) - timedelta(hours=24)
         assert _is_message_expired(enqueued.isoformat(), max_age_hours=24) is True
 
 
@@ -86,7 +86,7 @@ def _job(**kw):
         "job_id": "p1",
         "threat_model_id": "tm1",
         "event_type": "addon.invoked",
-        "enqueued_at": datetime.now(timezone.utc),
+        "enqueued_at": datetime.now(UTC),
         "callback_url": "https://cb",
     }
     defaults.update(kw)
@@ -98,7 +98,7 @@ def _child(job_id, siblings, **kw):
         job_id=job_id,
         environment=job_id.split(":")[1],
         siblings=siblings,
-        deadline=datetime.now(timezone.utc) + timedelta(hours=1),
+        deadline=datetime.now(UTC) + timedelta(hours=1),
         **kw,
     )
 
@@ -386,7 +386,7 @@ class TestCompletion:
         send a callback for) whatever invocation happens to be open now."""
         pool, _queue = _pool()
         fake = FakeTMI()
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
         inv.open_invocation(fake, "tm1", "p2", ["p2:aws"], future)
 
         with (
@@ -465,7 +465,7 @@ class TestWatchdog:
                     "tm1",
                     "p1",
                     ["p1:aws", "p1:gcp"],
-                    datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                    datetime.now(UTC) + timedelta(milliseconds=20),
                     "https://cb",
                 )
                 await asyncio.sleep(0.2)
@@ -497,7 +497,7 @@ class TestWatchdog:
                     "tm1",
                     "p1",
                     ["p1:aws", "p1:gcp"],
-                    datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                    datetime.now(UTC) + timedelta(milliseconds=20),
                     "https://cb",
                 )
                 await asyncio.sleep(0.2)
@@ -532,7 +532,7 @@ class TestWatchdog:
                     "tm1",
                     "p1",
                     ["p1:aws", "p1:gcp"],
-                    datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                    datetime.now(UTC) + timedelta(milliseconds=20),
                     "https://cb",
                 )
                 await asyncio.sleep(0.2)
@@ -558,9 +558,7 @@ class TestWatchdog:
         ):
 
             async def go():
-                pool._arm_watchdog(
-                    "tm1", "p1", ["p1:aws"], datetime.now(timezone.utc), None
-                )
+                pool._arm_watchdog("tm1", "p1", ["p1:aws"], datetime.now(UTC), None)
                 await asyncio.sleep(0.05)
 
             asyncio.run(go())
@@ -951,7 +949,7 @@ class TestAbort:
                 "tm1",
                 "p2",
                 ["p2:aws"],
-                datetime.now(timezone.utc) + timedelta(hours=1),
+                datetime.now(UTC) + timedelta(hours=1),
                 None,
             )
             wd = pool._watchdogs["tm1"]

@@ -6,7 +6,7 @@ both the CLI command and the webhook worker.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -146,7 +146,7 @@ def resolve_fanout_targets(
                     tf_repo.clone_path, envs
                 )
                 when = (
-                    datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                    datetime.fromtimestamp(ts, tz=UTC).isoformat()
                     if ts is not None
                     else "no commit in window; first environment chosen"
                 )
@@ -435,7 +435,7 @@ def run_analysis(
         # Build artifact names (environment-aware)
         model_label = llm_analyzer.model
         # Per run, not config.timestamp: the server reuses one Config for its lifetime.
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         if selected_env_name:
             inventory_note_name = (
                 f"Terraform Inventory - {selected_env_name} ({model_label}, {ts})"

@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -78,9 +78,7 @@ class Config:
         self.clone_timeout: int = int(os.getenv("CLONE_TIMEOUT", "300"))
         self.latest_commit_depth: int = int(os.getenv("LATEST_COMMIT_DEPTH", "200"))
 
-        self.timestamp: str = datetime.now(timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S UTC"
-        )
+        self.timestamp: str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         # Token cache directory
         self.cache_dir = Path.home() / ".tmi-tf"

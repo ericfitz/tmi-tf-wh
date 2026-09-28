@@ -1,6 +1,6 @@
 """Tests for invocation state kept as metadata on the parent status note."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 from tmi_tf import invocation as inv
@@ -34,7 +34,7 @@ class FakeTMI:
         self.metadata.pop(key, None)
 
 
-NOW = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 17, 12, 0, tzinfo=UTC)
 
 
 def test_compute_deadline_rounds_up_batches():

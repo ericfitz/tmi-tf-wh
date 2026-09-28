@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, FastAPI, Request  # ty:ignore[unresolved-import]
 from fastapi.responses import JSONResponse, Response  # ty:ignore[unresolved-import]
@@ -109,7 +109,7 @@ async def _is_duplicate(threat_model_id: str) -> bool:
     except Exception as e:
         logger.warning("Dedup lookup failed for %s; accepting: %s", threat_model_id, e)
         return False
-    return is_open(state, datetime.now(timezone.utc))
+    return is_open(state, datetime.now(UTC))
 
 
 async def _report_duplicate(parsed: dict, event_type: str, job_id: str) -> None:  # type: ignore[type-arg]
@@ -233,7 +233,7 @@ async def webhook(request: Request) -> Response:
         job_id=job_id,
         threat_model_id=parsed["threat_model_id"],
         event_type=event_type,
-        enqueued_at=datetime.now(timezone.utc),
+        enqueued_at=datetime.now(UTC),
         repo_id=parsed.get("repo_id"),
         callback_url=parsed.get("callback_url"),
         invocation_id=parsed.get("invocation_id"),

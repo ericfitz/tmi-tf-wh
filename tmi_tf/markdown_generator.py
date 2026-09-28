@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html import escape as html_escape
 from typing import Any
 
@@ -367,7 +367,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         """Generate Analysis Job Information section combining all metadata."""
         # UTC, explicitly labelled: these reports are read by people in other
         # timezones than the one that generated them.
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
         successful = [a for a in analyses if a.success]
         failed = [a for a in analyses if not a.success]
 

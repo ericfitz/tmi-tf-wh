@@ -3,13 +3,11 @@
 import logging
 import time
 from collections.abc import Callable
-from typing import TypeVar
 
 import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
 
 # LiteLLM exception types that indicate transient errors worth retrying
 TRANSIENT_LLM_EXCEPTIONS: tuple[type[BaseException], ...] = (
@@ -28,7 +26,7 @@ TRANSIENT_API_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 DEFAULT_RETRY_DELAY: float = 3.0
 
 
-def retry_transient_llm_call(
+def retry_transient_llm_call[T](
     call: Callable[[], T],
     *,
     description: str = "LLM call",

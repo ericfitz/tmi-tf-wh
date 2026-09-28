@@ -55,10 +55,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Floor and current. The floor matters: pyproject allows >=3.10, and
-        # some transitive pins differ by interpreter (uvicorn[standard] resolves
-        # websockets 16.x below 3.11 and 17.x at or above it).
-        python-version: ["3.10", "3.13"]
+        # Floor = the AWS and local images' Python (docs/adr/0001).
+        python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v7
 

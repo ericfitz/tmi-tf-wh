@@ -5,7 +5,7 @@ for all artifacts created by tmi-tf (notes, diagrams, threats).
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Version identifier for tmi-tf
 TMI_TF_VERSION = "0.1.0"
@@ -55,7 +55,7 @@ def get_rfc3339_timestamp() -> str:
     Returns:
         Timestamp string like '2025-12-29T10:30:45+00:00'
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # Format with 0 decimal precision on seconds
     return now.strftime("%Y-%m-%dT%H:%M:%S%z")
 
