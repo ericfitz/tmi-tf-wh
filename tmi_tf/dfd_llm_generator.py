@@ -12,8 +12,8 @@ from typing import Any
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.json_extract import extract_json_object
-from tmi_tf.providers import LLMProvider
-from tmi_tf.retry import retry_transient_llm_call
+from tmi_tf.llm_analyzer import LLMRefusalError, call_llm_checked
+from tmi_tf.providers import LLMProvider, LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,9 @@ class DFDLLMGenerator:
 
         Returns:
             Dictionary with "components" and "flows" keys, or None on error
+
+        Raises:
+            LLMRefusalError: the model refused (finish_reason=content_filter)
         """
         logger.info("Generating structured DFD data from analysis using %s", self.model)
 
@@ -76,21 +79,21 @@ class DFDLLMGenerator:
                 infrastructure_json=json.dumps(infrastructure, indent=2),
             )
 
-            response = retry_transient_llm_call(
-                lambda: self.llm_provider.complete(
-                    self.system_prompt, user_prompt, max_tokens=64000, timeout=1200.0
-                ),
-                description="DFD generation",
-            )
-            self.input_tokens = response.input_tokens
-            self.output_tokens = response.output_tokens
-            self.total_cost = response.cost
-            logger.info(
-                "DFD generation: %d input tokens, %d output tokens, $%.4f",
-                self.input_tokens,
-                self.output_tokens,
-                self.total_cost,
-            )
+            try:
+                response = call_llm_checked(
+                    self.llm_provider,
+                    self.system_prompt,
+                    user_prompt,
+                    "DFD generation",
+                    max_tokens=64000,
+                    timeout=1200.0,
+                )
+            except LLMRefusalError as e:
+                # Never build a diagram from refused (possibly partial) output;
+                # the caller reports the refusal.
+                self._record_usage(e.response)
+                raise
+            self._record_usage(response)
             if not response.text:
                 logger.error("Empty content in LLM response")
                 return None
@@ -119,9 +122,16 @@ class DFDLLMGenerator:
 
             return structured_data
 
+        except LLMRefusalError:
+            raise
         except Exception as e:
             logger.error("Error generating structured DFD data: %s", e)
             return None
+
+    def _record_usage(self, response: LLMResponse) -> None:
+        self.input_tokens = response.input_tokens
+        self.output_tokens = response.output_tokens
+        self.total_cost = response.cost
 
     @staticmethod
     def _strip_markup_string(text: str) -> str:

@@ -481,6 +481,18 @@ class TestGenerateInventoryReport:
 
 
 class TestGenerateAnalysisReport:
+    def test_dfd_refusal_listed_in_job_info(self):
+        gen = MarkdownGenerator(_fake_registry())
+        report = gen.generate_analysis_report(
+            "TM", "tm-1", [_make_analysis()], dfd_refused=True
+        )
+        assert "**Model refusals (content_filter)**: DFD generation" in report
+
+    def test_no_refusal_line_by_default(self):
+        gen = MarkdownGenerator(_fake_registry())
+        report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])
+        assert "Model refusals" not in report
+
     def test_contains_narrative_and_findings(self):
         gen = MarkdownGenerator(_fake_registry())
         report = gen.generate_analysis_report("TM", "tm-1", [_make_analysis()])

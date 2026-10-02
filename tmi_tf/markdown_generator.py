@@ -363,6 +363,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         self,
         threat_model_id: str,
         analyses: list[TerraformAnalysis],
+        dfd_refused: bool = False,
     ) -> str:
         """Generate Analysis Job Information section combining all metadata."""
         # UTC, explicitly labelled: these reports are read by people in other
@@ -402,6 +403,9 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         if jev:
             parts.append(f"**Jev shadow**: {jev}")
         refusals = [f"{a.repo_name}: {a.refusals}" for a in successful if a.refusals]
+        if dfd_refused:
+            # Run-level: one DFD call covers every repository.
+            refusals.append("DFD generation")
         if refusals:
             parts.append(f"**Model refusals (content_filter)**: {'; '.join(refusals)}")
 
@@ -496,9 +500,11 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         analyses: list[TerraformAnalysis],
         environment_name: str | None = None,
         inventory_note_name: str | None = None,
+        dfd_refused: bool = False,
     ) -> str:
         """Analysis note: architecture narrative, diagram, pointer to the
-        inventory note, security findings, consolidated findings, job info."""
+        inventory note, security findings, consolidated findings, job info.
+        dfd_refused lists the DFD call under model refusals."""
         sections = []
         title = "Terraform Infrastructure Analysis"
         if environment_name:
@@ -531,7 +537,9 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
             sections.append("\n\n".join(part for part in parts if part))
 
         sections.append(self._generate_consolidated_findings(analyses))
-        sections.append(self._generate_analysis_job_info(threat_model_id, analyses))
+        sections.append(
+            self._generate_analysis_job_info(threat_model_id, analyses, dfd_refused)
+        )
         return "\n\n---\n\n".join(sections)
 
     def save_to_file(self, content: str, filepath: str) -> None:

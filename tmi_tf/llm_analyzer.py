@@ -72,6 +72,63 @@ class LLMRefusalError(Exception):
         self.response = response
 
 
+def call_llm_checked(
+    llm_provider: LLMProvider,
+    system_prompt: str,
+    user_prompt: str,
+    description: str,
+    max_tokens: int = 64000,
+    timeout: float = 1200.0,
+) -> LLMResponse:
+    """Call the provider with transient-error retry, retry an empty response
+    that stopped normally once, and raise LLMRefusalError on content_filter."""
+    logger.info("%s: Calling LLM provider", description)
+
+    def call() -> LLMResponse:
+        return retry_transient_llm_call(
+            lambda: llm_provider.complete(
+                system_prompt, user_prompt, max_tokens, timeout
+            ),
+            description=description,
+        )
+
+    response = call()
+    # An empty answer that stopped normally is a provider glitch (seen on
+    # gpt-6-sol in phase 3b); retry once. "length" and "content_filter"
+    # would only repeat, so they are returned as is.
+    if not response.text and response.finish_reason not in (
+        "length",
+        "content_filter",
+    ):
+        logger.warning(
+            "%s: empty response (finish_reason=%s); retrying once",
+            description,
+            response.finish_reason,
+        )
+        first, response = response, call()
+        response = replace(
+            response,
+            input_tokens=first.input_tokens + response.input_tokens,
+            output_tokens=first.output_tokens + response.output_tokens,
+            cost=first.cost + response.cost,
+        )
+    # Refusal whether or not partial text came with it.
+    if response.finish_reason == "content_filter":
+        raise LLMRefusalError(
+            f"{description}: model refused (finish_reason=content_filter)",
+            response,
+        )
+    logger.info(
+        "%s: %d input, %d output tokens, finish_reason=%s, $%.4f",
+        description,
+        response.input_tokens,
+        response.output_tokens,
+        response.finish_reason,
+        response.cost,
+    )
+    return response
+
+
 class TerraformAnalysis:
     """Result of Terraform analysis (3-phase structured output)."""
 
@@ -916,7 +973,7 @@ class LLMAnalyzer:
         timeout: float = 1200.0,
     ) -> LLMResponse:
         """
-        Make a single LLM API call via the provider.
+        Make a single LLM API call via the provider (see call_llm_checked).
 
         Args:
             system_prompt: System prompt
@@ -928,51 +985,14 @@ class LLMAnalyzer:
         Returns:
             LLMResponse with text, tokens, cost, and finish_reason
         """
-        logger.info("Phase %s: Calling LLM provider", phase_name)
-
-        def call() -> LLMResponse:
-            return retry_transient_llm_call(
-                lambda: self.llm_provider.complete(
-                    system_prompt, user_prompt, max_tokens, timeout
-                ),
-                description=f"Phase {phase_name}",
-            )
-
-        response = call()
-        # An empty answer that stopped normally is a provider glitch (seen on
-        # gpt-6-sol in phase 3b); retry once. "length" and "content_filter"
-        # would only repeat, so they are returned as is.
-        if not response.text and response.finish_reason not in (
-            "length",
-            "content_filter",
-        ):
-            logger.warning(
-                "Phase %s: empty response (finish_reason=%s); retrying once",
-                phase_name,
-                response.finish_reason,
-            )
-            first, response = response, call()
-            response = replace(
-                response,
-                input_tokens=first.input_tokens + response.input_tokens,
-                output_tokens=first.output_tokens + response.output_tokens,
-                cost=first.cost + response.cost,
-            )
-        # Refusal whether or not partial text came with it.
-        if response.finish_reason == "content_filter":
-            raise LLMRefusalError(
-                f"Phase {phase_name}: model refused (finish_reason=content_filter)",
-                response,
-            )
-        logger.info(
-            "Phase %s: %d input, %d output tokens, finish_reason=%s, $%.4f",
-            phase_name,
-            response.input_tokens,
-            response.output_tokens,
-            response.finish_reason,
-            response.cost,
+        return call_llm_checked(
+            self.llm_provider,
+            system_prompt,
+            user_prompt,
+            f"Phase {phase_name}",
+            max_tokens,
+            timeout,
         )
-        return response
 
     def _call_llm_json(
         self,

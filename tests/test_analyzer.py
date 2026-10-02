@@ -294,3 +294,55 @@ class TestRunAnalysisProfile:
         get_provider.assert_called_once_with(PROFILE)
         first_note = tmi.update_status_note.call_args_list[0].args[1]
         assert first_note == "Analysis started (profile t, oci/m)"
+
+
+class TestDFDRefusal:
+    def test_dfd_refusal_reported_in_status_and_analysis_note(self, tmp_path):
+        from tmi_tf.llm_analyzer import LLMRefusalError
+        from tmi_tf.providers import LLMResponse
+
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+        analysis = MagicMock(success=True, refusals="")
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        analysis.inventory = {"components": [], "services": []}
+        analysis.infrastructure = {}
+        refused = LLMResponse(
+            text=None,
+            input_tokens=1,
+            output_tokens=0,
+            cost=0.0,
+            finish_reason="content_filter",
+        )
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        with (
+            clone,
+            gh,
+            prov,
+            llm_cls as llm,
+            md as md_cls,
+            val,
+            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
+            patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
+        ):
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            dfd_cls.return_value.generate_structured_components.side_effect = (
+                LLMRefusalError("DFD generation: model refused", refused)
+            )
+            md_cls.return_value.generate_analysis_report.side_effect = lambda **kw: (
+                "REFUSED" if kw.get("dfd_refused") else "CLEAN"
+            )
+            run_analysis(Config(), "tm1", tmi, PROFILE, skip_threats=True)
+
+        notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
+        assert "Model refusals (content_filter): DFD generation" in notes
+        tmi.create_or_update_diagram.assert_not_called()
+        analysis_writes = [
+            c.kwargs["content"]
+            for c in tmi.create_or_update_note.call_args_list
+            if c.kwargs["name"].startswith("Terraform Analysis")
+        ]
+        assert analysis_writes[-1] == "REFUSED"

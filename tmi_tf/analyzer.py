@@ -19,7 +19,7 @@ from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.github_client import GitHubClient
 from tmi_tf.jev_shadow import jev_shadow_from_env
-from tmi_tf.llm_analyzer import LLMAnalyzer, TerraformAnalysis
+from tmi_tf.llm_analyzer import LLMAnalyzer, LLMRefusalError, TerraformAnalysis
 from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.providers import get_llm_provider
@@ -600,6 +600,32 @@ def run_analysis(
                 else:
                     logger.warning("Failed to generate structured data for diagram")
 
+            except LLMRefusalError as e:
+                # The analysis note is already written; rewrite it so its
+                # job info lists the refusal (#89).
+                logger.error(f"Diagram not generated: {e}")
+                tmi_client.update_status_note(
+                    threat_model_id, "Model refusals (content_filter): DFD generation"
+                )
+                analysis_content = markdown_gen.generate_analysis_report(
+                    threat_model_name=threat_model.name,
+                    threat_model_id=threat_model_id,
+                    analyses=analyses,
+                    environment_name=selected_env_name,
+                    inventory_note_name=inventory_note_name,
+                    dfd_refused=True,
+                )
+                try:
+                    tmi_client.create_or_update_note(
+                        threat_model_id=threat_model_id,
+                        name=analysis_note_name,
+                        content=analysis_content,
+                        description=f"Terraform analysis for {repo_word}: {repo_list}",
+                    )
+                except Exception as note_err:
+                    logger.warning(
+                        f"Failed to record DFD refusal in analysis note: {note_err}"
+                    )
             except Exception as e:
                 logger.error(f"Failed to generate diagram: {e}")
                 logger.info("Continuing without diagram...")
