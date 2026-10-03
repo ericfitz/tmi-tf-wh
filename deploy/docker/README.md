@@ -29,4 +29,6 @@ Push workflow: [scripts/push-aws.sh](../../scripts/push-aws.sh) (ECR, amd64 — 
 
 - `TMI_CLIENT_REPO` — git URL for the TMI Python client (default: `https://github.com/ericfitz/tmi-clients.git`)
 - `TMI_CLIENT_REF` — branch/tag (default: `main`)
+
+The build copies the newest `python-client-generated/vX.Y.Z` at or above the version in `tmi-api-min-version` (`scripts/select_tmi_client.py`).
 - `BUILD_DATE`, `GIT_COMMIT` — baked into OCI labels

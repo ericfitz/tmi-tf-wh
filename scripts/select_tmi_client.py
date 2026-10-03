@@ -1,57 +1,57 @@
-"""Pick the generated TMI Python client that matches the TMI API schema version.
+"""Pick the generated TMI Python client for an image build.
 
-Used at image build time. Reads ``info.version`` from tmi-openapi.json (a URL
-or a local path) and copies the newest ``python-client-generated/vX.Y.Z``
-with the same major.minor and a patch not above the schema's. Patch releases
-are API-compatible; a missing major.minor fails the build.
+Used at image build time. Copies the newest ``python-client-generated/vX.Y.Z``
+whose version is at or above the minimum TMI API schema version the current
+build was built against (``deploy/docker/tmi-api-min-version``). The TMI
+server's own schema version is deliberately not consulted. No client at or
+above the minimum fails the build.
 """
 
 import argparse
-import json
 import re
 import shutil
 import sys
-import urllib.request
 from pathlib import Path
 
 _VERSION_DIR = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 
 
-def schema_version(source: str) -> str:
-    if source.startswith(("http://", "https://")):
-        with urllib.request.urlopen(source, timeout=30) as resp:
-            data = json.load(resp)
-    else:
-        data = json.loads(Path(source).read_text(encoding="utf-8"))
-    return str(data["info"]["version"])
+def parse_version(text: str) -> tuple[int, int, int]:
+    major, minor, patch = (int(p) for p in text.strip().lstrip("v").split(".")[:3])
+    return major, minor, patch
 
 
-def select(clients: Path, version: str) -> Path:
-    major, minor, patch = (int(p) for p in version.split(".")[:3])
+def select(clients: Path, min_version: str) -> Path:
+    floor = parse_version(min_version)
     candidates = []
     for d in clients.iterdir():
         m = _VERSION_DIR.match(d.name)
         if d.is_dir() and m:
             v = tuple(int(g) for g in m.groups())
-            if v[:2] == (major, minor) and v[2] <= patch:
+            if v >= floor:
                 candidates.append((v, d))
     if not candidates:
         raise SystemExit(
-            f"no python client for TMI API {major}.{minor} (<= {version}) in {clients}"
+            f"no python client at or above TMI API {min_version.strip()} in {clients}"
         )
     return max(candidates)[1]
 
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--schema", required=True, help="tmi-openapi.json URL or path")
+    ap.add_argument(
+        "--min-version-file",
+        required=True,
+        type=Path,
+        help="file holding the minimum TMI API schema version (X.Y.Z)",
+    )
     ap.add_argument("--clients", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args(argv)
-    version = schema_version(args.schema)
-    chosen = select(args.clients, version)
+    min_version = args.min_version_file.read_text(encoding="utf-8").strip()
+    chosen = select(args.clients, min_version)
     shutil.copytree(chosen, args.out)
-    print(f"TMI API schema {version} -> client {chosen.name}", file=sys.stderr)
+    print(f"TMI API minimum {min_version} -> client {chosen.name}", file=sys.stderr)
 
 
 if __name__ == "__main__":

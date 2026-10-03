@@ -1,7 +1,6 @@
-"""Build-time TMI client selection: newest same major.minor patch <= schema version."""
+"""Build-time TMI client selection: newest client at or above the minimum API version."""
 
 import importlib.util
-import json
 from pathlib import Path
 
 import pytest
@@ -23,37 +22,42 @@ def _clients(tmp_path: Path, *versions: str) -> Path:
     return root
 
 
-def test_picks_newest_patch_not_above_schema(tmp_path):
-    root = _clients(tmp_path, "v1.14.9", "v1.15.0", "v1.15.4", "v1.15.7", "v1.16.0")
-    assert sel.select(root, "1.15.6").name == "v1.15.4"
+def test_picks_newest_at_or_above_minimum(tmp_path):
+    root = _clients(tmp_path, "v1.14.9", "v1.15.0", "v1.15.4", "v1.16.0")
+    assert sel.select(root, "1.15.0").name == "v1.16.0"
 
 
-def test_exact_match_wins(tmp_path):
-    root = _clients(tmp_path, "v1.15.0", "v1.15.6")
-    assert sel.select(root, "1.15.6").name == "v1.15.6"
+def test_exact_minimum_accepted(tmp_path):
+    root = _clients(tmp_path, "v1.14.9", "v1.15.0")
+    assert sel.select(root, "1.15.0").name == "v1.15.0"
 
 
 def test_numeric_not_lexical_ordering(tmp_path):
     root = _clients(tmp_path, "v1.15.2", "v1.15.10")
-    assert sel.select(root, "1.15.12").name == "v1.15.10"
+    assert sel.select(root, "1.15.0").name == "v1.15.10"
 
 
-def test_no_same_minor_fails(tmp_path):
-    root = _clients(tmp_path, "v1.14.9", "v1.16.0")
-    with pytest.raises(SystemExit, match="no python client for TMI API 1.15"):
-        sel.select(root, "1.15.6")
+def test_nothing_at_or_above_minimum_fails(tmp_path):
+    root = _clients(tmp_path, "v1.14.9", "v1.15.0")
+    with pytest.raises(SystemExit, match="no python client at or above TMI API 1.15.1"):
+        sel.select(root, "1.15.1")
 
 
-def test_schema_version_parsed_from_info(tmp_path):
-    schema = tmp_path / "tmi-openapi.json"
-    schema.write_text(json.dumps({"info": {"version": "1.15.6"}}))
-    assert sel.schema_version(str(schema)) == "1.15.6"
+def test_parse_version_tolerates_v_prefix_and_whitespace():
+    assert sel.parse_version(" v1.15.0\n") == (1, 15, 0)
 
 
 def test_main_copies_selected_client(tmp_path):
-    root = _clients(tmp_path, "v1.15.0")
-    schema = tmp_path / "tmi-openapi.json"
-    schema.write_text(json.dumps({"info": {"version": "1.15.6"}}))
+    root = _clients(tmp_path, "v1.14.9", "v1.15.0")
+    floor = tmp_path / "tmi-api-min-version"
+    floor.write_text("1.15.0\n")
     out = tmp_path / "out"
-    sel.main(["--schema", str(schema), "--clients", str(root), "--out", str(out)])
+    sel.main(
+        ["--min-version-file", str(floor), "--clients", str(root), "--out", str(out)]
+    )
     assert (out / "marker").read_text() == "v1.15.0"
+
+
+def test_repo_minimum_file_is_a_version():
+    floor = Path(__file__).parent.parent / "deploy" / "docker" / "tmi-api-min-version"
+    sel.parse_version(floor.read_text())

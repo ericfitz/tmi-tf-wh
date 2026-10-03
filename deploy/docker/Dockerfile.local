@@ -20,10 +20,10 @@ ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
 ARG TMI_CLIENT_REF=main
 RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
 
-# Client matching the TMI API schema version (newest same major.minor patch <= schema).
-ARG TMI_SCHEMA_URL=https://raw.githubusercontent.com/ericfitz/tmi/main/api-schema/tmi-openapi.json
+# Newest client at or above the minimum TMI API version this build was built against.
+COPY deploy/docker/tmi-api-min-version /tmp/tmi-api-min-version
 COPY scripts/select_tmi_client.py /tmp/select_tmi_client.py
-RUN python3.13 /tmp/select_tmi_client.py --schema ${TMI_SCHEMA_URL} \
+RUN python3.13 /tmp/select_tmi_client.py --min-version-file /tmp/tmi-api-min-version \
         --clients /opt/tmi-clients/python-client-generated --out /opt/tmi-client
 
 WORKDIR /app

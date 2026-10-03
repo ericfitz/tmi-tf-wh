@@ -8,6 +8,7 @@ __pycache__/
 tests/
 docs/
 deploy/
+!deploy/docker/tmi-api-min-version
 *.egg-info/
 .ruff_cache/
 .pytest_cache/
