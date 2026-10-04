@@ -52,12 +52,17 @@ echo "Logging in to ${REGISTRY}" >&2
 aws ecr get-login-password --profile "$PROFILE" --region "$REGION" \
     | docker login --username AWS --password-stdin "$REGISTRY"
 
+# Resolve the tmi-clients branch to a commit so a new client release busts the cached clone layer.
+TMI_CLIENT_SHA=$(git ls-remote https://github.com/ericfitz/tmi-clients.git refs/heads/main | cut -f1)
+[[ -n "$TMI_CLIENT_SHA" ]] || { echo "could not resolve tmi-clients main" >&2; exit 1; }
+
 BUILD_ARGS=(
     --platform "$PLATFORM"
     --file "${PROJECT_ROOT}/deploy/docker/Dockerfile.aws"
     --tag "${IMAGE}:${TAG}"
     --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     --build-arg "GIT_COMMIT=$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    --build-arg "TMI_CLIENT_SHA=${TMI_CLIENT_SHA}"
     --push
 )
 [[ "$TAG" == "latest" && -n "$VERSION" ]] && BUILD_ARGS+=(--tag "${IMAGE}:v${VERSION}")

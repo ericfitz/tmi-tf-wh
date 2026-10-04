@@ -20,7 +20,9 @@ RUN dnf -y update && \
 
 ARG TMI_CLIENT_REPO=https://github.com/ericfitz/tmi-clients.git
 ARG TMI_CLIENT_REF=main
-RUN git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
+# Commit of TMI_CLIENT_REF; a new value invalidates the cached clone below.
+ARG TMI_CLIENT_SHA=unknown
+RUN echo "tmi-clients ${TMI_CLIENT_SHA}" && git clone --depth 1 --branch ${TMI_CLIENT_REF} ${TMI_CLIENT_REPO} /opt/tmi-clients
 
 # Newest client at or above the minimum TMI API version this build was built against.
 COPY deploy/docker/tmi-api-min-version /tmp/tmi-api-min-version
