@@ -14,6 +14,19 @@ uv run pytest tests/                        # all tests
 uv run pytest tests/test_repo_analyzer.py::TestDetectEnvironments::test_finds_single_environment  # one test
 ```
 
+Done gate: `uv run ruff check tmi_tf/ tests/ && uv run ruff format --check tmi_tf/ tests/ && uv run pyright && uv run pytest tests/`
+
+## Deploy (AWS EKS)
+
+Cluster `tmi-eks` (us-east-1), namespace `tmi-tf`, `AWS_PROFILE=tmi`. Deploys are Eric's call.
+
+1. `./scripts/push-aws.sh --tag <sha>` (tag = HEAD sha of the built commit).
+2. Set `app_image_tag` in `infra/aws/terraform.tfvars` (git-ignored, non-secret).
+3. `cd infra/aws && AWS_PROFILE=tmi terraform plan -out=x.tfplan && terraform apply x.tfplan; rm x.tfplan` (plan files embed variable values).
+4. Verify: `kubectl --context tmi-eks -n tmi-tf rollout status deploy/tmi-tf-wh` and `https://webhook.tmi.dev/tf/health`.
+
+Decision: EKS is the only deploy target; k3s-rp is skipped (see ADR-0002).
+
 ## External dependency: TMI Python client
 
 The TMI API client is **not** installed as a package. `tmi_client_wrapper.py` loads it at runtime from `~/Projects/tmi-clients/python-client-generated` via `sys.path.insert`. All `tmi_client` imports carry `# type: ignore`; pyright is configured to accept this. `litellm`, `click`, and `dotenv` imports may also carry `# pyright: ignore` / `# ty:ignore` because pyright cannot always resolve them.
