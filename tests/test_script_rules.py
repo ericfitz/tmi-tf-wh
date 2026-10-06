@@ -1,5 +1,7 @@
 """One positive and one near-miss sample per static script rule (#14)."""
 
+import dataclasses
+import re
 import time
 
 import pytest  # type: ignore
@@ -196,27 +198,83 @@ def _line(unit: str, target_len: int = 4000) -> str:
     return unit * max(1, target_len // len(unit))
 
 
+def _best_time(text: str, rules: list) -> float:
+    """Fastest of 3 match_rules runs; the minimum is the least noisy sample."""
+    best = float("inf")
+    for _ in range(3):
+        start = time.monotonic()
+        match_rules(text, rules)
+        best = min(best, time.monotonic() - start)
+    return best
+
+
+def _length_scaling(
+    rules: list, prefix: str, unit: str, lines: int, short_len: int
+) -> tuple[float, float]:
+    """Time match_rules on ``lines`` lines of ``short_len`` chars, then on
+    lines 4x as long, and return (short_time, long_time). Line count is held
+    fixed because the DoS risk is quadratic work *within* one long line; a
+    per-line scan is always linear in the number of lines."""
+    times = []
+    for length in (short_len, 4 * short_len):
+        line = prefix + _line(unit, length - len(prefix))
+        times.append(_best_time("\n".join([line] * lines), rules))
+    return times[0], times[1]
+
+
+# A linear scan grows ~4x when lines get 4x longer; a quadratic one ~16x.
+MAX_LINEAR_RATIO = 8.0
+
+# Each shape is a rule's worst-case repeating token with no closing token
+# anywhere, forcing the full failure path.
+ADVERSARIAL_SHAPES = {
+    "authorized_keys_remote": ("", "curl >> "),
+    "download_then_exec": ("", "curl a&&"),
+    "cron_remote": ("crontab ", "curl ;"),
+    "python_reverse_shell": ("python -c ", "socket "),
+}
+
+
 def test_match_rules_linear_time_on_adversarial_multiline_input():
     """DoS regression (#14), round 2: {0,400}-bounded gaps alone are still
     quadratic *within* one long line (a bounded gap can still be retried at
-    every occurrence of the next required token inside the bound). Each
-    shape is 250 lines x ~4000 chars of a rule's worst-case repeating token
-    (no closing token anywhere, forcing the full failure path); match_rules
-    must stay well under 2s per shape even at this ~1MB scale."""
+    every occurrence of the next required token inside the bound).
+
+    The check is the growth ratio as lines get 4x longer, not a fixed time
+    limit: CI runners are ~2x slower than a dev Mac, and a fixed 2s limit on
+    a 1MB input failed every main run at 2.45-2.64s although the scan was
+    linear. The absolute backstop catches a catastrophic regression that
+    the ratio could miss (e.g. both sizes already far past the bound)."""
     rules = list(RULES.values())
-    shapes = {
-        "authorized_keys_remote": _line("curl >> "),
-        "download_then_exec": _line("curl a&&"),
-        "cron_remote": "crontab " + _line("curl ;", 3990),
-        "python_reverse_shell": "python -c " + _line("socket ", 3990),
-    }
-    for rule_id, line in shapes.items():
-        text = "\n".join([line] * 250)
-        start = time.monotonic()
-        hits = {h.rule_id for h in match_rules(text, rules)}
-        elapsed = time.monotonic() - start
-        assert elapsed < 2.0, f"{rule_id} shape took {elapsed:.3f}s ({len(text)} chars)"
-        assert rule_id not in hits  # no closing token present -> never matches
+    for rule_id, (prefix, unit) in ADVERSARIAL_SHAPES.items():
+        short, long_ = _length_scaling(rules, prefix, unit, 100, 1000)
+        ratio = long_ / max(short, 1e-3)
+        assert ratio < MAX_LINEAR_RATIO, (
+            f"{rule_id}: 4x longer lines took {ratio:.1f}x as long "
+            f"({short:.3f}s -> {long_:.3f}s); scan is superlinear per line"
+        )
+        assert long_ < 5.0, f"{rule_id}: 100 x 4000-char lines took {long_:.3f}s"
+        # No closing token is present, so the rule must never match.
+        text = "\n".join([prefix + _line(unit, 1000 - len(prefix))] * 100)
+        assert rule_id not in {h.rule_id for h in match_rules(text, rules)}
+
+
+def test_length_scaling_detects_quadratic_pattern():
+    """Self-test for _length_scaling: an unbounded-gap variant of
+    authorized_keys_remote (the pre-#14 shape) is quadratic per line and must
+    exceed MAX_LINEAR_RATIO; the shipped bounded pattern must not. Inputs are
+    small because the quadratic variant would take minutes at 1MB."""
+    shipped = RULES["authorized_keys_remote"]
+    quadratic = dataclasses.replace(
+        shipped,
+        pattern=re.compile(
+            r"(curl|wget)[^\n>]*>>?[^\n]*?authorized_keys", re.IGNORECASE
+        ),
+    )
+    short, long_ = _length_scaling([quadratic], "", "curl >> ", 10, 1000)
+    assert long_ / max(short, 1e-3) > MAX_LINEAR_RATIO, (short, long_)
+    short, long_ = _length_scaling([shipped], "", "curl >> ", 100, 1000)
+    assert long_ / max(short, 1e-3) < MAX_LINEAR_RATIO, (short, long_)
 
 
 def test_long_line_padding_does_not_evade_detection():
