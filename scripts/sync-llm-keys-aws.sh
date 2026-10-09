@@ -2,7 +2,7 @@
 #
 # sync-llm-keys-aws.sh - Push rotated LLM API keys from ~/.keys to the EKS Secret
 #
-# The cyber keys rotate weekly (usually Friday). This compares each ~/.keys
+# Run after rotating a key in ~/.keys. This compares each ~/.keys
 # file with the value in the running Secret (sha256 prefixes only; values are
 # never printed), rewrites the changed lines in the secrets tfvars under infra/aws,
 # applies through a saved plan file, and restarts the deployment so the pod
@@ -33,9 +33,8 @@ YES=false
 
 # Secret key : ~/.keys file : variable that file exports
 KEYS=(
-    "OPENAI_CYBER_API_KEY:OPENAI_CYBER_API_KEY:OPENAI_API_KEY"
-    "ANTHROPIC_CYBER_API_KEY:MYTHOS_API_KEY:ANTHROPIC_API_KEY"
-    "ANTHROPIC_CVP_API_KEY:ANTHROPIC_API_KEY:ANTHROPIC_API_KEY"
+    "ANTHROPIC_CVP_API_KEY:ANTHROPIC_AWS_API_KEY:ANTHROPIC_API_KEY"
+    "OPENAI_API_KEY:OPENAI_API_KEY:OPENAI_API_KEY"
 )
 
 while [[ $# -gt 0 ]]; do

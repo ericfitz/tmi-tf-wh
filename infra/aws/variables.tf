@@ -70,7 +70,7 @@ variable "app_image_tag" {
 variable "llm_profile" {
   description = "Default LLM profile name (LLM_PROFILE); profiles live in llm-profiles.yaml"
   type        = string
-  default     = "gpt56cyber"
+  default     = "fable51"
 }
 
 variable "llm_profiles_yaml" {
@@ -118,7 +118,7 @@ variable "tmi_client_secret" {
 }
 
 variable "llm_api_keys" {
-  description = "LLM API keys keyed by the env var name the profiles reference (e.g. OPENAI_CYBER_API_KEY)"
+  description = "LLM API keys keyed by the env var name the profiles reference (e.g. ANTHROPIC_CVP_API_KEY)"
   type        = map(string)
   sensitive   = true
   default     = {}

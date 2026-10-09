@@ -36,7 +36,7 @@ class TestLLMProfiles:
     def test_default_profile_from_env(self):
         config = Config()
         assert config.llm_profile == "opus48"
-        assert "gpt56cyber" in config.llm_profiles
+        assert "fable51" in config.llm_profiles
 
     def test_no_default_profile(self):
         os.environ.pop("LLM_PROFILE", None)

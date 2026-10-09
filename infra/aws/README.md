@@ -22,7 +22,7 @@ tmi_client_id     = "<from TMI, see below>"
 tmi_client_secret = "<from TMI, see below>"
 github_token      = ""
 llm_api_keys = {
-  OPENAI_CYBER_API_KEY = "<key>"   # names match api_key in llm-profiles.yaml
+  ANTHROPIC_CVP_API_KEY = "<key>"  # names match api_key in llm-profiles.yaml
 }
 EOF
 
@@ -50,7 +50,7 @@ kubectl --context tmi-eks -n tmi-tf get pods,ingress
 
 The model is chosen per invocation from the named profiles in
 `llm-profiles.yaml` (built into the image): `{"environments": "aws",
-"profile": "gpt56cyber"}` in the addon invocation's `user_data`. With no
+"profile": "fable51"}` in the addon invocation's `user_data`. With no
 `profile`, `llm_profile` (the pod's `LLM_PROFILE`) is used.
 
 - Keys: `llm_api_keys` in `secrets.auto.tfvars`, keyed by the env var names
@@ -59,7 +59,7 @@ The model is chosen per invocation from the named profiles in
   full file content; it is mounted from a ConfigMap and replaces the image's
   file. Changing only Secret/ConfigMap data does not restart the pod: run
   `kubectl --context tmi-eks -n tmi-tf rollout restart deployment/tmi-tf-wh`.
-- Key rotation: the cyber keys rotate weekly. `scripts/sync-llm-keys-aws.sh`
+- Key rotation: after rotating a key in `~/.keys`, `scripts/sync-llm-keys-aws.sh`
   compares `~/.keys` with the running Secret (hash prefixes only), rewrites
   the changed `llm_api_keys` lines, applies via a saved plan, and restarts the
   pod. `--check` only compares (exit 1 if a key differs).

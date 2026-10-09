@@ -46,7 +46,7 @@ cp .env.example .env
 
 3. Edit `.env` and set your API keys:
 ```bash
-OPENAI_CYBER_API_KEY=your_openai_cyber_api_key_here  # names match api_key in llm-profiles.yaml
+ANTHROPIC_CVP_API_KEY=your_anthropic_api_key_here  # names match api_key in llm-profiles.yaml
 GITHUB_TOKEN=your_github_token_here  # Optional
 ```
 
@@ -65,7 +65,7 @@ All configuration is managed through the `.env` file:
 | `TMI_OAUTH_IDP` | OAuth identity provider | `google` |
 | `LLM_PROFILE` | Default LLM profile (see [LLM profiles](#llm-profiles)) | *Required unless every run names one* |
 | `LLM_PROFILES_FILE` | Profiles file | `llm-profiles.yaml` in the project root |
-| *key vars* | API keys, under the names the profiles' `api_key` fields reference (e.g. `OPENAI_CYBER_API_KEY`) | Required for the profiles you use |
+| *key vars* | API keys, under the names the profiles' `api_key` fields reference (e.g. `ANTHROPIC_CVP_API_KEY`) | Required for the profiles you use |
 | `GITHUB_TOKEN` | GitHub personal access token | *Optional* |
 | `MAX_REPOS` | Maximum repositories to analyze | `3` |
 | `CLONE_TIMEOUT` | Git clone timeout in seconds | `300` |
@@ -83,12 +83,12 @@ A profile names everything LiteLLM needs to run the analysis. Profiles live in
 
 ```yaml
 profiles:
-  gpt56cyber:
+  gpt6sol:
     provider: openai
-    model: gpt-5.6-cyber
+    model: gpt-6-sol
     api: responses
     auth: api_key
-    api_key: OPENAI_CYBER_API_KEY
+    api_key: OPENAI_API_KEY
 ```
 
 | Field | Required | Meaning |
@@ -100,9 +100,9 @@ profiles:
 | `api` | no | `chat` (default) or `responses` (OpenAI Responses API; openai only) |
 | `base_url` | no | Send calls to a proxy or compatible gateway |
 
-The LiteLLM model string is built from these fields (`openai/responses/gpt-5.6-cyber`).
+The LiteLLM model string is built from these fields (`openai/responses/gpt-6-sol`).
 Select a profile with `--profile` on the CLI or `"profile"` in the addon
-invocation's `user_data`, e.g. `{"environments": "aws", "profile": "gpt56cyber"}`;
+invocation's `user_data`, e.g. `{"environments": "aws", "profile": "gpt6sol"}`;
 otherwise `LLM_PROFILE` is used. An unknown profile or a missing key fails the
 run before any clone or LLM call. `tmi-tf config-info` shows which profiles are
 usable.
