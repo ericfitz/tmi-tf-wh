@@ -1,5 +1,7 @@
 """Prompt-injection detectors, metadata collection and redaction (#14)."""
 
+import gc
+import re
 import time
 
 from tmi_tf.metadata_scan import (
@@ -8,6 +10,7 @@ from tmi_tf.metadata_scan import (
     collect_metadata_strings,
     detect,
     redact_contents,
+    redaction_marker,
     scan_metadata,
 )
 from tmi_tf.tf_parser import StaticInventory, parse_terraform
@@ -461,31 +464,92 @@ def test_unparsed_literal_scan_is_linear_time_on_many_unterminated_quotes():
     assert time.perf_counter() - start < 2.0
 
 
-def test_redact_contents_is_linear_in_file_size_not_hit_count():
-    """Backstop: 20k hits on a ~600KB file must redact in under 5s on a CI
-    runner (measured 2.08s on CI, 0.46s on a dev Mac). The limit was 2.0s,
-    which failed on CI. The naive approach, one whole-file str.replace per
-    hit, is far slower than this.
+# A linear redaction grows ~4x when hits and file both grow 4x; one that
+# tries every flagged text at every position grows ~16x.
+MAX_LINEAR_RATIO = 8.0
 
-    Known gap: redaction is still superlinear. Python's re tries each
-    alternative of the compiled alternation in turn, so 4x the hits and file
-    measured ~15x the time. redact_contents' "never O(hits x size)" claim is
-    a follow-up fix, not something this test guarantees."""
-    n = 20000
-    body = "".join(f'  x{i} = "disregard number {i}"\n' for i in range(n))
-    contents = {"big.tf": f"locals {{\n{body}}}\n"}
-    assert len(contents["big.tf"]) > 500_000
+
+def _redact_case(n: int, quoted: bool):
+    if quoted:
+        body = "".join(f'  x{i} = "disregard number {i}"\n' for i in range(n))
+        contents = {"big.tf": f"locals {{\n{body}}}\n"}
+    else:
+        body = "".join(f"# disregard number {i}\n  x{i} = 1\n" for i in range(n))
+        contents = {"big.tf": f"locals {{\n{body}}}\n"}
     hits = [
         InjectionHit(
-            "instruction", f"local.x{i}", "big.tf", f"disregard number {i}", f"{i:012d}"
+            "instruction",
+            f"local.x{i}",
+            "big.tf",
+            f"disregard number {i}",
+            f"{i:012d}",
+            quoted=quoted,
         )
         for i in range(n)
     ]
-    start = time.perf_counter()
+    return contents, hits
+
+
+def _time_redact(n: int, quoted: bool) -> tuple[float, dict[str, str]]:
+    """Fastest of 3 runs, as in test_script_rules. re.purge() keeps pattern
+    compilation in every run (re caches compiled patterns), and GC is off
+    while timing, as timeit does: in the full suite's large heap a full
+    collection lands in one size's run but not the other's."""
+    contents, hits = _redact_case(n, quoted)
+    best = float("inf")
+    out: dict[str, str] = {}
+    for _ in range(3):
+        re.purge()
+        gc.collect()
+        gc.disable()
+        try:
+            start = time.perf_counter()
+            out = redact_contents(contents, hits)
+            best = min(best, time.perf_counter() - start)
+        finally:
+            gc.enable()
+    return best, out
+
+
+def test_redact_contents_is_linear_in_file_size_not_hit_count():
+    """4x the hits on a 4x larger file must take ~4x as long, for both the
+    quoted and the bare (comment) pass. A flat alternation of every flagged
+    text is retried branch by branch at each position, so it measured ~15x.
+
+    The check is the growth ratio, not a fixed time limit (CI runners are
+    ~2x slower than a dev Mac). The absolute backstop catches a
+    catastrophic regression the ratio could miss."""
+    n = 5000
+    for quoted in (True, False):
+        short, _ = _time_redact(n, quoted)
+        long_, out = _time_redact(4 * n, quoted)
+        ratio = long_ / max(short, 1e-3)
+        assert ratio < MAX_LINEAR_RATIO, (
+            f"quoted={quoted}: 4x hits and file took {ratio:.1f}x as long "
+            f"({short:.3f}s -> {long_:.3f}s); redaction is superlinear"
+        )
+        assert long_ < 5.0, f"quoted={quoted}: {4 * n} hits took {long_:.3f}s"
+        assert len(out["big.tf"]) > 500_000
+        assert "disregard number 0" not in out["big.tf"]
+        assert f"disregard number {4 * n - 1}" not in out["big.tf"]
+
+
+def test_redact_contents_handles_deeply_nested_prefix_hits():
+    """Each flagged text extends the previous one, so a trie of them nests
+    one optional group per text. Unbounded, 500 of them raised
+    RecursionError, and the prescan then passes raw text on unredacted."""
+    texts = [f"ignore previous instructions{'x' * i}" for i in range(600)]
+    contents = {"big.tf": "".join(f"# {t}\nx = 1\n" for t in texts)}
+    hits = [
+        InjectionHit("instruction", "comment", "big.tf", t, f"{i:012d}", quoted=False)
+        for i, t in enumerate(texts)
+    ]
     out = redact_contents(contents, hits)
-    assert time.perf_counter() - start < 5.0
-    assert "disregard number 0" not in out["big.tf"]
-    assert f"disregard number {n - 1}" not in out["big.tf"]
+    assert "ignore previous" not in out["big.tf"]
+    # Longest match wins: each comment became exactly its own marker.
+    assert out["big.tf"].count("x = 1") == len(texts)
+    for t in (texts[0], texts[300], texts[-1]):
+        assert f"# {redaction_marker(t)}\n" in out["big.tf"]
 
 
 def _heredoc_tags(*items: str) -> dict[str, str]:

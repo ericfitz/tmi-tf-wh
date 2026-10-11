@@ -398,9 +398,16 @@ def redaction_marker(text: str) -> str:
 
 
 def _compile(spans, bounded: bool = False) -> re.Pattern[str] | None:
-    """One alternation, longest span first so a longer match always wins
-    over a shorter one it contains (e.g. flagging `disregard` must not
-    also truncate a match against `disregard-this-flag`).
+    """One pattern matching any span, built as a trie so the engine follows
+    one branch per character instead of retrying every span at every
+    position (a flat alternation is O(spans) per position, so redaction
+    grew ~O(hits x size)).
+
+    The longest span at a position always wins (e.g. flagging `disregard`
+    must not also truncate a match against `disregard-this-flag`): siblings
+    start with different characters, so at most one can match, and a span
+    that ends where a longer one continues is an optional greedy group,
+    tried long first and backtracked to the shorter span on failure.
 
     ``bounded`` (the bare pass only) adds word-boundary lookarounds so a
     short bare text can never match as a mere substring of a longer
@@ -417,11 +424,61 @@ def _compile(spans, bounded: bool = False) -> re.Pattern[str] | None:
     (`"please disregard"`, `"disregard this one"`) -- which is exactly an
     occurrence that must still be redacted.
     """
-    spans = sorted(set(spans), key=len, reverse=True)
+    spans = sorted({s for s in spans if s})
     if not spans:
         return None
-    alt = "|".join(re.escape(s) for s in spans)
+    alt = _trie_pattern(spans, 0, len(spans), 0)
     return re.compile(rf"(?<!\w)(?:{alt})(?!\w)" if bounded else alt)
+
+
+# Nested groups the trie may emit before falling back to a flat alternation.
+# Each costs Python stack frames here and in the re parser; unbounded, a few
+# hundred texts that each extend the previous one raised RecursionError.
+_MAX_NESTING = 100
+
+
+def _trie_pattern(spans: list[str], lo: int, hi: int, pos: int, depth: int = 0) -> str:
+    """Emit the trie of sorted, distinct `spans[lo:hi]`, which all share
+    their first `pos` characters, as a regex for the rest of each span.
+    Works on the sorted list directly, so building it allocates no
+    per-character trie nodes."""
+    out = []
+    while True:
+        ends = len(spans[lo]) == pos  # sorted: a span ending here comes first
+        start = lo + 1 if ends else lo
+        if start == hi:
+            return "".join(out)
+        if not ends:
+            # Everything in range shares the common prefix of first and last.
+            first, last = spans[lo], spans[hi - 1]
+            common = pos
+            while common < len(first) and first[common] == last[common]:
+                common += 1
+            if common > pos:
+                out.append(re.escape(first[pos:common]))
+                pos = common
+                continue
+        if depth >= _MAX_NESTING:
+            # Longest first so the longest match wins; "" (ends) sorts last.
+            rest = sorted((s[pos:] for s in spans[lo:hi]), key=len, reverse=True)
+            out.append(f"(?:{'|'.join(re.escape(r) for r in rest)})")
+            return "".join(out)
+        branches = []
+        i = start
+        while i < hi:
+            ch = spans[i][pos]
+            j = i + 1
+            while j < hi and spans[j][pos] == ch:
+                j += 1
+            branches.append(
+                re.escape(ch) + _trie_pattern(spans, i, j, pos + 1, depth + 1)
+            )
+            i = j
+        group = "|".join(branches)
+        if len(branches) > 1 or ends:
+            group = f"(?:{group})"
+        out.append(group + ("?" if ends else ""))
+        return "".join(out)
 
 
 def _bare_marker(text: str) -> str:
@@ -442,9 +499,9 @@ def redact_contents(
     not just the files a hit happens to be attributed to, since the same
     flagged text can legitimately appear in more than one file (a phrase
     flagged from a comment in one file may also sit, quoted, in another
-    file's string literal). One compiled alternation per pass, one pass
-    per file -- never a per-hit whole-file replace, which is O(hits x
-    total size).
+    file's string literal). One compiled trie pattern per pass (see
+    `_compile`), one pass per file -- never a per-hit whole-file replace
+    or a flat alternation, both O(hits x total size).
 
     Two passes, in order:
 
