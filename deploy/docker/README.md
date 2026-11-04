@@ -21,7 +21,7 @@ docker buildx build \
   -t tmi-tf-wh:<target> .
 ```
 
-Push workflow: [scripts/push-aws.sh](../../scripts/push-aws.sh) (ECR, amd64 — the EKS nodes are x86_64).
+Push workflow: [scripts/push-aws.sh](../../scripts/push-aws.sh) (ECR, amd64 — the EKS nodes are x86_64). It finishes with a grype scan of the pushed image (needs `grype` and `jq`).
 
 ## Build args
 

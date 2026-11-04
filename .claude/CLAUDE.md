@@ -20,7 +20,7 @@ Done gate: `uv run ruff check tmi_tf/ tests/ && uv run ruff format --check tmi_t
 
 Cluster `tmi-eks` (us-east-1), namespace `tmi-tf`, `AWS_PROFILE=tmi`. Deploys are Eric's call.
 
-1. `./scripts/push-aws.sh --tag <sha>` (tag = HEAD sha of the built commit).
+1. `./scripts/push-aws.sh --tag <sha>` (tag = HEAD sha of the built commit). It ends with a grype scan; exit 3 means fixable high/critical findings, so do not deploy that tag. ECR's BASIC scan-on-push misses these.
 2. Set `app_image_tag` in `infra/aws/terraform.tfvars` (git-ignored, non-secret).
 3. `cd infra/aws && AWS_PROFILE=tmi terraform plan -out=x.tfplan && terraform apply x.tfplan; rm x.tfplan` (plan files embed variable values).
 4. Verify: `kubectl --context tmi-eks -n tmi-tf rollout status deploy/tmi-tf-wh` and `https://webhook.tmi.dev/tf/health`.

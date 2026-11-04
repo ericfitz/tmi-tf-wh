@@ -80,6 +80,13 @@ The model is chosen per invocation from the named profiles in
 terraform apply -var app_image_tag=<git-sha>
 ```
 
+`push-aws.sh` scans the pushed image with grype and exits 3, listing the
+findings, when a fixable vulnerability at or above `--fail-on` (default
+`high`) is present; do not deploy that tag. `--scan-only --tag <tag>`
+rescans an existing image (e.g. the running one) without building. ECR's
+BASIC scan-on-push is on but scans once at push and skips Python packages
+and the Go `terraform` binary, so it is not a substitute.
+
 Pushing `:latest` and re-applying does not restart the pod (the spec is
 unchanged); use a unique tag, or
 `kubectl --context tmi-eks -n tmi-tf rollout restart deploy/tmi-tf-wh`.
