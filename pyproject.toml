@@ -6,16 +6,22 @@ requires-python = ">=3.13"
 dependencies = [
     "click>=8.1.7",
     "python-dotenv>=1.0.0",
-    "gitpython>=3.1.50",
+    "gitpython>=3.2.1",  # GHSA-83vg-56qc-22m7
     "requests>=2.31.0",
     "PyGithub>=2.1.1",
     # TMI client dependencies
-    "certifi>=2024.2.2",
+    "certifi>=2026.10.18",  # GHSA-6q48-6c7w-9gw2
     "six>=1.16.0",
     "python-dateutil>=2.9.0",
-    "setuptools>=82.0.0",
+    "setuptools>=84.1.0",  # GHSA-xmj3-9gf7-h52w
     "urllib3>=2.7.0",
     "litellm>=1.103.0",
+    # Not imported directly. litellm>=1.104 caps filelock<4.0, but the fixes for
+    # GHSA-v4x8-3wr5-3wq8 (and three low advisories) exist only in 4.2.1+. The
+    # image is built with `pip install .` from these ranges (not uv.lock), so
+    # this floor is what keeps the container off 3.x; it holds litellm on
+    # 1.103.x until litellm lifts the cap.
+    "filelock>=4.2.1",
     "nh3>=0.3.3",
     "pyyaml>=6.0",
     "cvss>=3.2",

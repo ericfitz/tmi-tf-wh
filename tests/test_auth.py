@@ -52,9 +52,7 @@ class TestTokenCache:
             json.dumps(
                 {
                     "token": "tok-legacy",
-                    "expires_at": (
-                        datetime.now() + timedelta(hours=1)  # noqa: DTZ005
-                    ).isoformat(),
+                    "expires_at": (datetime.now() + timedelta(hours=1)).isoformat(),
                 }
             )
         )
