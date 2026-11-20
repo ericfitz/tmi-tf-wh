@@ -265,14 +265,17 @@ LICENSE_TAIL = """\
 """
 
 
-@pytest.mark.parametrize("name", ["layered", "compound"])
-def test_pele_mit_header_is_complete(name):
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [("layered", "layered"), ("compound", "compound"), ("pack", "components")],
+)
+def test_pele_mit_header_is_complete(name, source):
     path = Path(compound.__file__).with_name(f"{name}.py")
     text = path.read_text()
     assert text.startswith(
         "# Portions of this file are a Python port of Pele "
         "(https://github.com/obsidianmd/pele),\n"
-        f"# src/layout/{name}.ts, commit 3a2f075, used under the MIT License:\n"
+        f"# src/layout/{source}.ts, commit 3a2f075, used under the MIT License:\n"
         "#\n# Copyright (c) 2026 kepano\n"
     )
     assert LICENSE_TAIL in text
@@ -316,3 +319,109 @@ def test_level_border_part_is_first_and_apart_from_packed_block():
         assert tb.offsets[c][0] >= 280 + opt.node_sep
     none = _layout_level(sizes, merged, "LR", opt)
     assert none.offsets[2] != (0, 0) or none.offsets[3] != (0, 0)
+
+
+def test_packed_part_away_from_origin_shifts_its_bent_edge_points():
+    from tmi_tf.layout.compound import LayoutOptions, _layout_level, _Merged
+
+    opt = LayoutOptions()
+    sizes = [(120, 60)] * 5
+    # part 0-1 first; part 2-3-4 has the bent edge 2->4 and is packed away from the origin
+    merged = [
+        _Merged(0, 1, count=1),
+        _Merged(2, 3, count=1),
+        _Merged(3, 4, count=1),
+        _Merged(2, 4, count=1),
+    ]
+    lay = _layout_level(sizes, merged, "LR", opt)
+    alone = _layout_level(
+        sizes[2:], [_Merged(0, 1, 1), _Merged(1, 2, 1), _Merged(0, 2, 1)], "LR", opt
+    )
+    assert lay.offsets[2] != (0, 0)
+    dx = lay.offsets[2][0] - alone.offsets[0][0]
+    dy = lay.offsets[2][1] - alone.offsets[0][1]
+    assert alone.points[2]
+    assert lay.points[3] == [(x + dx, y + dy) for x, y in alone.points[2]]
+
+
+def test_border_indices_are_validated():
+    from tmi_tf.layout.compound import LayoutOptions, _layout_level
+
+    for bad in ([5], [-1], [0, 3]):
+        with pytest.raises(ValueError, match=rf"border index {bad[-1]}"):
+            _layout_level([(120, 60)] * 3, [], "LR", LayoutOptions(), border=bad)
+
+
+def test_ports_sit_on_the_facing_borders():
+    nodes = [leaf("src"), group("g"), leaf("a", "g"), leaf("b", "g"), leaf("dst")]
+    r = compound_layout(nodes, [edge(0, "src", "a"), edge(1, "b", "dst")], "LR")
+    g = r.boxes["g"]
+    [(x_in, y_in)] = r.routes["0"].border_in
+    [(x_out, y_out)] = r.routes["1"].border_out
+    assert x_in == g.x and x_out == g.x + g.w
+    assert g.y <= y_in <= g.y + g.h and g.y <= y_out <= g.y + g.h
+    assert r.routes["0"].border_out == [] and r.routes["1"].border_in == []
+
+
+def test_tb_ports_sit_on_top_and_bottom():
+    nodes = [leaf("src"), group("g"), leaf("a", "g")]
+    r = compound_layout(nodes, [edge(0, "src", "a")], "TB")
+    assert r.routes["0"].border_in[0][1] == r.boxes["g"].y
+
+
+def test_nested_groups_get_one_port_per_border():
+    nodes = [group("o"), group("i", "o"), leaf("a", "i"), leaf("dst")]
+    r = compound_layout(nodes, [edge(0, "a", "dst")], "LR")
+    out = r.routes["0"].border_out
+    assert [p[0] for p in out] == [
+        r.boxes["i"].x + r.boxes["i"].w,
+        r.boxes["o"].x + r.boxes["o"].w,
+    ]
+
+
+def test_reversed_lifted_edge_uses_the_start_side():
+    nodes = [group("g1"), leaf("a", "g1"), group("g2"), leaf("b", "g2")]
+    r = compound_layout(nodes, [edge(0, "a", "b"), edge(1, "b", "a")], "LR")
+    back = r.routes["1"]
+    assert back.reversed and back.border_out[0][0] == r.boxes["g2"].x
+    assert back.border_in[0][0] == r.boxes["g1"].x + r.boxes["g1"].w
+
+
+def test_ports_keep_inner_child_order():
+    nodes = [leaf("s1"), leaf("s2"), group("g"), leaf("a1", "g"), leaf("a2", "g")]
+    r = compound_layout(nodes, [edge(0, "s2", "a2"), edge(1, "s1", "a1")], "LR")
+    assert r.routes["1"].border_in[0][1] < r.routes["0"].border_in[0][1]
+
+
+def test_only_untouched_children_go_to_the_grid_block():
+    nodes = [
+        leaf("src"),
+        group("g"),
+        leaf("a", "g"),
+        leaf("p", "g"),
+        leaf("q", "g"),
+        leaf("u", "g"),
+    ]
+    r = compound_layout(nodes, [edge(0, "src", "a"), edge(1, "p", "q")], "LR")
+    a, p, u = (r.boxes[k] for k in "apu")
+    assert p.y >= a.y + a.h + 40 and u.y >= a.y + a.h + 40
+
+
+def test_port_edge_bends_pass_beside_siblings():
+    nodes = [group("g"), leaf("a", "g"), leaf("b", "g"), leaf("dst")]
+    r = compound_layout(nodes, [edge(0, "a", "b"), edge(1, "a", "dst")], "LR")
+    g, b, out = r.boxes["g"], r.boxes["b"], r.routes["1"].border_out
+    assert len(out) == 3 and out[-1][0] == g.x + g.w
+    assert all(not (b.x < x < b.x + b.w and b.y < y < b.y + b.h) for x, y in out)
+    assert all(g.x <= x <= g.x + g.w and g.y <= y <= g.y + g.h for x, y in out)
+
+
+def test_boundary_endpoint_gets_no_port_of_its_own():
+    nodes = [leaf("src"), group("o"), group("g", "o")]
+    r = compound_layout(nodes, [edge(0, "src", "g")], "LR")
+    assert len(r.routes["0"].border_in) == 1
+
+
+def test_untouched_flows_have_no_border_points():
+    r = compound_layout([leaf("a"), leaf("b")], [edge(0, "a", "b")], "LR")
+    assert r.routes["0"].border_in == [] and r.routes["0"].border_out == []
