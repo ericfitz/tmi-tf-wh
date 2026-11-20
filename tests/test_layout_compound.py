@@ -276,3 +276,43 @@ def test_pele_mit_header_is_complete(name):
         "#\n# Copyright (c) 2026 kepano\n"
     )
     assert LICENSE_TAIL in text
+
+
+def test_edgeless_children_form_a_grid_block():
+    nodes = [group("g")] + [leaf(f"l{i}", "g") for i in range(9)]
+    for d in ("LR", "TB"):
+        g = compound_layout(nodes, [], d).boxes["g"]
+        assert (g.w, g.h) == (500, 350)  # 3x3 grid 440x260 plus padding
+
+
+def test_disconnected_parts_are_shelf_packed():
+    nodes = [leaf(i) for i in "abcdxyz"]
+    r = compound_layout(nodes, [edge(0, "a", "b"), edge(1, "c", "d")], "LR")
+    assert (r.width, r.height) == (300, 360)
+    assert r.boxes["c"].y == r.boxes["a"].y + 100
+    assert r.boxes["x"].y == r.boxes["a"].y + 200
+    assert r.boxes["y"].x == r.boxes["x"].x + 160
+    assert r.boxes["z"].y == r.boxes["x"].y + 100
+
+
+def test_level_border_part_is_first_and_apart_from_packed_block():
+    from tmi_tf.layout.compound import LayoutOptions, _layout_level, _Merged
+
+    sizes = [(120, 60)] * 5
+    merged = [
+        _Merged(0, 1, count=1)
+    ]  # children 2 and 4 form the border part; 3 is alone
+    opt = LayoutOptions()
+    lay = _layout_level(sizes, merged, "LR", opt, border=[2, 4])
+    # border part at the origin: two nodes on one rank stacked on the cross axis
+    assert lay.offsets[2][0] == lay.offsets[4][0] == 0
+    assert lay.offsets[2][1] == 0 and lay.offsets[4][1] == 100
+    # packed block (edge part 0-1 and lone child 3) sits below it, after the gap
+    for c in (0, 1, 3):
+        assert lay.offsets[c][1] >= 160 + opt.node_sep
+    tb = _layout_level(sizes, merged, "TB", opt, border=[2, 4])
+    assert tb.offsets[2] == (0, 0) and tb.offsets[4][0] == 160
+    for c in (0, 1, 3):
+        assert tb.offsets[c][0] >= 280 + opt.node_sep
+    none = _layout_level(sizes, merged, "LR", opt)
+    assert none.offsets[2] != (0, 0) or none.offsets[3] != (0, 0)

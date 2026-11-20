@@ -33,6 +33,7 @@ from math import floor
 from typing import Literal
 
 from tmi_tf.layout.layered import LayeredOptions, LEdge, LNode, layered
+from tmi_tf.layout.pack import connected_parts, grid_block, shelf_pack
 
 Direction = Literal["LR", "TB"]
 Side = Literal["top", "right", "bottom", "left"]
@@ -159,17 +160,15 @@ class _LevelLayout:
     points: list[list[tuple[int, int]]]  # per merged edge, relative, a -> b
 
 
-def _layout_level(
+def _layered_part(
     sizes: list[tuple[int, int]],
     merged: list[_Merged],
     direction: Direction,
     opt: LayoutOptions,
+    rank_sep: int,
 ) -> _LevelLayout:
-    """Lay out one level: children sizes and merged edges in, offsets, content size and routes out."""
+    """One connected part as one layered graph; offsets are relative to the part's bounding box."""
     lr = direction == "LR"
-    rank_sep = opt.rank_sep
-    if lr and merged:
-        rank_sep = max(rank_sep, max(m.label_w for m in merged) + opt.label_margin)
     lnodes = [LNode(h, w) if lr else LNode(w, h) for w, h in sizes]
     ledges = [
         LEdge(m.a, m.b, weight=m.count, label_w=0 if lr else m.label_w) for m in merged
@@ -203,6 +202,112 @@ def _layout_level(
         reversed=[e.reversed for e in ledges],
         points=[[(x - x0, y - y0) for x, y in row] for row in pts],
     )
+
+
+@dataclass
+class _Piece:
+    """A laid-out part (or the grid block of lone children) awaiting its place in the level."""
+
+    members: list[int]  # child indices
+    lay: _LevelLayout
+    merged_ids: list[int]  # indices into the level's merged list, in lay.points order
+
+
+def _layout_level(
+    sizes: list[tuple[int, int]],
+    merged: list[_Merged],
+    direction: Direction,
+    opt: LayoutOptions,
+    border: list[int] | None = None,
+) -> _LevelLayout:
+    """Lay out one level: children sizes and merged edges in, offsets, content size and routes out.
+
+    The children split into connected parts. Each part of two or more children is its own layered
+    graph; lone children share one grid block. `border` (child indices) designates one part that is
+    kept whole, laid out first and placed apart from the packed block, on the cross axis.
+    """
+    lr = direction == "LR"
+    rank_sep = opt.rank_sep
+    if lr and merged:
+        rank_sep = max(rank_sep, max(m.label_w for m in merged) + opt.label_margin)
+    n = len(sizes)
+    pairs = [(m.a, m.b) for m in merged]
+    border = sorted(set(border or []))
+    pairs += [(border[0], c) for c in border[1:]]
+    parts = connected_parts(n, pairs)
+    if len(parts) <= 1:
+        return _layered_part(sizes, merged, direction, opt, rank_sep)
+
+    part_of = {c: pi for pi, part in enumerate(parts) for c in part}
+    border_part = part_of[border[0]] if border else -1
+    pieces: list[_Piece] = []  # packed block, in position-list order
+    border_piece: _Piece | None = None
+    singles: list[int] = []
+    single_at = -1  # position in `pieces` of the grid block
+
+    def layered_piece(pi: int) -> _Piece:
+        members = parts[pi]
+        local = {c: i for i, c in enumerate(members)}
+        ids = [i for i, m in enumerate(merged) if part_of[m.a] == pi]
+        sub = [_Merged(local[merged[i].a], local[merged[i].b]) for i in ids]
+        for s_, i in zip(sub, ids, strict=True):
+            s_.count, s_.label_w = merged[i].count, merged[i].label_w
+        lay = _layered_part([sizes[c] for c in members], sub, direction, opt, rank_sep)
+        return _Piece(members, lay, ids)
+
+    for pi, part in enumerate(parts):
+        if pi == border_part:
+            border_piece = layered_piece(pi)
+        elif len(part) >= 2:
+            pieces.append(layered_piece(pi))
+        else:
+            if not singles:
+                single_at = len(pieces)
+                pieces.append(_Piece([], _LevelLayout([], 0, 0, [], [], []), []))
+            singles.append(part[0])
+    if singles:
+        pos, w, h = grid_block([sizes[c] for c in singles], opt.node_sep)
+        pieces[single_at] = _Piece(
+            singles,
+            _LevelLayout(pos, w, h, [0] * len(singles), [], []),
+            [],
+        )
+
+    placed, block_w, block_h = shelf_pack(
+        [(p.lay.content_w, p.lay.content_h) for p in pieces], opt.node_sep
+    )
+    shifts = list(placed)
+    all_pieces = list(pieces)
+    total_w, total_h = block_w, block_h
+    if border_piece is not None:
+        bw, bh = border_piece.lay.content_w, border_piece.lay.content_h
+        if not pieces:
+            total_w, total_h = bw, bh
+            shifts = [(0, 0)]
+            all_pieces = [border_piece]
+        else:
+            # the border part first, the packed block beside it on the cross axis
+            dx, dy = (0, bh + opt.node_sep) if lr else (bw + opt.node_sep, 0)
+            shifts = [(x + dx, y + dy) for x, y in placed] + [(0, 0)]
+            all_pieces = pieces + [border_piece]
+            total_w = max(bw, block_w + dx)
+            total_h = max(bh, block_h + dy)
+
+    offsets: list[tuple[int, int]] = [(0, 0)] * n
+    ranks = [0] * n
+    rev = [False] * len(merged)
+    points: list[list[tuple[int, int]]] = [[] for _ in merged]
+    for piece, (sx, sy) in zip(all_pieces, shifts, strict=True):
+        for c, (x, y) in zip(piece.members, piece.lay.offsets, strict=True):
+            offsets[c] = (x + sx, y + sy)
+        for c, r in zip(piece.members, piece.lay.ranks, strict=True):
+            ranks[c] = r
+        for i, rv, row in zip(
+            piece.merged_ids, piece.lay.reversed, piece.lay.points, strict=True
+        ):
+            rev[i] = rv
+            points[i] = [(x + sx, y + sy) for x, y in row]
+    return _LevelLayout(offsets, total_w, total_h, ranks, rev, points)
 
 
 def _validate(
