@@ -1,5 +1,6 @@
 """TMI API client wrapper."""
 
+import json
 import logging
 
 # Add tmi-client to path
@@ -10,7 +11,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import nh3  # type: ignore[import-untyped]  # ty:ignore[unresolved-import]
 import requests  # ty:ignore[unresolved-import]
@@ -787,6 +788,34 @@ class TMIClient:
             return diagrams
         except Exception as e:
             logger.error(f"Failed to get diagrams: {e}")
+            raise
+
+    def get_diagram_cells(
+        self, threat_model_id: str, diagram_id: str
+    ) -> list[dict[str, Any]]:
+        """
+        Get a diagram's cells as JSON-native dicts.
+
+        Uses to_json() rather than to_dict(): the generated models type id,
+        parent and terminal cell as UUID, so to_dict() is not JSON-native.
+
+        Args:
+            threat_model_id: Threat model UUID
+            diagram_id: Diagram UUID
+
+        Returns:
+            List of cell dicts (empty when the diagram has none)
+        """
+        logger.info(f"Fetching cells of diagram {diagram_id}")
+        try:
+            diagram = self._call_with_retry(
+                lambda: self.sub_resources_api.get_threat_model_diagram(
+                    threat_model_id=threat_model_id, diagram_id=diagram_id
+                )
+            )
+            return json.loads(diagram.to_json()).get("cells") or []
+        except Exception as e:
+            logger.error(f"Failed to get diagram cells: {e}")
             raise
 
     def find_diagram_by_name(

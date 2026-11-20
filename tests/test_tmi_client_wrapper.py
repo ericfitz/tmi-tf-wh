@@ -205,3 +205,12 @@ def test_no_heartbeat_once_cancelled():
     ):
         client.update_status_note("tm1", "Phase 2 started")
     assert beats == []
+
+
+def test_get_diagram_cells_returns_cell_dicts():
+    client = _client()
+    client.sub_resources_api.get_threat_model_diagram.return_value.to_json.return_value = '{"cells": [{"id": "n1", "parent": null}]}'
+    assert client.get_diagram_cells("tm1", "d1") == [{"id": "n1", "parent": None}]
+    client.sub_resources_api.get_threat_model_diagram.assert_called_once_with(
+        threat_model_id="tm1", diagram_id="d1"
+    )
