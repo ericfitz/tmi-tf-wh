@@ -1,16 +1,21 @@
 """Tests for the flat-graph core of the layered layout."""
 
+import itertools
 import random
 
 import pytest
 
+from tmi_tf.layout import layered as layered_mod
 from tmi_tf.layout.layered import (
     Kind,
+    LayeredOptions,
+    LayeredResult,
     Layers,
     LEdge,
     LNode,
     build_layers,
     count_crossings,
+    layered,
     orient,
     rank,
     reduce_crossings,
@@ -206,3 +211,124 @@ def test_reduce_never_increases_crossings():
         assert after <= before and after == count_crossings(layers)
         for r, row in enumerate(layers.order):
             assert all(layers.ranks[v] == r for v in row)
+
+
+OPT = LayeredOptions(40, 20, 60)
+
+
+def run(n, pairs):
+    nodes, edges = graph(n, pairs)
+    return nodes, edges, layered(nodes, edges, OPT)
+
+
+def test_empty_and_single():
+    assert layered([], [], OPT) == LayeredResult(0, 0)
+    nodes, _, size = run(1, [])
+    assert (nodes[0].x, nodes[0].y, size) == (50, 20, LayeredResult(100, 40))
+
+
+def test_chain_is_straight():
+    nodes, _, size = run(3, [(0, 1), (1, 2)])
+    assert [v.x for v in nodes] == [50, 50, 50]
+    assert [v.y for v in nodes] == [20, 120, 220] and size == LayeredResult(100, 240)
+
+
+def test_diamond_is_symmetric():
+    nodes, _, _ = run(4, [(0, 1), (0, 2), (1, 3), (2, 3)])
+    assert nodes[1].y == nodes[2].y and abs(nodes[1].x - nodes[2].x) >= 140
+    assert nodes[0].x == nodes[3].x == (nodes[1].x + nodes[2].x) / 2
+
+
+def test_cycle_completes_with_one_reversed_edge():
+    nodes, edges, _ = run(3, [(0, 1), (1, 2), (2, 0)])
+    assert sum(e.reversed for e in edges) == 1
+    assert sorted(v.rank for v in nodes) == [0, 1, 2]
+
+
+def test_long_edge_points_run_beside_the_skipped_node():
+    nodes, edges, _ = run(3, [(0, 1), (1, 2), (0, 2)])
+    (x1, y1), (x2, y2) = edges[2].points
+    assert x1 == x2 and (y1, y2) == (100, 140)  # band of rank 1
+    assert abs(x1 - nodes[1].x) >= 50 + 30  # half width + (node_sep + edge_sep) / 2
+    assert edges[0].points == []
+
+
+def test_disconnected_parts_do_not_overlap():
+    nodes, _, _ = run(4, [(0, 1), (2, 3)])
+    assert abs(nodes[0].x - nodes[2].x) >= 140
+
+
+def test_reversed_edge_points_run_tail_to_head():
+    # 0->1->2->3 chain plus 3->0 reversed, spanning three ranks: three dummies' worth of points
+    _nodes, edges, _ = run(4, [(0, 1), (1, 2), (2, 3), (3, 0)])
+    assert edges[3].reversed
+    ys = [y for _, y in edges[3].points]
+    assert ys == sorted(ys, reverse=True) and len(ys) == 4
+
+
+def test_random_graphs_keep_invariants():
+    def build(seed):
+        rnd = random.Random(seed)
+        n = rnd.randint(3, 25)
+        pairs = []
+        for _ in range(rnd.randint(0, 2 * n)):
+            a, b = rnd.randrange(n), rnd.randrange(n)
+            if a != b:
+                pairs.append((a, b))
+        return graph(n, pairs)
+
+    for seed in range(20):
+        nodes, edges = build(seed)
+        size = layered(nodes, edges, OPT)
+        for e in edges:
+            lo, hi = (e.head, e.tail) if e.reversed else (e.tail, e.head)
+            assert nodes[hi].rank > nodes[lo].rank
+        by_rank: dict[int, list[LNode]] = {}
+        for v in nodes:
+            by_rank.setdefault(v.rank, []).append(v)
+            assert 0 <= v.x - 50 and v.x + 50 <= size.width
+            assert 0 <= v.y - 20 and v.y + 20 <= size.height
+        for row in by_rank.values():
+            xs = sorted(v.x for v in row)
+            assert all(b - a >= 140 for a, b in itertools.pairwise(xs))
+        again_nodes, again_edges = build(seed)
+        layered(again_nodes, again_edges, OPT)
+        assert [(v.x, v.y, v.rank) for v in nodes] == [
+            (v.x, v.y, v.rank) for v in again_nodes
+        ]
+        assert [e.points for e in edges] == [e.points for e in again_edges]
+
+
+def _hand_layers(order, segs):
+    n = sum(len(r) for r in order)
+    return Layers([Kind.NODE] * n, [1.0] * n, [1.0] * n, [0] * n, segs, order, [])
+
+
+def test_only_the_adjacent_swap_pass_removes_this_crossing(monkeypatch):
+    order = [[0, 1, 2, 3], [4, 5, 6, 7]]
+    segs = [(0, 5, 1), (1, 4, 1), (2, 4, 2), (3, 5, 1), (3, 6, 1)]
+    with_swaps = _hand_layers([r[:] for r in order], segs)
+    assert reduce_crossings(with_swaps) == 0 == count_crossings(with_swaps)
+    monkeypatch.setattr(layered_mod, "_transpose", lambda *a: None)
+    sweeps_only = _hand_layers([r[:] for r in order], segs)
+    assert reduce_crossings(sweeps_only) > 0
+
+
+def test_sweep_keeps_the_slot_of_a_vertex_without_neighbors():
+    # vertex 3 has no segment; 2 and 4 must swap around it
+    layers = _hand_layers([[0, 1], [2, 3, 4]], [(0, 4, 1), (1, 2, 1)])
+    assert count_crossings(layers) == 1
+    assert reduce_crossings(layers) == 0
+    assert layers.order[1] == [4, 3, 2]
+
+
+@pytest.mark.parametrize(
+    ("kind", "pair"),
+    [(Kind.START_PORT, (0, 1)), (Kind.END_PORT, (0, 1))],
+)
+def test_build_layers_rejects_edge_between_same_kind_ports(kind, pair):
+    nodes, edges = graph(2, [pair], {0: kind, 1: kind})
+    orient(nodes, edges)
+    rank(nodes, edges)
+    with pytest.raises(ValueError, match=r"connects two .*_PORT nodes"):
+        build_layers(nodes, edges)
