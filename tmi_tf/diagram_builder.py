@@ -16,6 +16,7 @@ from tmi_tf.layout.compound import (
     LayoutEdge,
     LayoutNode,
     LayoutResult,
+    Side,
     edge_sides,
     label_width,
 )
@@ -366,7 +367,7 @@ class DFDBuilder:
         """Create edge cells for data flows."""
         direction = self._direction
         # (flow index, source cell, target cell, label, sides, forward)
-        specs: list[tuple[int, dict, dict, str, tuple[str, str], bool]] = []
+        specs: list[tuple[int, dict, dict, str, tuple[Side, Side], bool]] = []
         for index, flow in enumerate(self.flows):
             src_id, tgt_id = flow["source_id"], flow["target_id"]
             src_cell = self.component_cells.get(src_id)
@@ -391,8 +392,9 @@ class DFDBuilder:
 
         groups: dict[tuple[str, str], list[int]] = {}
         for pos, spec in enumerate(specs):
-            key = tuple(sorted((spec[1]["id"], spec[2]["id"])))
-            groups.setdefault((key[0], key[1]), []).append(pos)
+            flow = self.flows[spec[0]]
+            ids = sorted((flow["source_id"], flow["target_id"]))
+            groups.setdefault((ids[0], ids[1]), []).append(pos)
         slot: dict[int, tuple[int, int]] = {}
         for members in groups.values():
             for i, pos in enumerate(members):
@@ -430,7 +432,7 @@ class DFDBuilder:
         index: int,
         source: dict[str, Any],
         target: dict[str, Any],
-        sides: tuple[str, str],
+        sides: tuple[Side, Side],
         forward: bool,
         i: int,
         k: int,
@@ -449,11 +451,11 @@ class DFDBuilder:
         src_box, tgt_box = self._box(source), self._box(target)
         start = routes.side_point(
             src_box,
-            sides[0] if "ports" in source else None,  # pyright: ignore[reportArgumentType]
+            sides[0] if "ports" in source else None,
         )
         end = routes.side_point(
             tgt_box,
-            sides[1] if "ports" in target else None,  # pyright: ignore[reportArgumentType]
+            sides[1] if "ports" in target else None,
         )
         points = routes.straighten(self._route_points(route, forward), start, end)
         if k > 1:
@@ -479,9 +481,10 @@ class DFDBuilder:
         points = routes.drop_blocked(points, blockers)
         if len(points) > routes.MAX_VERTICES:
             logger.warning(
-                "Edge %s -> %s has %d vertices; dropping them",
-                source["id"],
-                target["id"],
+                "Flow %s (%s -> %s) has %d vertices; dropping them",
+                flow.get("id", "unknown"),
+                src_id,
+                tgt_id,
                 len(points),
             )
             return []
@@ -520,7 +523,7 @@ class DFDBuilder:
         source_cell: dict[str, Any],
         target_cell: dict[str, Any],
         label_text: str,
-        sides: tuple[str, str],
+        sides: tuple[Side, Side],
         flow: dict[str, Any],
         vertices: list[tuple[int, int]] | None = None,
         label_position: float | None = None,

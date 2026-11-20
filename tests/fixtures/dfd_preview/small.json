@@ -1,0 +1,16 @@
+{
+  "components": [
+    {"id": "t", "name": "Tenant", "type": "tenant"},
+    {"id": "n", "name": "Network", "type": "network", "parent_id": "t"},
+    {"id": "a", "name": "Web", "type": "compute", "parent_id": "n"},
+    {"id": "b", "name": "API", "type": "service", "parent_id": "n"},
+    {"id": "c", "name": "Store", "type": "storage", "parent_id": "t"},
+    {"id": "u", "name": "User <admin> & \"ops\"", "type": "actor"}
+  ],
+  "flows": [
+    {"id": "f1", "name": "request", "source_id": "u", "target_id": "a"},
+    {"id": "f2", "name": "call", "source_id": "a", "target_id": "b", "bidirectional": true, "forward_label": "call", "reverse_label": "reply"},
+    {"id": "f3", "name": "write", "source_id": "b", "target_id": "c"},
+    {"id": "f4", "name": "export", "source_id": "u", "target_id": "c"}
+  ]
+}
