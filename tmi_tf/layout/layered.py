@@ -555,6 +555,12 @@ def _align_variant(
             indeg[w] -= 1
             if indeg[w] == 0:
                 topo.append(w)
+    n_roots = sum(1 for v in range(total) if root[v] == v)
+    if len(topo) != n_roots:
+        raise ValueError(
+            "block graph is not acyclic: "
+            f"{n_roots - len(topo)} of {n_roots} alignment blocks never became ready"
+        )
     for v in reversed(topo):
         cand = min((x[w] - sep for w, sep in out_e[v]), default=inf)
         if cand != inf and cand > x[v]:

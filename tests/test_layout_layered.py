@@ -332,3 +332,40 @@ def test_build_layers_rejects_edge_between_same_kind_ports(kind, pair):
     rank(nodes, edges)
     with pytest.raises(ValueError, match=r"connects two .*_PORT nodes"):
         build_layers(nodes, edges)
+
+
+def test_position_rejects_cyclic_block_graph():
+    # Not reachable from build_layers; two rows that order the same pair oppositely make
+    # the two blocks wait on each other.
+    nodes, edges = graph(2, [(0, 1)])
+    orient(nodes, edges)
+    rank(nodes, edges)
+    layers = build_layers(nodes, edges)
+    layers.order = [[0, 1], [1, 0]]  # vertex 1 listed in both rows, in opposite order
+    layers.ranks = [0, 0]
+    with pytest.raises(ValueError, match="not acyclic"):
+        layered_mod.position(layers, LayeredOptions(40, 20, 60))
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_every_adjacent_pair_in_a_rank_is_separated_dummies_included(seed):
+    rng = random.Random(seed)
+    n = rng.randint(6, 14)
+    nodes = [LNode(rng.choice([40, 80, 120, 200]), 40) for _ in range(n)]
+    pairs = []
+    for _ in range(n * 2):
+        a, b = rng.sample(range(n), 2)
+        pairs.append((min(a, b), max(a, b)))
+    edges = [LEdge(a, b, label_w=rng.choice([0, 0, 30, 90])) for a, b in pairs]
+    opt = LayeredOptions(40, 20, 60)
+    orient(nodes, edges)
+    rank(nodes, edges)
+    layers = build_layers(nodes, edges)
+    reduce_crossings(layers)
+    xs = layered_mod.position(layers, opt)
+    for row in layers.order:
+        for u, v in itertools.pairwise(row):
+            need = layered_mod._half_room(layers, opt, u) + layered_mod._half_room(
+                layers, opt, v
+            )
+            assert xs[v] - xs[u] >= need - 1e-6
