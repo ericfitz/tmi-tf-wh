@@ -59,10 +59,15 @@ def _is_edge(cell: dict[str, Any]) -> bool:
 def _component_type(cell: dict[str, Any]) -> str:
     cid = cell.get("id")
     data = cell.get("data") or {}
-    for item in data.get("_metadata") or []:
+    metadata = data.get("_metadata") if isinstance(data, dict) else None
+    if metadata is not None and not isinstance(metadata, list):
+        raise ExportError(f"cell {cid}: data._metadata is not a list")
+    for item in metadata or []:
+        if not isinstance(item, dict):
+            raise ExportError(f"cell {cid}: metadata item is not an object")
         if item.get("key") == "component_type":
             value = item.get("value")
-            if value not in _VALID_TYPES:
+            if not isinstance(value, str) or value not in _VALID_TYPES:
                 raise ExportError(f"cell {cid}: unknown component_type {value!r}")
             return value
     shape = cell.get("shape")
@@ -78,7 +83,15 @@ def _text(holder: Any) -> str:
 
 def cells_to_dfd(cells: list[dict[str, Any]]) -> Dfd:
     """Map X6 cells to {"components": [...], "flows": [...]} (not anonymized)."""
-    node_ids = {c.get("id") for c in cells if not _is_edge(c)}
+    seen: set[Any] = set()
+    for i, cell in enumerate(cells):
+        cid = cell.get("id")
+        if not isinstance(cid, str) or not cid:
+            raise ExportError(f"cell at index {i}: missing or non-string id")
+        if cid in seen:
+            raise ExportError(f"cell {cid}: duplicate cell id")
+        seen.add(cid)
+    node_ids = {c["id"] for c in cells if not _is_edge(c)}
     components: list[dict[str, Any]] = []
     flows: list[dict[str, Any]] = []
     for cell in cells:
@@ -107,6 +120,8 @@ def cells_to_dfd(cells: list[dict[str, Any]]) -> Dfd:
         }
         parent = cell.get("parent")
         if parent is not None:
+            if parent == cid:
+                raise ExportError(f"cell {cid}: parent is the cell itself")
             if parent not in node_ids:
                 raise ExportError(f"cell {cid}: parent {parent!r} is not a node")
             component["parent_id"] = parent
@@ -212,26 +227,37 @@ def _load_cells(path: str) -> list[dict[str, Any]]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    listing = args.threat_model_id and not args.diagram_id
     try:
+        out = Path(args.out) if args.out else None
+        if not listing:
+            if out is None:
+                raise ExportError("--out is required")
+            if out.exists() and not args.force:
+                raise ExportError(f"{out} exists; use --force to overwrite")
         if args.cells_file:
             cells = _load_cells(args.cells_file)
         else:
-            client = TMIClient.create_authenticated(Config())
-            if not args.diagram_id:
-                for d in client.get_threat_model_diagrams(args.threat_model_id):
-                    print(f"{d.id}\t{d.name}")
-                return 0
-            cells = client.get_diagram_cells(args.threat_model_id, args.diagram_id)
-        if not args.out:
-            raise ExportError("--out is required")
-        out = Path(args.out)
-        if out.exists() and not args.force:
-            raise ExportError(f"{out} exists; use --force to overwrite")
+            try:
+                client = TMIClient.create_authenticated(Config())
+                if listing:
+                    for d in client.get_threat_model_diagrams(args.threat_model_id):
+                        print(f"{d.id}\t{d.name}")
+                    return 0
+                cells = client.get_diagram_cells(args.threat_model_id, args.diagram_id)
+            except Exception as e:
+                raise ExportError(f"TMI request failed: {e}") from e
+        assert out is not None
         dfd = export_cells(cells)
+        text = json.dumps(dfd, indent=2) + "\n"
+        try:
+            with open(out, "w" if args.force else "x", encoding="utf-8") as f:
+                f.write(text)
+        except OSError as e:
+            raise ExportError(f"cannot write {out}: {e}") from e
     except ExportError as e:
         print(str(e), file=sys.stderr)
         return 2
-    out.write_text(json.dumps(dfd, indent=2) + "\n", encoding="utf-8")
     print(
         f"exported {len(dfd['components'])} components, {len(dfd['flows'])} flows -> {out}"
     )

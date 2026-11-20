@@ -214,3 +214,9 @@ def test_get_diagram_cells_returns_cell_dicts():
     client.sub_resources_api.get_threat_model_diagram.assert_called_once_with(
         threat_model_id="tm1", diagram_id="d1"
     )
+
+
+def test_get_diagram_cells_without_cells_is_empty():
+    client = _client()
+    client.sub_resources_api.get_threat_model_diagram.return_value.to_json.return_value = '{"cells": null}'
+    assert client.get_diagram_cells("tm1", "d1") == []

@@ -282,3 +282,80 @@ def test_export_builds_with_dfd_builder():
     edges = [c for c in cells if c.get("shape") == "flow"]
     assert len(edges) == 6
     assert len(cells) - len(edges) == 8
+
+
+def _no_auth(monkeypatch):
+    def boom(cls, config, **k):
+        raise AssertionError("must not authenticate")
+
+    monkeypatch.setattr(export_tmi_dfd, "Config", lambda *a, **k: object())
+    monkeypatch.setattr(
+        export_tmi_dfd.TMIClient, "create_authenticated", classmethod(boom)
+    )
+
+
+def test_main_checks_out_before_auth(monkeypatch, tmp_path, capsys):
+    _no_auth(monkeypatch)
+    base = ["--threat-model-id", "tm-1", "--diagram-id", "d-1"]
+    assert export_tmi_dfd.main(base) == 2
+    assert "--out" in capsys.readouterr().err
+    existing = tmp_path / "out.json"
+    existing.write_text("keep", encoding="utf-8")
+    assert export_tmi_dfd.main([*base, "--out", str(existing)]) == 2
+    assert existing.read_text(encoding="utf-8") == "keep"
+    assert "--force" in capsys.readouterr().err
+
+
+def test_main_wraps_tmi_errors(monkeypatch, tmp_path, capsys):
+    def boom(cls, config, **k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(export_tmi_dfd, "Config", lambda *a, **k: object())
+    monkeypatch.setattr(
+        export_tmi_dfd.TMIClient, "create_authenticated", classmethod(boom)
+    )
+    out = tmp_path / "out.json"
+    rc = export_tmi_dfd.main(
+        ["--threat-model-id", "t", "--diagram-id", "d", "--out", str(out)]
+    )
+    assert rc == 2
+    assert "network down" in capsys.readouterr().err
+    assert not out.exists()
+    assert export_tmi_dfd.main(["--threat-model-id", "t"]) == 2
+
+
+def test_main_missing_parent_dir_is_error(tmp_path, capsys):
+    cells_path = tmp_path / "cells.json"
+    cells_path.write_text(json.dumps(CELLS), encoding="utf-8")
+    out = tmp_path / "no_such_dir" / "out.json"
+    rc = export_tmi_dfd.main(["--cells-file", str(cells_path), "--out", str(out)])
+    assert rc == 2
+    assert "no_such_dir" in capsys.readouterr().err
+
+
+def test_malformed_metadata_is_error_naming_cell():
+    for bad in (["not-a-dict"], [{"key": "component_type", "value": ["x"]}], "str"):
+        cells = copy.deepcopy(CELLS)
+        _cell(cells, 4)["data"]["_metadata"] = bad
+        with pytest.raises(ExportError, match="0000000004"):
+            export_tmi_dfd.cells_to_dfd(cells)
+
+
+def test_missing_and_duplicate_ids_are_errors():
+    cells = copy.deepcopy(CELLS)
+    del _cell(cells, 5)["id"]
+    with pytest.raises(ExportError, match="missing"):
+        export_tmi_dfd.cells_to_dfd(cells)
+    cells = copy.deepcopy(CELLS)
+    _cell(cells, 5)  # present
+    cells[4]["id"] = cells[3]["id"]
+    with pytest.raises(ExportError, match="0000000004.*duplicate"):
+        export_tmi_dfd.cells_to_dfd(cells)
+
+
+def test_self_parent_is_error():
+    cells = copy.deepcopy(CELLS)
+    c = _cell(cells, 5)
+    c["parent"] = c["id"]
+    with pytest.raises(ExportError, match="0000000005.*itself"):
+        export_tmi_dfd.cells_to_dfd(cells)
