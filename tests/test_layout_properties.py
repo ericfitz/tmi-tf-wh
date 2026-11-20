@@ -69,10 +69,25 @@ def check_invariants(builder: DFDBuilder, cells: list[dict[str, Any]]) -> None:
             cur = by_id[cur].get("parent")
         return out
 
-    for e in cells:
-        if e.get("shape") != "flow":
-            continue
+    edges = [e for e in cells if e.get("shape") == "flow"]
+    # every accepted component has exactly one node cell
+    accepted = {c["id"] for c in builder._components}
+    assert sorted(builder.component_cells) == sorted(accepted)
+    assert len(nodes) == len(accepted) == len({c["id"] for c in nodes})
+    # every flow with both ends present has one edge cell, two when bidirectional
+    expected_edges = sum(
+        (2 if f.get("bidirectional") else 1)
+        for f in builder.flows
+        if f["source_id"] in accepted and f["target_id"] in accepted
+    )
+    assert len(edges) == expected_edges
+
+    for e in edges:
         verts = e.get("vertices", [])
+        assert e["connector"] == {"name": "rounded" if verts else "smooth"}
+        for lb in e["labels"]:
+            if "position" in lb:
+                assert 0.35 <= lb["position"] <= 0.65
         assert len(verts) <= MAX_VERTICES
         exempt = set(ancestors(e["source"]["cell"])) | set(
             ancestors(e["target"]["cell"])
@@ -94,6 +109,16 @@ def test_layout_invariants(name, components, flows, direction, monkeypatch):
     monkeypatch.setattr(compound, "LAYOUT_DIRECTION", direction)
     builder = DFDBuilder(components, flows)
     check_invariants(builder, builder.build_cells())
+
+
+@pytest.mark.parametrize("direction", ["LR", "TB"])
+def test_some_case_produces_vertices(direction, monkeypatch):
+    monkeypatch.setattr(compound, "LAYOUT_DIRECTION", direction)
+    total = 0
+    for _, components, flows in CASES:
+        cells = DFDBuilder(components, flows).build_cells()
+        total += sum(len(e.get("vertices", [])) for e in cells if "labels" in e)
+    assert total > 0
 
 
 def test_fixture_files_are_picked_up():

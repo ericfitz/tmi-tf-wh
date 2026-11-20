@@ -1,11 +1,14 @@
 """Tests for the DFD diagram builder."""
 
+import itertools
 import logging
 
 import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
+from dfd_cases import HAND_CASES
 
 from tmi_tf.diagram_builder import DFDBuilder
-from tmi_tf.layout import compound
+from tmi_tf.layout import compound, routes
+from tmi_tf.layout.compound import EdgeRoute
 
 # --- Helpers ---
 
@@ -561,6 +564,100 @@ class TestLayeredLayout:
             get_cell(cells, "b")["y"] < get_cell(cells, "a")["y"]
             or get_cell(cells, "b")["x"] < get_cell(cells, "a")["x"]
         )
+
+
+def build_edges(specs):
+    """Edge cells for two root computes c1, c2 and flows given as (source, target[, bidirectional])."""
+    comps = [
+        make_component("c1", "A", "compute"),
+        make_component("c2", "B", "compute"),
+    ]
+    flows = [
+        make_flow(f"f{i}", s[0], s[1], bidirectional=len(s) > 2 and s[2])
+        for i, s in enumerate(specs)
+    ]
+    return get_edge_cells(DFDBuilder(comps, flows).build_cells())
+
+
+class TestEdgeGeometry:
+    def test_single_short_edge_is_smooth_without_vertices(self):
+        e = build_edges([("c1", "c2")])[0]
+        assert "vertices" not in e and e["connector"] == {"name": "smooth"}
+        assert "position" not in e["labels"][0] and e["router"] == {"name": "normal"}
+
+    def test_bidirectional_pair_is_fanned(self):
+        fwd, rev = build_edges([("c1", "c2", True)])
+        (v1,), (v2,) = fwd["vertices"], rev["vertices"]
+        assert v1["x"] == v2["x"] and v2["y"] - v1["y"] == 20
+        assert [e["labels"][0]["position"] for e in (fwd, rev)] == [0.35, 0.65]
+        assert fwd["connector"] == rev["connector"] == {"name": "rounded"}
+
+    def test_three_cells_on_one_pair_share_a_fan(self):
+        edges = build_edges([("c1", "c2"), ("c2", "c1"), ("c1", "c2")])
+        ys = [e["vertices"][0]["y"] for e in edges]
+        assert ys[1] - ys[0] == 20 and ys[2] - ys[1] == 20
+        assert [e["labels"][0]["position"] for e in edges] == [0.35, 0.5, 0.65]
+
+    def test_long_edge_does_not_cross_the_node_it_skips(self):
+        comps = [make_component(c, c, "compute") for c in ("a", "b", "c")]
+        flows = [
+            make_flow("f1", "a", "b"),
+            make_flow("f2", "b", "c"),
+            make_flow("f3", "a", "c"),
+        ]
+        cells = DFDBuilder(comps, flows).build_cells()
+        a, b, c = (get_cell(cells, k) for k in "abc")
+        skip = get_edge_cells(cells)[2]
+        pts = [(a["x"] + a["width"], a["y"] + a["height"] / 2)]  # port "right"
+        pts += [(v["x"], v["y"]) for v in skip.get("vertices", [])]
+        pts.append((c["x"], c["y"] + c["height"] / 2))  # port "left"
+        for (x1, y1), (x2, y2) in itertools.pairwise(pts):
+            for t in range(101):
+                x, y = x1 + (x2 - x1) * t / 100, y1 + (y2 - y1) * t / 100
+                assert not (
+                    b["x"] < x < b["x"] + b["width"]
+                    and b["y"] < y < b["y"] + b["height"]
+                )
+
+    @pytest.mark.parametrize("name", list(HAND_CASES))
+    def test_connector_matches_vertices(self, name):
+        comps, flows = HAND_CASES[name]
+        for e in get_edge_cells(DFDBuilder(comps, flows).build_cells()):
+            expected = "rounded" if "vertices" in e else "smooth"
+            assert e["connector"] == {"name": expected}
+
+    def test_route_points_respects_border_flag(self, monkeypatch):
+        builder = DFDBuilder([], [])
+        route = EdgeRoute(
+            lifted=True, points=[(5, 5)], border_out=[(1, 1)], border_in=[(9, 9)]
+        )
+        monkeypatch.setattr(compound, "EMIT_BORDER_VERTICES", False)
+        assert builder._route_points(route, True) == [(5, 5)]
+        monkeypatch.setattr(compound, "EMIT_BORDER_VERTICES", True)
+        assert builder._route_points(route, True) == [(1, 1), (5, 5), (9, 9)]
+        assert builder._route_points(route, False) == [(9, 9), (5, 5), (1, 1)]
+        assert builder._route_points(EdgeRoute(), True) == []
+
+    def test_self_and_ancestor_flows_get_no_vertices(self):
+        comps = [make_component("c1", "A", "compute")]
+        flows = [make_flow("f1", "c1", "c1"), make_flow("f2", "c1", "c1")]
+        edges = get_edge_cells(DFDBuilder(comps, flows).build_cells())
+        assert len(edges) == 2 and all("vertices" not in e for e in edges)
+        assert [e["labels"][0]["position"] for e in edges] == [0.35, 0.65]
+
+    def test_too_many_vertices_are_dropped_with_warning(self, monkeypatch, caplog):
+        monkeypatch.setattr(routes, "MAX_VERTICES", 0)
+        with caplog.at_level(logging.WARNING):
+            edges = build_edges([("c1", "c2", True)])
+        assert all("vertices" not in e for e in edges)
+        assert all(e["connector"] == {"name": "smooth"} for e in edges)
+        assert len([r for r in caplog.records if "vertices" in r.getMessage()]) == 2
+
+    def test_fan_shifts_along_y_in_lr_and_x_in_tb(self, monkeypatch):
+        monkeypatch.setattr(compound, "LAYOUT_DIRECTION", "TB")
+        fwd, rev = build_edges([("c1", "c2", True)])
+        (v1,), (v2,) = fwd["vertices"], rev["vertices"]
+        assert v1["y"] == v2["y"] and v2["x"] - v1["x"] == 20
 
 
 class TestRejection:

@@ -9,8 +9,9 @@ import logging
 import uuid
 from typing import Any, ClassVar
 
-from tmi_tf.layout import compound
+from tmi_tf.layout import compound, routes
 from tmi_tf.layout.compound import (
+    Box,
     EdgeRoute,
     LayoutEdge,
     LayoutNode,
@@ -364,6 +365,8 @@ class DFDBuilder:
     def _create_edge_cells(self):
         """Create edge cells for data flows."""
         direction = self._direction
+        # (flow index, source cell, target cell, label, sides, forward)
+        specs: list[tuple[int, dict, dict, str, tuple[str, str], bool]] = []
         for index, flow in enumerate(self.flows):
             src_id, tgt_id = flow["source_id"], flow["target_id"]
             src_cell = self.component_cells.get(src_id)
@@ -380,16 +383,118 @@ class DFDBuilder:
             cross_delta = self._cross_delta(src_cell, tgt_cell, direction)
             forward, reverse = self._flow_labels(flow)
 
-            specs = [
-                (src_cell, tgt_cell, forward, rank_delta, cross_delta),
-            ]
+            sides = edge_sides(direction, rank_delta, cross_delta)
+            specs.append((index, src_cell, tgt_cell, forward, sides, True))
             if reverse is not None:
-                specs.append((tgt_cell, src_cell, reverse, -rank_delta, -cross_delta))
+                rev_sides = edge_sides(direction, -rank_delta, -cross_delta)
+                specs.append((index, tgt_cell, src_cell, reverse, rev_sides, False))
 
-            for source, target, label, r_delta, c_delta in specs:
-                sides = edge_sides(direction, r_delta, c_delta)
-                edge = self._create_edge_cell(source, target, label, sides, flow)
-                self.cells.append(edge)
+        groups: dict[tuple[str, str], list[int]] = {}
+        for pos, spec in enumerate(specs):
+            key = tuple(sorted((spec[1]["id"], spec[2]["id"])))
+            groups.setdefault((key[0], key[1]), []).append(pos)
+        slot: dict[int, tuple[int, int]] = {}
+        for members in groups.values():
+            for i, pos in enumerate(members):
+                slot[pos] = (i, len(members))
+
+        for pos, (index, source, target, label, sides, forward) in enumerate(specs):
+            i, k = slot[pos]
+            vertices = self._edge_vertices(index, source, target, sides, forward, i, k)
+            position = routes.label_positions(k)[i] if k > 1 else None
+            edge = self._create_edge_cell(
+                source,
+                target,
+                label,
+                sides,
+                self.flows[index],
+                vertices=vertices,
+                label_position=position,
+            )
+            self.cells.append(edge)
+
+    def _route_points(self, route: EdgeRoute, forward: bool) -> list[tuple[int, int]]:
+        """Route bend points in the cell's direction; `[]` for a route that is not lifted."""
+        if not route.lifted:
+            return []
+        points = list(route.points)
+        if compound.EMIT_BORDER_VERTICES:
+            points = list(route.border_out) + points + list(route.border_in)
+        return points if forward else points[::-1]
+
+    def _box(self, cell: dict[str, Any]) -> Box:
+        return Box(cell["x"], cell["y"], cell["width"], cell["height"])
+
+    def _edge_vertices(
+        self,
+        index: int,
+        source: dict[str, Any],
+        target: dict[str, Any],
+        sides: tuple[str, str],
+        forward: bool,
+        i: int,
+        k: int,
+    ) -> list[tuple[int, int]]:
+        """Vertices for one edge cell: route, straighten, fan, drop blocked, cap."""
+        route = self._layout.routes.get(str(index)) if self._layout else None
+        if route is None or not route.lifted or self._layout is None:
+            return []
+        flow = self.flows[index]
+        src_id, tgt_id = (
+            (flow["source_id"], flow["target_id"])
+            if forward
+            else (flow["target_id"], flow["source_id"])
+        )
+        direction = self._direction
+        src_box, tgt_box = self._box(source), self._box(target)
+        start = routes.side_point(
+            src_box,
+            sides[0] if "ports" in source else None,  # pyright: ignore[reportArgumentType]
+        )
+        end = routes.side_point(
+            tgt_box,
+            sides[1] if "ports" in target else None,  # pyright: ignore[reportArgumentType]
+        )
+        points = routes.straighten(self._route_points(route, forward), start, end)
+        if k > 1:
+            offset = routes.fan_offsets(k, compound.LayoutOptions().edge_sep)[i]
+            if points:
+                points = routes.shift_cross(points, offset, direction)
+            else:
+                box_a = self._layout.boxes.get(route.a)
+                box_b = self._layout.boxes.get(route.b)
+                if box_a is not None and box_b is not None:
+                    mid = routes.gap_midpoint(box_a, box_b, src_box, tgt_box, direction)
+                    points = routes.shift_cross([mid], offset, direction)
+        if not points:
+            return []
+        excluded = set(self._proper_ancestors(src_id)) | set(
+            self._proper_ancestors(tgt_id)
+        )
+        blockers = [
+            self._box(c)
+            for cid, c in self.component_cells.items()
+            if cid not in excluded
+        ]
+        points = routes.drop_blocked(points, blockers)
+        if len(points) > routes.MAX_VERTICES:
+            logger.warning(
+                "Edge %s -> %s has %d vertices; dropping them",
+                source["id"],
+                target["id"],
+                len(points),
+            )
+            return []
+        return points
+
+    def _proper_ancestors(self, comp_id: str) -> list[str]:
+        """Component ids of the proper ancestors of a component."""
+        out: list[str] = []
+        cur = self._parent.get(comp_id)
+        while cur is not None:
+            out.append(cur)
+            cur = self._parent.get(cur)
+        return out
 
     @staticmethod
     def _rank_delta(route: EdgeRoute | None) -> int:
@@ -417,6 +522,8 @@ class DFDBuilder:
         label_text: str,
         sides: tuple[str, str],
         flow: dict[str, Any],
+        vertices: list[tuple[int, int]] | None = None,
+        label_position: float | None = None,
     ) -> dict[str, Any]:
         """
         Create a single edge cell.
@@ -427,6 +534,8 @@ class DFDBuilder:
             label_text: Edge label
             sides: (source port, target port) names; ignored for a boundary end
             flow: Original flow data with protocol, port, etc.
+            vertices: Absolute bend points; the key is omitted when empty
+            label_position: 0-1 label position along the edge; omitted when None
 
         Returns:
             Edge cell in X6 format
@@ -459,8 +568,12 @@ class DFDBuilder:
             },
             "labels": [{"attrs": {"text": {"text": label_text}}}],
             "router": {"name": "normal"},
-            "connector": {"name": "smooth"},
+            "connector": {"name": "rounded" if vertices else "smooth"},
         }
+        if label_position is not None:
+            edge["labels"][0]["position"] = label_position
+        if vertices:
+            edge["vertices"] = [{"x": x, "y": y} for x, y in vertices]
 
         # Add protocol, port, data_type as edge metadata
         edge_metadata = self._build_edge_metadata(flow)
