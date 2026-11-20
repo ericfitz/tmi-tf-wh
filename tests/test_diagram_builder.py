@@ -1,8 +1,11 @@
 """Tests for the DFD diagram builder."""
 
+import logging
+
 import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 
 from tmi_tf.diagram_builder import DFDBuilder
+from tmi_tf.layout import compound
 
 # --- Helpers ---
 
@@ -370,32 +373,6 @@ class TestLayout:
                 f"Child {cid} should be inside network"
             )
 
-    def test_flow_connected_peers_have_gap(self):
-        """Two flow-connected leaf siblings should have at least 1 grid cell gap."""
-        components = [
-            make_component("t1", "Tenant", "tenant"),
-            make_component("c1", "Server", "compute", parent_id="t1"),
-            make_component("c2", "DB", "storage", parent_id="t1"),
-            make_component("c3", "Other", "compute", parent_id="t1"),
-        ]
-        flows = [make_flow("f1", "c1", "c2", name="Query")]
-        builder = DFDBuilder(components, flows)
-        cells = builder.build_cells()
-
-        c1_cell = get_cell(cells, "c1")
-        c2_cell = get_cell(cells, "c2")
-
-        # Calculate distance between flow-connected nodes
-        gap_x = abs(c1_cell["x"] - c2_cell["x"]) - c1_cell["width"]
-        gap_y = abs(c1_cell["y"] - c2_cell["y"]) - c1_cell["height"]
-        max_gap = max(gap_x, gap_y)
-
-        # Should have at least one node-size gap in one direction
-        node_size = min(DFDBuilder.DEFAULT_NODE_WIDTH, DFDBuilder.DEFAULT_NODE_HEIGHT)
-        assert max_gap >= node_size, (
-            f"Flow-connected peers should have at least 1 grid cell gap, got {max_gap}px"
-        )
-
     def test_deep_nesting_sizes_correctly(self):
         """3-level hierarchy: sizes grow from inside out."""
         components = [
@@ -475,27 +452,6 @@ class TestLayout:
         assert t_cell["width"] >= DFDBuilder.MIN_WIDTH
         assert t_cell["height"] >= DFDBuilder.MIN_HEIGHT
 
-    def test_boundary_child_occupies_multiple_grid_cells(self):
-        """An inner boundary should be larger than a leaf node peer."""
-        components = [
-            make_component("t1", "Outer", "tenant"),
-            make_component("c1", "Leaf 1", "compute", parent_id="t1"),
-            make_component("c2", "Leaf 2", "compute", parent_id="t1"),
-            make_component("n1", "Inner Net", "network", parent_id="t1"),
-            make_component("c3", "Inner S1", "compute", parent_id="n1"),
-            make_component("c4", "Inner S2", "compute", parent_id="n1"),
-            make_component("c5", "Inner DB", "storage", parent_id="n1"),
-        ]
-        builder = DFDBuilder(components, [])
-        cells = builder.build_cells()
-
-        n_cell = get_cell(cells, "n1")
-        c1_cell = get_cell(cells, "c1")
-
-        # Inner boundary should be significantly larger than a leaf node
-        assert n_cell["width"] > c1_cell["width"]
-        assert n_cell["height"] > c1_cell["height"]
-
 
 class TestNetworkAccessControlRemoval:
     """network_access_control components should be skipped with a warning."""
@@ -536,3 +492,162 @@ class TestNetworkAccessControlRemoval:
         # Only the direct flow should produce an edge
         assert len(edges) == 1
         assert edges[0]["labels"][0]["attrs"]["text"]["text"] == "Direct"
+
+
+def ports(edge: dict) -> tuple:
+    return (edge["source"].get("port"), edge["target"].get("port"))
+
+
+class TestLayeredLayout:
+    def test_flow_runs_left_to_right_by_default(self):
+        comps = [
+            make_component("t1", "T", "tenant"),
+            make_component("c1", "A", "compute", "t1"),
+            make_component("c2", "B", "storage", "t1"),
+            make_component("c3", "C", "compute", "t1"),
+        ]
+        cells = DFDBuilder(comps, [make_flow("f1", "c1", "c2")]).build_cells()
+        c1, c2 = get_cell(cells, "c1"), get_cell(cells, "c2")
+        assert c2["x"] >= c1["x"] + c1["width"] + 60
+        assert ports(get_edge_cells(cells)[0]) == ("right", "left")
+
+    def test_top_to_bottom_when_direction_is_tb(self, monkeypatch):
+        monkeypatch.setattr(compound, "LAYOUT_DIRECTION", "TB")
+        comps = [
+            make_component("c1", "A", "compute"),
+            make_component("c2", "B", "storage"),
+        ]
+        cells = DFDBuilder(comps, [make_flow("f1", "c1", "c2")]).build_cells()
+        assert get_cell(cells, "c2")["y"] >= get_cell(cells, "c1")["y"] + 60 + 60
+        assert ports(get_edge_cells(cells)[0]) == ("bottom", "top")
+
+    def test_back_edge_and_reverse_cell_swap_sides(self):
+        comps = [
+            make_component("c1", "A", "compute"),
+            make_component("c2", "B", "compute"),
+        ]
+        cells = DFDBuilder(
+            comps, [make_flow("f1", "c1", "c2"), make_flow("f2", "c2", "c1")]
+        ).build_cells()
+        assert [ports(e) for e in get_edge_cells(cells)] == [
+            ("right", "left"),
+            ("left", "right"),
+        ]
+        cells = DFDBuilder(
+            comps, [make_flow("f1", "c1", "c2", bidirectional=True)]
+        ).build_cells()
+        assert [ports(e) for e in get_edge_cells(cells)] == [
+            ("right", "left"),
+            ("left", "right"),
+        ]
+
+    def test_inner_boundary_wraps_its_children(self):
+        comps = [
+            make_component("t1", "Outer", "tenant"),
+            make_component("c1", "L1", "compute", "t1"),
+            make_component("n1", "Inner", "network", "t1"),
+        ]
+        comps += [make_component(c, c, "compute", "n1") for c in ("c3", "c4", "c5")]
+        cells = DFDBuilder(comps, []).build_cells()
+        n = get_cell(cells, "n1")
+        assert all(is_inside(get_cell(cells, c), n) for c in ["c3", "c4", "c5"])
+        assert n["width"] > 120 and n["height"] > 60
+
+    def test_sibling_order_sets_cross_axis_order(self):
+        a = {**make_component("a", "A", "compute"), "sibling_order": 1}
+        b = {**make_component("b", "B", "compute"), "sibling_order": 0}
+        cells = DFDBuilder([a, b], []).build_cells()
+        assert (
+            get_cell(cells, "b")["y"] < get_cell(cells, "a")["y"]
+            or get_cell(cells, "b")["x"] < get_cell(cells, "a")["x"]
+        )
+
+
+class TestRejection:
+    def test_unknown_type_skipped_with_warning(self, caplog):
+        caplog.set_level(logging.WARNING)
+        comps = [
+            make_component("x1", "X", "lambda"),
+            make_component("c1", "A", "compute"),
+        ]
+        cells = DFDBuilder(comps, []).build_cells()
+        assert find_cell_by_component_id(cells, "x1") is None
+        assert find_cell_by_component_id(cells, "c1") is not None
+        assert "x1" in caplog.text
+
+    def test_duplicate_id_skipped_with_warning(self, caplog):
+        caplog.set_level(logging.WARNING)
+        comps = [
+            make_component("c1", "First", "compute"),
+            make_component("c1", "Second", "storage"),
+        ]
+        cells = DFDBuilder(comps, []).build_cells()
+        assert len(get_node_cells(cells)) == 1
+        assert get_cell(cells, "c1")["attrs"]["text"]["text"] == "First"
+        assert "c1" in caplog.text
+
+    def test_empty_input_returns_no_cells(self):
+        assert DFDBuilder([], []).build_cells() == []
+        assert DFDBuilder([], [make_flow("f1", "a", "b")]).build_cells() == []
+
+    def test_missing_parent_becomes_root(self, caplog):
+        caplog.set_level(logging.WARNING)
+        cells = DFDBuilder(
+            [make_component("c1", "A", "compute", "nope")], []
+        ).build_cells()
+        assert "parent" not in get_cell(cells, "c1")
+        assert "c1" in caplog.text
+
+    def test_leaf_or_skipped_parent_becomes_root(self):
+        comps = [
+            make_component("p1", "P", "compute"),
+            make_component("nac", "N", "network_access_control"),
+            make_component("a", "A", "compute", "p1"),
+            make_component("b", "B", "compute", "nac"),
+        ]
+        cells = DFDBuilder(comps, []).build_cells()
+        assert "parent" not in get_cell(cells, "a")
+        assert "parent" not in get_cell(cells, "b")
+
+    def test_self_parent_becomes_root(self):
+        cells = DFDBuilder(
+            [make_component("n1", "N", "network", "n1")], []
+        ).build_cells()
+        assert "parent" not in get_cell(cells, "n1")
+
+    def test_parent_cycle_becomes_root(self, caplog):
+        caplog.set_level(logging.WARNING)
+        comps = [
+            make_component("n1", "N1", "network", "n2"),
+            make_component("n2", "N2", "network", "n1"),
+        ]
+        cells = DFDBuilder(comps, []).build_cells()
+        n1, n2 = get_cell(cells, "n1"), get_cell(cells, "n2")
+        assert "parent" not in n1
+        assert n2["parent"] == n1["id"]
+        assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+    def test_bad_sibling_order_falls_back_to_input_order(self):
+        orders = ["2", None, True, 1, 1]
+        comps = [
+            {**make_component(f"c{i}", f"C{i}", "compute"), "sibling_order": o}
+            for i, o in enumerate(orders)
+        ]
+        cells = DFDBuilder(comps, []).build_cells()
+        assert len(get_node_cells(cells)) == 5
+
+    def test_ancestor_and_self_flows_still_get_cells(self):
+        comps = [
+            make_component("t1", "T", "tenant"),
+            make_component("c1", "A", "compute", "t1"),
+        ]
+        flows = [
+            make_flow("f1", "t1", "c1"),
+            make_flow("f2", "c1", "t1"),
+            make_flow("f3", "c1", "c1"),
+        ]
+        edges = get_edge_cells(DFDBuilder(comps, flows).build_cells())
+        assert len(edges) == 3
+        assert ports(edges[0]) == (None, "left")
+        assert ports(edges[1]) == ("right", None)
+        assert ports(edges[2]) == ("right", "left")
