@@ -155,10 +155,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.input}: missing list key '{key}'", file=sys.stderr)
             return 2
 
+    saved = (compound.LAYOUT_DIRECTION, compound.EMIT_BORDER_VERTICES)
     compound.LAYOUT_DIRECTION = args.direction
     compound.EMIT_BORDER_VERTICES = args.border_vertices
-    cells = DFDBuilder(data["components"], data["flows"]).build_cells()
-    args.output.write_text(render_svg(cells), encoding="utf-8")
+    try:
+        cells = DFDBuilder(data["components"], data["flows"]).build_cells()
+        svg = render_svg(cells)
+    except (KeyError, TypeError, AttributeError) as exc:
+        print(
+            f"{args.input}: malformed components/flows ({type(exc).__name__}: {exc})",
+            file=sys.stderr,
+        )
+        return 2
+    finally:
+        compound.LAYOUT_DIRECTION, compound.EMIT_BORDER_VERTICES = saved
+    try:
+        args.output.write_text(svg, encoding="utf-8")
+    except OSError as exc:
+        print(f"cannot write {args.output}: {exc}", file=sys.stderr)
+        return 2
     n_edges = sum(1 for c in cells if "source" in c)
     print(f"wrote {args.output}: {len(cells) - n_edges} nodes, {n_edges} edges")
     return 0

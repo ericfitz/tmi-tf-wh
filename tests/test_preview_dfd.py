@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -69,3 +70,44 @@ def test_exported_fixtures_render(path):
     comps, flows = load_fixture(path)
     svg = preview_dfd.render_svg(DFDBuilder(comps, flows).build_cells())
     assert svg.count("<rect") == len(comps)
+
+
+def test_svg_is_well_formed_xml_and_labels_are_placed():
+    svg = preview_dfd.render_svg(cells_for(SMALL))
+    root = ET.fromstring(svg)
+    ns = "{http://www.w3.org/2000/svg}"
+    texts = {t.text: t for t in root.iter(f"{ns}text")}
+    assert 'User <admin> & "ops"' in texts
+    reply = texts["reply"]
+    assert float(reply.get("x", "nan")) == float(reply.get("x", "nan"))  # numeric
+    assert float(reply.get("y", "nan")) == float(reply.get("y", "nan"))
+    # the reply label lies on the a->b polyline's bounding box
+    poly_boxes = []
+    for pl in root.iter(f"{ns}polyline"):
+        pts = [tuple(map(float, p.split(","))) for p in pl.get("points", "").split()]
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        poly_boxes.append((min(xs), max(xs), min(ys), max(ys)))
+    x, y = float(reply.get("x", 0)), float(reply.get("y", 0))
+    assert any(a - 1 <= x <= b + 1 and c - 1 <= y <= d + 1 for a, b, c, d in poly_boxes)
+
+
+def test_main_border_vertices_flag_runs_and_restores_globals(tmp_path, monkeypatch):
+    monkeypatch.setattr(compound, "LAYOUT_DIRECTION", "LR")
+    monkeypatch.setattr(compound, "EMIT_BORDER_VERTICES", False)
+    out = tmp_path / "bv.svg"
+    assert preview_dfd.main([str(SMALL), str(out), "--border-vertices"]) == 0
+    ET.fromstring(out.read_text())
+    assert compound.EMIT_BORDER_VERTICES is False
+    assert compound.LAYOUT_DIRECTION == "LR"
+
+
+def test_main_reports_malformed_components_and_unwritable_output(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text(
+        json.dumps({"components": [{"id": "a", "type": "compute"}], "flows": []})
+    )
+    assert preview_dfd.main([str(bad), str(tmp_path / "o.svg")]) == 2
+    assert "malformed" in capsys.readouterr().err
+    assert not (tmp_path / "o.svg").exists()
+    assert preview_dfd.main([str(SMALL), str(tmp_path / "nodir" / "o.svg")]) == 2
+    assert "cannot write" in capsys.readouterr().err

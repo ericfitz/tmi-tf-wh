@@ -651,7 +651,9 @@ class TestEdgeGeometry:
             edges = build_edges([("c1", "c2", True)])
         assert all("vertices" not in e for e in edges)
         assert all(e["connector"] == {"name": "smooth"} for e in edges)
-        assert len([r for r in caplog.records if "vertices" in r.getMessage()]) == 2
+        msgs = [r.getMessage() for r in caplog.records if "vertices" in r.getMessage()]
+        assert len(msgs) == 2
+        assert all("f0" in m and "c1" in m and "c2" in m for m in msgs)
 
     def test_fan_shifts_along_y_in_lr_and_x_in_tb(self, monkeypatch):
         monkeypatch.setattr(compound, "LAYOUT_DIRECTION", "TB")
