@@ -1,6 +1,8 @@
 """Tests for the compound (nested boundary) layout."""
 
 import random
+import re
+from pathlib import Path
 
 import pytest
 
@@ -169,18 +171,18 @@ def test_edge_sides_table(direction, delta, cross, expected):
 @pytest.mark.parametrize(
     ("nodes", "edges", "direction", "offender"),
     [
-        ([leaf("a"), leaf("a")], [], "LR", "a"),
-        ([leaf("a", "nope")], [], "LR", "nope"),
-        ([leaf("p"), leaf("c", "p")], [], "LR", "p"),
-        ([group("x", "y"), group("y", "x")], [], "LR", "x"),
-        ([group("s", "s")], [], "LR", "s"),
+        ([leaf("dupnode"), leaf("dupnode")], [], "LR", "dupnode"),
+        ([leaf("orphan", "nope")], [], "LR", "nope"),
+        ([leaf("plainparent"), leaf("kid", "plainparent")], [], "LR", "plainparent"),
+        ([group("cyc1", "cyc2"), group("cyc2", "cyc1")], [], "LR", "cyc"),
+        ([group("selfloop", "selfloop")], [], "LR", "selfloop"),
         ([leaf("a")], [edge(0, "a", "ghost")], "LR", "ghost"),
         ([leaf("a")], [edge(0, "ghost", "a")], "LR", "ghost"),
         ([leaf("a")], [], "BT", "BT"),
     ],
 )
 def test_validation_rejects_bad_input(nodes, edges, direction, offender):
-    with pytest.raises(ValueError, match=offender):
+    with pytest.raises(ValueError, match=re.escape(offender)):
         compound_layout(nodes, edges, direction)  # type: ignore[arg-type]
 
 
@@ -250,3 +252,27 @@ def test_layout_options_default_matches_explicit():
     assert compound_layout(nodes, edges, "LR") == compound_layout(
         nodes, edges, "LR", compound.LayoutOptions()
     )
+
+
+LICENSE_TAIL = """\
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+"""
+
+
+@pytest.mark.parametrize("name", ["layered", "compound"])
+def test_pele_mit_header_is_complete(name):
+    path = Path(compound.__file__).with_name(f"{name}.py")
+    text = path.read_text()
+    assert text.startswith(
+        "# Portions of this file are a Python port of Pele "
+        "(https://github.com/obsidianmd/pele),\n"
+        f"# src/layout/{name}.ts, commit 3a2f075, used under the MIT License:\n"
+        "#\n# Copyright (c) 2026 kepano\n"
+    )
+    assert LICENSE_TAIL in text

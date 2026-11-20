@@ -18,6 +18,8 @@
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 # AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
 """Compound layout: nested security boundaries laid out level by level on the flat layered core.
 
@@ -83,20 +85,24 @@ class Box:
 
 @dataclass
 class EdgeRoute:
-    lifted: bool = False  # False: the flow took no part in layout
-    level: str | None = (
-        None  # group whose level holds the lifted edge; None is the virtual root
-    )
-    a: str = ""  # child of `level` containing the source
-    b: str = ""  # child of `level` containing the target
-    reversed: bool = False  # cycle breaking reversed a -> b
+    # False: the flow took no part in layout
+    lifted: bool = False
+    # group whose level holds the lifted edge; None is the virtual root
+    level: str | None = None
+    # child of `level` containing the source
+    a: str = ""
+    # child of `level` containing the target
+    b: str = ""
+    # cycle breaking reversed a -> b
+    reversed: bool = False
     rank_a: int = 0
     rank_b: int = 0
-    points: list[tuple[int, int]] = field(
-        default_factory=list
-    )  # absolute, source to target
-    border_out: list[tuple[int, int]] = field(default_factory=list)  # Task 7
-    border_in: list[tuple[int, int]] = field(default_factory=list)  # Task 7
+    # absolute bend points, source to target
+    points: list[tuple[int, int]] = field(default_factory=list)
+    # Task 7: port points, innermost group first
+    border_out: list[tuple[int, int]] = field(default_factory=list)
+    # Task 7: port points, outermost group first
+    border_in: list[tuple[int, int]] = field(default_factory=list)
 
 
 @dataclass
