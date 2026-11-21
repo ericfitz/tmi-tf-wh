@@ -1,11 +1,3 @@
-## Threat To Analyze
-
-**Name:** {threat_name}
-
-**Description:** {threat_description}
-
-**Affected Components:** {affected_components}
-
 ## Infrastructure Context
 
 ### Inventory
@@ -13,6 +5,15 @@
 
 ### Infrastructure Analysis
 {infrastructure_json}
+
+<!-- cache-breakpoint -->
+## Threat To Analyze
+
+**Name:** {threat_name}
+
+**Description:** {threat_description}
+
+**Affected Components:** {affected_components}
 
 ---
 

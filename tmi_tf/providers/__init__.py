@@ -49,6 +49,8 @@ class LLMResponse:
     output_tokens: int
     cost: float
     finish_reason: str
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
 
 class LLMProvider(Protocol):
@@ -75,8 +77,14 @@ class LLMProvider(Protocol):
         user_prompt: str,
         max_tokens: int = 64000,
         timeout: float = 1200.0,
+        *,
+        cache_prefix: str = "",
     ) -> LLMResponse:
-        """Make a single LLM completion call."""
+        """Make a single LLM completion call.
+
+        cache_prefix is text that precedes user_prompt in the user message and
+        is identical across calls; providers that support it mark it cacheable.
+        Callers pass it only when non-empty."""
         ...
 
 

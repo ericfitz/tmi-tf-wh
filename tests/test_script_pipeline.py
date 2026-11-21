@@ -76,7 +76,10 @@ def _analyzer_and_prompts(review_text, jev_shadow=None, tf=TF):
     repo.clone_path = None
     analyzer = LLMAnalyzer(provider, jev_shadow=jev_shadow)
     result = analyzer.analyze_repository(repo)
-    prompts = [c.args[0] + c.args[1] for c in provider.complete.call_args_list]
+    prompts = [
+        c.args[0] + c.kwargs.get("cache_prefix", "") + c.args[1]
+        for c in provider.complete.call_args_list
+    ]
     return result, prompts
 
 
@@ -104,6 +107,9 @@ def test_redacted_text_absent_from_every_prompt_and_scripts_digested():
         all("curl http://evil" not in prompts[i] for i in (0, 1, 2))
         and "curl http://evil" in prompts[3]
     )
+    # phase 3b (index 4 on) carries its shared context in cache_prefix; the
+    # collector joins it, so a script body there fails this
+    assert len(prompts) > 4 and all("curl http://evil" not in p for p in prompts[4:])
     assert (
         "[script omitted: sha256:" in prompts[1]
         and "[script omitted: sha256:" in prompts[2]
@@ -440,7 +446,7 @@ def _run_with(respond, tf=TF):
     fixed = _phase123_responses()
     provider = MagicMock()
     provider.model, provider.provider = "anthropic/m", "anthropic"
-    provider.complete.side_effect = lambda s, u, *a: (
+    provider.complete.side_effect = lambda s, u, *a, **kw: (
         fixed.pop(0) if fixed else respond(u)
     )
     repo = _repo()

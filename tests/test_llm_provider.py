@@ -1,6 +1,8 @@
 """Tests for LLM provider implementations."""
 
+import json
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
@@ -259,3 +261,122 @@ class TestStreamClosed:
         result = BaseLLMProvider(provider="anthropic", model="m").complete("s", "u")
 
         assert result.text == "ok"
+
+
+class TestCachePrefix:
+    def _complete(self, mock_litellm, provider_name, **kw):
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("ok")
+        mock_litellm.completion_cost.return_value = 0.0
+        BaseLLMProvider(provider=provider_name, model=f"{provider_name}/m").complete(
+            "sys", "SUFFIX", **kw
+        )
+        return mock_litellm.completion.call_args.kwargs["messages"]
+
+    @patch("tmi_tf.providers.llm_base.litellm")
+    @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
+    def test_anthropic_prefix_is_a_cached_block(self, _save, mock_litellm):
+        assert self._complete(mock_litellm, "anthropic", cache_prefix="PREFIX") == [
+            {"role": "system", "content": "sys"},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "PREFIX",
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {"type": "text", "text": "SUFFIX"},
+                ],
+            },
+        ]
+
+    @pytest.mark.parametrize("name", ["openai", "xai", "gemini", "oci"])
+    @patch("tmi_tf.providers.llm_base.litellm")
+    @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
+    def test_other_providers_get_one_plain_string(self, _save, mock_litellm, name):
+        messages = self._complete(mock_litellm, name, cache_prefix="PREFIX")
+        assert messages[1] == {"role": "user", "content": "PREFIXSUFFIX"}
+        assert "cache_control" not in json.dumps(messages)
+
+    @patch("tmi_tf.providers.llm_base.litellm")
+    @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
+    def test_without_a_prefix_the_request_is_unchanged(self, _save, mock_litellm):
+        assert self._complete(mock_litellm, "anthropic")[1] == {
+            "role": "user",
+            "content": "SUFFIX",
+        }
+
+
+class TestCacheTokens:
+    def _complete_with_usage(self, usage):
+        with (
+            patch("tmi_tf.providers.llm_base.litellm") as mock_litellm,
+            patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/t"),
+        ):
+            mock_litellm.completion.return_value = iter([])
+            response = _make_litellm_response("ok")
+            response.usage = usage
+            mock_litellm.stream_chunk_builder.return_value = response
+            mock_litellm.completion_cost.return_value = 0.0
+            return BaseLLMProvider(provider="anthropic", model="anthropic/m").complete(
+                "s", "u"
+            )
+
+    def test_anthropic_cache_fields(self):
+        result = self._complete_with_usage(
+            SimpleNamespace(
+                prompt_tokens=75400,
+                completion_tokens=500,
+                cache_read_input_tokens=75000,
+                cache_creation_input_tokens=0,
+                prompt_tokens_details=None,
+            )
+        )
+        assert result.input_tokens == 75400
+        assert result.cache_read_tokens == 75000
+        assert result.cache_creation_tokens == 0
+
+    def test_cache_creation_field(self):
+        result = self._complete_with_usage(
+            SimpleNamespace(
+                prompt_tokens=75400,
+                completion_tokens=500,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=75000,
+                prompt_tokens_details=None,
+            )
+        )
+        assert result.cache_creation_tokens == 75000
+        assert result.cache_read_tokens == 0
+
+    def test_openai_cached_tokens_fallback(self):
+        result = self._complete_with_usage(
+            SimpleNamespace(
+                prompt_tokens=2000,
+                completion_tokens=10,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=1024),
+            )
+        )
+        assert result.cache_read_tokens == 1024
+        assert result.cache_creation_tokens == 0
+
+    def test_mock_usage_yields_zero(self):
+        usage = MagicMock()
+        usage.prompt_tokens = 10
+        usage.completion_tokens = 5
+        result = self._complete_with_usage(usage)
+        assert (result.cache_read_tokens, result.cache_creation_tokens) == (0, 0)
+
+    @pytest.mark.parametrize("bad", [None, -1, True, 1.5, "7"])
+    def test_bad_usage_values_yield_zero(self, bad):
+        result = self._complete_with_usage(
+            SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                cache_read_input_tokens=bad,
+                cache_creation_input_tokens=bad,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=bad),
+            )
+        )
+        assert (result.cache_read_tokens, result.cache_creation_tokens) == (0, 0)

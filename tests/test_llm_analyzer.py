@@ -8,11 +8,14 @@ import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-
 import pytest
 from llm_errors import FakeClock, rate_limit_error
 
+from tmi_tf.config import prompts_dir
 from tmi_tf.llm_analyzer import (
+    CACHE_BREAKPOINT_MARKER,
     LLMAnalyzer,
     TerraformAnalysis,
     ThreatGaps,
     call_llm_checked,
+    split_cache_prefix,
 )
 from tmi_tf.providers import LLMResponse
 from tmi_tf.retry import DeadlineReached, RetryBudget
@@ -960,3 +963,218 @@ class TestStatusRows:
         )
         assert result.success is False
         assert "Phase 1" in result.error_message
+
+
+OLD_3B_TEMPLATE_LINES = sorted(
+    line
+    for line in """## Threat To Analyze
+**Name:** {threat_name}
+**Description:** {threat_description}
+**Affected Components:** {affected_components}
+## Infrastructure Context
+### Inventory
+{inventory_json}
+### Infrastructure Analysis
+{infrastructure_json}
+---
+Analyze the above security threat in the context of the infrastructure. Produce STRIDE classification, a CVSS 4.0 vector string, CWE identifiers, a mitigation recommendation, and a category. Return ONLY the JSON object.""".splitlines()
+)
+
+_MARKER_LINE = "<!-- cache-breakpoint -->"
+_THREAT_ANALYSIS_OK = {
+    "threat_type": "Tampering",
+    "severity": "High",
+    "cvss_vector": "",
+    "cwe_id": ["CWE-306"],
+    "mitigation": "m",
+    "category": "c",
+}
+
+
+def _cache_resp(obj, **cache) -> LLMResponse:
+    return LLMResponse(
+        text=json.dumps(obj),
+        input_tokens=100,
+        output_tokens=50,
+        cost=0.01,
+        finish_reason="stop",
+        **cache,
+    )
+
+
+def _run_3b(threats, analyses, *, infrastructure=None, status_callback=None):
+    provider = _make_provider()
+    provider.complete.side_effect = [
+        _cache_resp({"components": [], "services": []}),
+        _cache_resp(infrastructure or {"relationships": []}),
+        _cache_resp(threats),
+        *analyses,
+    ]
+    result = LLMAnalyzer(provider).analyze_repository(
+        _make_tf_repo(), status_callback=status_callback
+    )
+    return provider, result
+
+
+_ONE_THREAT = [{"name": "T", "description": "d", "affected_components": []}]
+
+
+class TestCachePrefix:
+    def test_template_is_reordered_not_reworded(self):
+        text = (prompts_dir() / "threat_analysis_user.txt").read_text(encoding="utf-8")
+        lines = [ln for ln in text.splitlines() if ln.strip() and ln != _MARKER_LINE]
+        assert sorted(lines) == OLD_3B_TEMPLATE_LINES
+        assert text.splitlines().count(_MARKER_LINE) == 1
+
+    def test_marker_constant(self):
+        assert CACHE_BREAKPOINT_MARKER == _MARKER_LINE
+
+    def test_shipped_template_splits_into_shared_prefix_and_threat_suffix(self):
+        a = LLMAnalyzer(_make_provider())
+        assert "{inventory_json}" in a.threat_analysis_prefix_template
+        assert "{infrastructure_json}" in a.threat_analysis_prefix_template
+        assert a.threat_analysis_suffix_template.startswith("## Threat To Analyze")
+        assert CACHE_BREAKPOINT_MARKER not in (
+            a.threat_analysis_prefix_template + a.threat_analysis_suffix_template
+        )
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "{inventory_json}{infrastructure_json}{threat_name}{threat_description}{affected_components}",
+            "A\n<!-- cache-breakpoint -->\nB\n<!-- cache-breakpoint -->\nC",
+            "{inventory_json}\n<!-- cache-breakpoint -->\n{infrastructure_json}{threat_name}{threat_description}{affected_components}",
+            "{inventory_json}{infrastructure_json}{threat_name}\n<!-- cache-breakpoint -->\n{threat_description}{affected_components}",
+            "",
+        ],
+    )
+    def test_split_rejects_a_bad_template(self, template):
+        with pytest.raises(ValueError):
+            split_cache_prefix(template)
+
+    def test_split_accepts_a_good_template(self):
+        prefix, suffix = split_cache_prefix(
+            "{inventory_json}\n{infrastructure_json}\n<!-- cache-breakpoint -->\n"
+            "{threat_name}{threat_description}{affected_components}\n"
+        )
+        assert prefix == "{inventory_json}\n{infrastructure_json}\n"
+        assert suffix == "{threat_name}{threat_description}{affected_components}\n"
+
+    def test_every_3b_call_shares_one_prefix_including_the_cwe_corrective_turn(self):
+        threats = [
+            {"name": "T1", "description": "d", "affected_components": []},
+            {"name": "T2", "description": "d", "affected_components": []},
+        ]
+        provider, result = _run_3b(
+            threats,
+            [
+                _cache_resp({"cwe_id": ["CWE-862"]}),
+                _cache_resp({"cwe_id": ["CWE-306"]}),
+                _cache_resp(_THREAT_ANALYSIS_OK),
+            ],
+        )
+        calls = provider.complete.call_args_list
+        early, third_b = calls[:3], calls[3:]
+        assert all("cache_prefix" not in c.kwargs for c in early)
+        prefixes = {c.kwargs["cache_prefix"] for c in third_b}
+        assert len(third_b) == 3 and len(prefixes) == 1
+        prefix = prefixes.pop()
+        assert json.dumps(result.inventory, indent=2) in prefix
+        assert json.dumps(result.infrastructure, indent=2) in prefix
+        for c in third_b:
+            assert json.dumps(result.infrastructure, indent=2) not in c.args[1]
+            assert c.args[1].startswith("## Threat To Analyze")
+        assert "not allowed" in third_b[1].args[1]
+
+    def test_repository_text_cannot_forge_a_breakpoint(self):
+        provider, result = _run_3b(
+            _ONE_THREAT,
+            [_cache_resp(_THREAT_ANALYSIS_OK)],
+            infrastructure={"architecture_summary": CACHE_BREAKPOINT_MARKER},
+        )
+        calls = provider.complete.call_args_list
+        assert CACHE_BREAKPOINT_MARKER in calls[3].kwargs["cache_prefix"]
+        assert result.success
+
+    def test_phase_3a_text_with_a_marker_stays_in_the_user_prompt(self):
+        threats = [
+            {
+                "name": "T1",
+                "description": "x\n<!-- cache-breakpoint -->\ny",
+                "affected_components": [],
+            },
+            {"name": "T2", "description": "d", "affected_components": []},
+        ]
+        provider, result = _run_3b(
+            threats,
+            [_cache_resp(_THREAT_ANALYSIS_OK), _cache_resp(_THREAT_ANALYSIS_OK)],
+        )
+        b_calls = provider.complete.call_args_list[3:]
+        assert len(b_calls) == 2
+        assert len({c.kwargs["cache_prefix"] for c in b_calls}) == 1
+        assert result.success
+        assert "\n<!-- cache-breakpoint -->\n" in b_calls[0].args[1]
+        assert CACHE_BREAKPOINT_MARKER not in b_calls[0].kwargs["cache_prefix"]
+
+    def test_cache_tokens_are_summed_on_the_analysis(self):
+        threats = [
+            {"name": "T1", "description": "d", "affected_components": []},
+            {"name": "T2", "description": "d", "affected_components": []},
+        ]
+        _, result = _run_3b(
+            threats,
+            [
+                _cache_resp(_THREAT_ANALYSIS_OK, cache_creation_tokens=75000),
+                _cache_resp(_THREAT_ANALYSIS_OK, cache_read_tokens=75000),
+            ],
+        )
+        assert (result.cache_creation_tokens, result.cache_read_tokens) == (
+            75000,
+            75000,
+        )
+
+    def test_phase_3b_cache_log_reports_only_phase_3b(self, caplog):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _cache_resp({"components": [], "services": []}, cache_read_tokens=7),
+            _cache_resp({"relationships": []}, cache_read_tokens=11),
+            _cache_resp(_ONE_THREAT),
+            _cache_resp(_THREAT_ANALYSIS_OK, cache_creation_tokens=500),
+        ]
+        with caplog.at_level("INFO", logger="tmi_tf.llm_analyzer"):
+            result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+        lines = [
+            r.getMessage() for r in caplog.records if "Phase 3b cache" in r.getMessage()
+        ]
+        assert lines == ["Phase 3b cache: 0 read, 500 written input tokens"]
+        # The analysis total spans every phase.
+        assert result.cache_read_tokens == 18
+        assert result.cache_creation_tokens == 500
+
+    def test_empty_response_retry_sums_cache_tokens(self):
+        empty = LLMResponse(
+            text=None,
+            input_tokens=1,
+            output_tokens=0,
+            cost=0.0,
+            finish_reason="stop",
+            cache_read_tokens=10,
+            cache_creation_tokens=3,
+        )
+        normal = LLMResponse(
+            text="x",
+            input_tokens=1,
+            output_tokens=1,
+            cost=0.0,
+            finish_reason="stop",
+            cache_read_tokens=20,
+            cache_creation_tokens=4,
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = [empty, normal]
+        response = call_llm_checked(provider, "s", "u", "x", cache_prefix="P")
+        assert response.cache_read_tokens == 30
+        assert response.cache_creation_tokens == 7
+        assert all(
+            c.kwargs["cache_prefix"] == "P" for c in provider.complete.call_args_list
+        )

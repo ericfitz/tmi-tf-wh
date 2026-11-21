@@ -73,6 +73,46 @@ class LLMRefusalError(Exception):
         self.response = response
 
 
+CACHE_BREAKPOINT_MARKER = "<!-- cache-breakpoint -->"
+_PREFIX_PLACEHOLDERS = ("{inventory_json}", "{infrastructure_json}")
+_SUFFIX_PLACEHOLDERS = (
+    "{threat_name}",
+    "{threat_description}",
+    "{affected_components}",
+)
+
+
+def split_cache_prefix(template: str) -> tuple[str, str]:
+    """Split the raw phase-3b template at its single marker line into
+    (shared prefix, per-threat suffix). Done before any formatting, so text
+    inside the formatted JSON can never forge a marker. Raises ValueError
+    naming what is wrong."""
+    lines = template.splitlines(keepends=True)
+    marks = [
+        i for i, ln in enumerate(lines) if ln.strip("\r\n") == CACHE_BREAKPOINT_MARKER
+    ]
+    if len(marks) != 1:
+        raise ValueError(
+            f"threat analysis template needs exactly one {CACHE_BREAKPOINT_MARKER} "
+            f"line, found {len(marks)}"
+        )
+    prefix = "".join(lines[: marks[0]])
+    suffix = "".join(lines[marks[0] + 1 :])
+    for name in _PREFIX_PLACEHOLDERS:
+        if name not in prefix:
+            raise ValueError(f"threat analysis template prefix lacks {name}")
+    for name in _SUFFIX_PLACEHOLDERS:
+        if name not in suffix:
+            raise ValueError(f"threat analysis template suffix lacks {name}")
+    for name in _SUFFIX_PLACEHOLDERS:
+        if name in prefix:
+            raise ValueError(f"threat analysis template prefix holds {name}")
+    for name in _PREFIX_PLACEHOLDERS:
+        if name in suffix:
+            raise ValueError(f"threat analysis template suffix holds {name}")
+    return prefix, suffix
+
+
 def call_llm_checked(
     llm_provider: LLMProvider,
     system_prompt: str,
@@ -81,6 +121,7 @@ def call_llm_checked(
     max_tokens: int = 64000,
     timeout: float = 1200.0,
     *,
+    cache_prefix: str = "",
     budget: RetryBudget | None = None,
     on_wait: Callable[[str], None] | None = None,
     timeout_fn: Callable[[], float | None] | None = None,
@@ -100,8 +141,9 @@ def call_llm_checked(
             if computed is None:
                 raise DeadlineReached(f"{description}: job deadline reached")
             attempt_timeout = computed
+        extra = {"cache_prefix": cache_prefix} if cache_prefix else {}
         return llm_provider.complete(
-            system_prompt, user_prompt, max_tokens, attempt_timeout
+            system_prompt, user_prompt, max_tokens, attempt_timeout, **extra
         )
 
     def call() -> LLMResponse:
@@ -131,6 +173,9 @@ def call_llm_checked(
             input_tokens=first.input_tokens + response.input_tokens,
             output_tokens=first.output_tokens + response.output_tokens,
             cost=first.cost + response.cost,
+            cache_read_tokens=first.cache_read_tokens + response.cache_read_tokens,
+            cache_creation_tokens=first.cache_creation_tokens
+            + response.cache_creation_tokens,
         )
     # Refusal whether or not partial text came with it.
     if response.finish_reason == "content_filter":
@@ -202,6 +247,8 @@ class TerraformAnalysis:
         jev_summary: str = "",
         refusals: str = "",
         threat_gaps: ThreatGaps | None = None,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
     ):
         """
         Initialize analysis result.
@@ -231,6 +278,8 @@ class TerraformAnalysis:
             refusals: Model refusals (content_filter) during this run, e.g.
                 "script review: 2 script(s); phase 3b: 1 threat(s)"
             threat_gaps: Phase-3b accounting; ThreatGaps() when absent
+            cache_read_tokens: Input tokens served from the prompt cache (all phases)
+            cache_creation_tokens: Input tokens written to the prompt cache (all phases)
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
@@ -253,6 +302,8 @@ class TerraformAnalysis:
         self.jev_summary = jev_summary
         self.refusals = refusals
         self.threat_gaps = threat_gaps or ThreatGaps()
+        self.cache_read_tokens = cache_read_tokens
+        self.cache_creation_tokens = cache_creation_tokens
 
     @property
     def analysis_content(self) -> str:
@@ -303,6 +354,8 @@ class LLMAnalyzer:
         self.llm_provider = llm_provider
         self.retry_budget = retry_budget
         self._on_wait: Callable[[str], None] | None = None
+        self._cache_read_tokens = 0
+        self._cache_creation_tokens = 0
         self.model = llm_provider.model
         self.provider = llm_provider.provider
         self.jev_shadow = jev_shadow
@@ -345,9 +398,10 @@ class LLMAnalyzer:
             + ", ".join(str(i) for i in sorted(ALLOWED_CWE_IDS))
             + "\n"
         )
-        self.threat_analysis_user_template = self._load_prompt(
-            "threat_analysis_user.txt"
-        )
+        (
+            self.threat_analysis_prefix_template,
+            self.threat_analysis_suffix_template,
+        ) = split_cache_prefix(self._load_prompt("threat_analysis_user.txt"))
         # Script review (#14): isolated LLM call over extracted script blobs
         self.script_review_system = self._load_prompt("script_review_system.txt")
         self.script_review_user_template = self._load_prompt("script_review_user.txt")
@@ -527,6 +581,8 @@ class LLMAnalyzer:
             TerraformAnalysis result with structured JSON from all phases
         """
         self._on_wait = status_callback
+        self._cache_read_tokens = 0
+        self._cache_creation_tokens = 0
         try:
             return self._analyze_repository(terraform_repo, status_callback)
         finally:
@@ -740,6 +796,12 @@ class LLMAnalyzer:
                 status_callback("Phase 3b (Per-Threat Analysis) started")
             security_findings: list[dict[str, Any]] = []
             failed = refused = skipped = 0
+            cache_read_at_3b = self._cache_read_tokens
+            cache_creation_at_3b = self._cache_creation_tokens
+            threat_prefix = self.threat_analysis_prefix_template.format(
+                inventory_json=inventory_json_str,
+                infrastructure_json=infrastructure_json_str,
+            )
             hints: list[str] = []
 
             def note_hint(hint: str) -> None:
@@ -778,12 +840,10 @@ class LLMAnalyzer:
 
                 try:
                     affected = ", ".join(raw_threat.get("affected_components", []))
-                    threat_analysis_user = self.threat_analysis_user_template.format(
+                    threat_analysis_user = self.threat_analysis_suffix_template.format(
                         threat_name=threat_name,
                         threat_description=raw_threat.get("description", ""),
                         affected_components=affected,
-                        inventory_json=inventory_json_str,
-                        infrastructure_json=infrastructure_json_str,
                     )
 
                     analysis_result, ta_tokens_in, ta_tokens_out, ta_cost = (
@@ -793,6 +853,7 @@ class LLMAnalyzer:
                             phase_name=f"threat_analysis_{i}",
                             max_tokens=4000,
                             timeout=120.0,
+                            cache_prefix=threat_prefix,
                         )
                     )
 
@@ -845,6 +906,7 @@ class LLMAnalyzer:
                                 phase_name=f"threat_analysis_{i}_cwe_retry",
                                 max_tokens=4000,
                                 timeout=120.0,
+                                cache_prefix=threat_prefix,
                             )
                         except LLMRefusalError as e:
                             # Keep the first analysis; leftover CWEs are
@@ -954,6 +1016,11 @@ class LLMAnalyzer:
                 len(security_findings),
                 len(raw_threats),
             )
+            logger.info(
+                "Phase 3b cache: %d read, %d written input tokens",
+                self._cache_read_tokens - cache_read_at_3b,
+                self._cache_creation_tokens - cache_creation_at_3b,
+            )
             refusal_parts = []
             if refused_scripts:
                 refusal_parts.append(f"script review: {len(refused_scripts)} script(s)")
@@ -1015,6 +1082,8 @@ class LLMAnalyzer:
                 jev_summary=jev_summary,
                 refusals=refusals,
                 threat_gaps=gaps,
+                cache_read_tokens=self._cache_read_tokens,
+                cache_creation_tokens=self._cache_creation_tokens,
             )
 
         except Exception as e:
@@ -1129,6 +1198,7 @@ class LLMAnalyzer:
         phase_name: str,
         max_tokens: int = 64000,
         timeout: float = 1200.0,
+        cache_prefix: str = "",
     ) -> LLMResponse:
         """
         Make a single LLM API call via the provider (see call_llm_checked).
@@ -1139,20 +1209,30 @@ class LLMAnalyzer:
             phase_name: Name of the phase (for logging)
             max_tokens: Max output tokens
             timeout: Request timeout in seconds
+            cache_prefix: Shared leading text of the user message (cacheable)
 
         Returns:
             LLMResponse with text, tokens, cost, and finish_reason
         """
-        return call_llm_checked(
-            self.llm_provider,
-            system_prompt,
-            user_prompt,
-            f"Phase {phase_name}",
-            max_tokens,
-            timeout,
-            budget=self.retry_budget,
-            on_wait=self._on_wait,
-        )
+        try:
+            response = call_llm_checked(
+                self.llm_provider,
+                system_prompt,
+                user_prompt,
+                f"Phase {phase_name}",
+                max_tokens,
+                timeout,
+                cache_prefix=cache_prefix,
+                budget=self.retry_budget,
+                on_wait=self._on_wait,
+            )
+        except LLMRefusalError as e:
+            self._cache_read_tokens += e.response.cache_read_tokens
+            self._cache_creation_tokens += e.response.cache_creation_tokens
+            raise
+        self._cache_read_tokens += response.cache_read_tokens
+        self._cache_creation_tokens += response.cache_creation_tokens
+        return response
 
     def _call_llm_json(
         self,
@@ -1162,6 +1242,7 @@ class LLMAnalyzer:
         max_tokens: int = 64000,
         timeout: float = 1200.0,
         attempts: int = 1,
+        cache_prefix: str = "",
     ) -> tuple[dict[str, Any] | None, int, int, float]:
         """
         Call LLM and parse JSON object response.
@@ -1175,6 +1256,7 @@ class LLMAnalyzer:
             attempts: Total calls allowed; the call is repeated (same prompt)
                 when the output was truncated (finish_reason=length) or did
                 not parse as a JSON object (#53). Tokens/cost are summed.
+            cache_prefix: Shared leading text of the user message (cacheable)
 
         Returns:
             Tuple of (parsed JSON dict or None, input_tokens, output_tokens, cost)
@@ -1184,7 +1266,12 @@ class LLMAnalyzer:
         parsed: dict[str, Any] | None = None
         for attempt in range(1, attempts + 1):
             response = self._call_llm(
-                system_prompt, user_prompt, phase_name, max_tokens, timeout
+                system_prompt,
+                user_prompt,
+                phase_name,
+                max_tokens,
+                timeout,
+                cache_prefix,
             )
             tokens_in += response.input_tokens
             tokens_out += response.output_tokens
