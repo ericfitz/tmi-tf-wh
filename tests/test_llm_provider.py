@@ -72,7 +72,18 @@ class TestBaseLLMProvider:
             stream=True,
             stream_options={"include_usage": True},
             oci_region="us-ashburn-1",
+            num_retries=0,
         )
+
+    @patch("tmi_tf.providers.llm_base.litellm")
+    @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")
+    def test_complete_disables_provider_side_retries(self, mock_save, mock_litellm):
+        """The OpenAI SDK retries twice on its own; retry.py is the only retry (#103)."""
+        mock_litellm.completion.return_value = iter([])
+        mock_litellm.stream_chunk_builder.return_value = _make_litellm_response("ok")
+        mock_litellm.completion_cost.return_value = 0.0
+        BaseLLMProvider(provider="openai", model="openai/gpt-x").complete("s", "u")
+        assert mock_litellm.completion.call_args.kwargs["num_retries"] == 0
 
     @patch("tmi_tf.providers.llm_base.litellm")
     @patch("tmi_tf.providers.llm_base.save_llm_response", return_value="/tmp/test")

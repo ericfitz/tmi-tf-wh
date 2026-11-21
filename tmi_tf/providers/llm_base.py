@@ -87,6 +87,7 @@ class BaseLLMProvider:
             timeout=timeout,
             stream=True,
             stream_options={"include_usage": True},
+            num_retries=0,  # retry.py is the only retry layer (#103)
             **self._extra_kwargs,
         )
         try:
