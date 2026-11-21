@@ -5,11 +5,16 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
-from llm_errors import rate_limit_error
+from llm_errors import FakeClock, rate_limit_error
 
-from tmi_tf.llm_analyzer import LLMAnalyzer, call_llm_checked
+from tmi_tf.llm_analyzer import (
+    LLMAnalyzer,
+    TerraformAnalysis,
+    ThreatGaps,
+    call_llm_checked,
+)
 from tmi_tf.providers import LLMResponse
-from tmi_tf.retry import DeadlineReached
+from tmi_tf.retry import DeadlineReached, RetryBudget
 
 
 def _make_provider(model: str = "anthropic/test-model") -> MagicMock:
@@ -584,12 +589,133 @@ class TestPhase3bRateLimit:
             _make_tf_repo(), status_callback=rows.append
         )
         assert [f["name"] for f in result.security_findings] == ["T1", "T2", "T3"]
+        gaps = result.threat_gaps
+        assert gaps.identified == len(result.security_findings) + gaps.not_analyzed
         assert sleeps == [30.0, 30.0, 30.0, 30.0]
         waits = [r for r in rows if "rate limited (HTTP 429), waiting 30s" in r]
         assert len(waits) == 4
         assert waits[0].endswith("(attempt 1 of 8)")
         # The callback is released once the run ends.
         assert analyzer._on_wait is None
+
+    def test_budget_exhaustion_keeps_findings_and_records_the_rest_as_gaps(
+        self, monkeypatch
+    ):
+        clock = FakeClock()
+        monkeypatch.setattr("tmi_tf.retry.time.sleep", clock.sleep)
+        monkeypatch.setattr("tmi_tf.retry.random.random", lambda: 0.0)
+        limited = rate_limit_error({"retry-after": "40"})
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+            _make_llm_response(json.dumps(THREE)),
+            _make_llm_response(json.dumps(THREAT_ANALYSIS)),  # T1
+            limited,
+            limited,
+            limited,  # T2: waits 40, 40, then no room
+        ]
+        analyzer = LLMAnalyzer(provider, retry_budget=RetryBudget(100.0, clock))
+        result = analyzer.analyze_repository(_make_tf_repo())
+        assert result.success is True
+        assert [f["name"] for f in result.security_findings] == ["T1"]
+        gaps = result.threat_gaps
+        assert gaps == ThreatGaps(
+            identified=3,
+            failed=1,
+            refused=0,
+            skipped=1,
+            hints=("HTTP 429 rate_limit_error",),
+        )
+        assert gaps.identified == len(result.security_findings) + gaps.not_analyzed
+        assert provider.complete.call_count == 7  # T3 was never sent
+        assert clock.t == 80.0
+
+    def test_unparseable_answer_is_a_counted_gap(self):
+        two = THREE[:2]
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+            _make_llm_response(json.dumps(two)),
+            _make_llm_response("not json"),  # T1
+            _make_llm_response(json.dumps(THREAT_ANALYSIS)),  # T2
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+        gaps = result.threat_gaps
+        assert gaps == ThreatGaps(
+            identified=2, failed=1, hints=("unparseable response",)
+        )
+        assert [f["name"] for f in result.security_findings] == ["T2"]
+        assert gaps.identified == len(result.security_findings) + gaps.not_analyzed
+
+    def test_refusal_is_counted_separately_from_errors(self):
+        refused = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=0,
+            cost=0.01,
+            finish_reason="content_filter",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+            _make_llm_response(json.dumps(THREE)),
+            refused,  # T1
+            RuntimeError("x"),  # T2
+            _make_llm_response(json.dumps(THREAT_ANALYSIS)),  # T3
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+        gaps = result.threat_gaps
+        assert gaps == ThreatGaps(
+            identified=3, failed=1, refused=1, hints=("RuntimeError",)
+        )
+        assert result.refusals == "phase 3b: 1 threat(s)"
+        assert gaps.identified == len(result.security_findings) + gaps.not_analyzed
+
+    def test_clean_run_has_no_gaps(self):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+            _make_llm_response(json.dumps(THREE[:1])),
+            _make_llm_response(json.dumps(THREAT_ANALYSIS)),
+        ]
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+        gaps = result.threat_gaps
+        assert gaps == ThreatGaps(identified=1)
+        assert gaps.summary() == ""
+        assert gaps.identified == len(result.security_findings) + gaps.not_analyzed
+
+
+class TestThreatGapsSummary:
+    def test_summary_lists_causes_in_order(self):
+        gaps = ThreatGaps(
+            identified=28,
+            failed=22,
+            refused=1,
+            skipped=2,
+            hints=("HTTP 429 rate_limit_error", "unparseable response"),
+        )
+        assert gaps.not_analyzed == 25
+        assert gaps.summary() == (
+            "25 of 28 threats not analyzed "
+            "(HTTP 429 rate_limit_error, unparseable response, refused, "
+            "deadline reached)"
+        )
+
+    def test_summary_omits_absent_causes(self):
+        gaps = ThreatGaps(identified=3, refused=1)
+        assert gaps.summary() == "1 of 3 threats not analyzed (refused)"
+        assert ThreatGaps(identified=3, skipped=1).summary() == (
+            "1 of 3 threats not analyzed (deadline reached)"
+        )
+
+    def test_failed_analysis_defaults_to_empty_gaps(self):
+        assert TerraformAnalysis("r", "u", success=False).threat_gaps == ThreatGaps()
+        gaps = ThreatGaps(identified=2, failed=1)
+        assert TerraformAnalysis("r", "u", threat_gaps=gaps).threat_gaps is gaps
 
 
 class TestTimeoutFn:

@@ -12,10 +12,11 @@ from collections.abc import Callable
 from typing import Any
 
 from tmi_tf.config import prompts_dir
+from tmi_tf.error_hints import error_hint
 from tmi_tf.json_extract import extract_json_object
 from tmi_tf.llm_analyzer import LLMRefusalError, call_llm_checked
 from tmi_tf.providers import LLMProvider, LLMResponse
-from tmi_tf.retry import RetryBudget
+from tmi_tf.retry import DeadlineReached, RetryBudget
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class DFDLLMGenerator:
         self.input_tokens = 0
         self.output_tokens = 0
         self.total_cost = 0.0
+        self.last_error = ""
         self._load_prompt_template()
 
     def _load_prompt_template(self):
@@ -87,6 +89,7 @@ class DFDLLMGenerator:
             LLMRefusalError: the model refused (finish_reason=content_filter)
         """
         logger.info("Generating structured DFD data from analysis using %s", self.model)
+        self.last_error = ""
 
         try:
             # Build the user prompt from template with JSON data
@@ -115,6 +118,7 @@ class DFDLLMGenerator:
             self._record_usage(response)
             if not response.text:
                 logger.error("Empty content in LLM response")
+                self.last_error = "empty response"
                 return None
             response_text = response.text
 
@@ -123,6 +127,7 @@ class DFDLLMGenerator:
 
             if not structured_data:
                 logger.error("Failed to extract JSON from Claude response")
+                self.last_error = "unparseable response"
                 return None
 
             # Strip any markup from all string values
@@ -131,6 +136,7 @@ class DFDLLMGenerator:
             # Validate structure
             if not self._validate_structure(structured_data):
                 logger.error("Invalid structure in generated data")
+                self.last_error = "invalid structure"
                 return None
 
             logger.info(
@@ -143,8 +149,13 @@ class DFDLLMGenerator:
 
         except LLMRefusalError:
             raise
+        except DeadlineReached:
+            logger.error("DFD generation: job deadline reached")
+            self.last_error = "deadline reached"
+            return None
         except Exception as e:
             logger.error("Error generating structured DFD data: %s", e)
+            self.last_error = error_hint(e)
             return None
 
     def _record_usage(self, response: LLMResponse) -> None:

@@ -14,12 +14,13 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.cvss_scorer import score_cvss4_vector
+from tmi_tf.error_hints import error_hint
 from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.metadata_scan import (
     InjectionHit,
@@ -148,6 +149,33 @@ def call_llm_checked(
     return response
 
 
+@dataclass(frozen=True)
+class ThreatGaps:
+    """Phase-3b accounting: threats identified but not analyzed, and why."""
+
+    identified: int = 0
+    failed: int = 0
+    refused: int = 0
+    skipped: int = 0
+    hints: tuple[str, ...] = ()
+
+    @property
+    def not_analyzed(self) -> int:
+        return self.failed + self.refused + self.skipped
+
+    def summary(self) -> str:
+        """One line naming the count and causes; "" when nothing was missed."""
+        if self.not_analyzed == 0:
+            return ""
+        causes = list(self.hints)
+        if self.refused:
+            causes.append("refused")
+        if self.skipped:
+            causes.append("deadline reached")
+        text = f"{self.not_analyzed} of {self.identified} threats not analyzed"
+        return f"{text} ({', '.join(causes)})" if causes else text
+
+
 class TerraformAnalysis:
     """Result of Terraform analysis (3-phase structured output)."""
 
@@ -173,6 +201,7 @@ class TerraformAnalysis:
         script_review_error: str = "",
         jev_summary: str = "",
         refusals: str = "",
+        threat_gaps: ThreatGaps | None = None,
     ):
         """
         Initialize analysis result.
@@ -201,6 +230,7 @@ class TerraformAnalysis:
                 shadow is disabled/absent or errored during this run
             refusals: Model refusals (content_filter) during this run, e.g.
                 "script review: 2 script(s); phase 3b: 1 threat(s)"
+            threat_gaps: Phase-3b accounting; ThreatGaps() when absent
         """
         self.repo_name = repo_name
         self.repo_url = repo_url
@@ -222,6 +252,7 @@ class TerraformAnalysis:
         self.script_review_error = script_review_error
         self.jev_summary = jev_summary
         self.refusals = refusals
+        self.threat_gaps = threat_gaps or ThreatGaps()
 
     @property
     def analysis_content(self) -> str:
@@ -462,8 +493,8 @@ class LLMAnalyzer:
                 continue
             except Exception as e:
                 # Never log/return str(e): see _prescan.
-                logger.error("Script review failed: %s", type(e).__name__)
-                errors.append(f"script review failed: {type(e).__name__}")
+                logger.error("Script review failed: %s", error_hint(e))
+                errors.append(f"script review failed: {error_hint(e)}")
                 continue
             t_in += response.input_tokens
             t_out += response.output_tokens
@@ -692,9 +723,21 @@ class LLMAnalyzer:
             if status_callback:
                 status_callback("Phase 3b (Per-Threat Analysis) started")
             security_findings: list[dict[str, Any]] = []
-            refused_threats = 0
+            failed = refused = skipped = 0
+            hints: list[str] = []
+
+            def note_hint(hint: str) -> None:
+                if hint not in hints:
+                    hints.append(hint)
 
             for i, raw_threat in enumerate(raw_threats, 1):
+                if self.retry_budget is not None and self.retry_budget.expired():
+                    skipped = len(raw_threats) - i + 1
+                    logger.warning(
+                        "Phase 3b: job deadline reached; skipping %d threat(s)",
+                        skipped,
+                    )
+                    break
                 threat_name = raw_threat.get("name", "Unnamed Threat")
                 logger.info(
                     "Phase 3b: Analyzing threat %d/%d: %s",
@@ -740,6 +783,8 @@ class LLMAnalyzer:
                             "'%s', skipping",
                             threat_name,
                         )
+                        failed += 1
+                        note_hint("unparseable response")
                         continue
 
                     # One corrective turn if any CWE is outside the allowlist
@@ -840,7 +885,7 @@ class LLMAnalyzer:
                     security_findings.append(finding)
 
                 except LLMRefusalError as e:
-                    refused_threats += 1
+                    refused += 1
                     sec_tokens_in += e.response.input_tokens
                     sec_tokens_out += e.response.output_tokens
                     sec_cost += e.response.cost
@@ -855,6 +900,8 @@ class LLMAnalyzer:
                     logger.error(
                         "Phase 3b: Failed to analyze threat '%s': %s", threat_name, e
                     )
+                    failed += 1
+                    note_hint(error_hint(e))
                     continue
 
             logger.info(
@@ -865,8 +912,8 @@ class LLMAnalyzer:
             refusal_parts = []
             if refused_scripts:
                 refusal_parts.append(f"script review: {len(refused_scripts)} script(s)")
-            if refused_threats:
-                refusal_parts.append(f"phase 3b: {refused_threats} threat(s)")
+            if refused:
+                refusal_parts.append(f"phase 3b: {refused} threat(s)")
             refusals = "; ".join(refusal_parts)
             if refusals and status_callback:
                 status_callback(f"Model refusals (content_filter): {refusals}")
@@ -906,6 +953,13 @@ class LLMAnalyzer:
                 script_review_error=script_review_error,
                 jev_summary=jev_summary,
                 refusals=refusals,
+                threat_gaps=ThreatGaps(
+                    identified=len(raw_threats),
+                    failed=failed,
+                    refused=refused,
+                    skipped=skipped,
+                    hints=tuple(hints),
+                ),
             )
 
         except Exception as e:

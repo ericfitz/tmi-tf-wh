@@ -4,13 +4,14 @@
 import json
 from unittest.mock import MagicMock
 
+import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 import pytest
 from llm_errors import FakeClock, rate_limit_error
 
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.llm_analyzer import LLMRefusalError
 from tmi_tf.providers import LLMResponse
-from tmi_tf.retry import RetryBudget
+from tmi_tf.retry import DeadlineReached, RetryBudget
 
 VALID = json.dumps(
     {
@@ -96,3 +97,47 @@ class TestDFDRetry:
         gen, provider = _generator(_response(VALID))
         gen.generate_structured_components({}, {}, timeout=1.0, timeout_fn=lambda: 7.0)
         assert provider.complete.call_args.args[3] == 7.0
+
+
+class TestDFDLastError:
+    @pytest.mark.parametrize(
+        ("side_effect", "hint"),
+        [
+            (
+                [litellm.AuthenticationError(message="x", llm_provider="a", model="m")],
+                "HTTP 401 authentication_error",
+            ),
+            ([_response("not json")], "unparseable response"),
+            ([_response('{"components": "nope"}')], "invalid structure"),
+            ([_response(None), _response(None)], "empty response"),
+            ([RuntimeError("secret body")], "RuntimeError"),
+        ],
+    )
+    def test_none_result_carries_a_reason(self, side_effect, hint):
+        provider = MagicMock(model="anthropic/m", provider="anthropic")
+        provider.complete.side_effect = side_effect
+        gen = DFDLLMGenerator(provider)
+        assert gen.generate_structured_components({}, {}) is None
+        assert gen.last_error == hint
+        assert "secret body" not in gen.last_error
+
+    def test_success_clears_last_error(self):
+        gen, _ = _generator(_response("not json"), _response(VALID))
+        assert gen.last_error == ""
+        assert gen.generate_structured_components({}, {}) is None
+        assert gen.last_error == "unparseable response"
+        data = gen.generate_structured_components({}, {})
+        assert data is not None
+        assert data["components"][0]["name"] == "web"
+        assert gen.last_error == ""
+
+    def test_deadline_reached_is_reported_as_such(self):
+        gen, provider = _generator(_response(VALID))
+        assert (
+            gen.generate_structured_components({}, {}, timeout_fn=lambda: None) is None
+        )
+        assert gen.last_error == "deadline reached"
+        assert provider.complete.call_count == 0
+
+    def test_deadline_reached_exception_type_is_importable(self):
+        assert issubclass(DeadlineReached, Exception)

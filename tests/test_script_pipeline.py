@@ -286,6 +286,27 @@ def test_review_hard_failure_keeps_static_findings_reaching_3b():
     assert {"static-rule", "injection-scan"} <= sources
 
 
+def test_review_http_error_is_summarized_by_status():
+    provider = MagicMock()
+    provider.model, provider.provider = "anthropic/m", "anthropic"
+    provider.complete.side_effect = [
+        *_phase123_responses(),
+        litellm.AuthenticationError(
+            message="bad key sk-secret", llm_provider="anthropic", model="m"
+        ),  # review: 401, never retried
+        _resp(_THREAT_ANALYSIS),
+        _resp(_THREAT_ANALYSIS),
+        _resp(_THREAT_ANALYSIS),  # 3b x3
+    ]
+    result = LLMAnalyzer(provider).analyze_repository(_repo())
+    assert result.success, result.error_message
+    assert (
+        "script review failed: HTTP 401 authentication_error"
+        in result.script_review_error
+    )
+    assert "sk-secret" not in result.script_review_error
+
+
 def test_shadow_cannot_change_findings():
     review = json.dumps([])
     baseline, _ = _analyzer_and_prompts(review)
