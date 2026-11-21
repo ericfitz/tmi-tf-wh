@@ -15,7 +15,7 @@
 - No new runtime dependency and no native binary. `tmi_tf/layout/` and both scripts use the standard library only.
 - `DFDBuilder.build_cells()` keeps its signature and cell format; the caller `tmi_tf/analyzer.py:565` is not edited.
 - Determinism: never iterate a `set`/`frozenset`; build dicts only from input-ordered data; every `sorted()` key ends in an input index; no `hash()`, `id()`, `random`, clock, or uuid in layout code (cell ids stay `uuid4`, tests normalize them).
-- All node sizes and every emitted coordinate are `int`. The one rounding function is `floor(v + 0.5)`, applied to child top-left corners inside each level before that level's bounding box is computed, and to route points. Never round a centre or a size independently.
+- All node sizes and every emitted coordinate are `int`. The one rounding function is `floor(v + 0.5)`, applied to child top-left corners inside each level before that level's bounding box is computed, and to route points. Never round a center or a size independently.
 - Sizes are at least 40x30 (API minimum). Leaves are 120x60.
 - Leaves have exactly four ports `top/right/bottom/left`; boundaries (`tenant`, `container`, `network`) have none, so an edge end on a boundary is `{"cell": id}` only.
 - Edge cell schema: `vertices` is a list of `{"x", "y"}`, at most 1000; `router` is `{"name": "normal"}`; `connector` is `{"name": "smooth"}` (no vertices) or `{"name": "rounded"}` (vertices); a label `position` is a 0-1 fraction.
@@ -209,8 +209,8 @@ class LNode:
     w: float                 # cross-axis extent
     h: float                 # rank-axis extent
     kind: Kind = Kind.NODE
-    x: float = 0.0           # output: centre on the cross axis
-    y: float = 0.0           # output: centre on the rank axis
+    x: float = 0.0           # output: center on the cross axis
+    y: float = 0.0           # output: center on the rank axis
     rank: int = 0            # output
 
 @dataclass
@@ -350,13 +350,13 @@ class LayeredResult:
     width: float
     height: float
 
-def position(layers: Layers, opt: LayeredOptions) -> list[float]   # cross-axis centre per vertex
+def position(layers: Layers, opt: LayeredOptions) -> list[float]   # cross-axis center per vertex
 def layered(nodes: list[LNode], edges: list[LEdge], opt: LayeredOptions) -> LayeredResult
 ```
 
 Pinned:
 - `position` is Pele's Brandes-Koepf: four alignments, shift each to the narrowest, each vertex takes the mean of its two middle candidates. Alignment medians are unweighted. Separation between neighbors in a rank is the sum of their half widths plus, per side, `node_sep / 2` for `Kind.NODE` and `edge_sep / 2` for every other kind. Drop the `EFD`/`ETD`/`shift` offset terms (always 0 here).
-- `layered`: empty input returns `LayeredResult(0, 0)`. Otherwise `orient`, `rank`, `build_layers`, `reduce_crossings`, `position`; shift so the smallest left edge is 0. Rank axis: one band per rank, as tall as its tallest vertex (a rank of only ports or dummies has height 0), `rank_sep` between bands, every vertex centred in its band. Writes `x`, `y`, `rank` on each node. `width`/`height` are the bounding box of all vertices.
+- `layered`: empty input returns `LayeredResult(0, 0)`. Otherwise `orient`, `rank`, `build_layers`, `reduce_crossings`, `position`; shift so the smallest left edge is 0. Rank axis: one band per rank, as tall as its tallest vertex (a rank of only ports or dummies has height 0), `rank_sep` between bands, every vertex centered in its band. Writes `x`, `y`, `rank` on each node. `width`/`height` are the bounding box of all vertices.
 - `LEdge.points`: for each dummy of the edge, `(x, band_top)` then `(x, band_bottom)` of its rank (a single `(x, y)` when the band has no height), listed from tail to head (so reversed for a reversed edge). Two points per dummy keep the route parallel to the nodes beside it instead of cutting their corners.
 
 - [ ] **Step 1: Write the failing tests** (`OPT = LayeredOptions(40, 20, 60)`; nodes are 100 wide, 40 tall)
@@ -609,7 +609,7 @@ Pinned builder behavior:
 - Layout input order: `sorted` by `(0, sibling_order, index)` when `type(sibling_order) is int`, else `(1, 0, index)`. `LayoutNode` for a leaf is `(120, 60)`; for a boundary `w = max(MIN_WIDTH, label_width(name))`, `h = MIN_HEIGHT`, `is_group=True`. The LLM's `rank` field is ignored.
 - One `LayoutEdge(str(i), source_id, target_id, label_w)` per flow `i` whose ends both have cells; `label_w` is the largest `label_width` of the labels that flow's cells will carry. Flows with a missing end are skipped with the existing warning.
 - `_auto_layout` calls `compound_layout(nodes, edges, compound.LAYOUT_DIRECTION)` and copies each box to its cell's `x`, `y`, `width`, `height`.
-- Ports: for flow `i` with route `rt`, `rank_delta = rt.rank_b - rt.rank_a` when `rt.lifted`, else `1`. The forward cell uses `edge_sides(direction, rank_delta, cross_delta)`; the reverse cell of a bidirectional flow uses `edge_sides(direction, -rank_delta, -cross_delta)`. `cross_delta` is target centre minus source centre on the cross axis. An end on a boundary gets no `port`.
+- Ports: for flow `i` with route `rt`, `rank_delta = rt.rank_b - rt.rank_a` when `rt.lifted`, else `1`. The forward cell uses `edge_sides(direction, rank_delta, cross_delta)`; the reverse cell of a bidirectional flow uses `edge_sides(direction, -rank_delta, -cross_delta)`. `cross_delta` is target center minus source center on the cross axis. An end on a boundary gets no `port`.
 - Delete `_place_items_in_grid`, `_order_leaves_by_flow`, `_get_optimal_port`, `_compute_component_size`, `_assign_positions`, `_build_flow_adjacency`, `_get_children`, the constants `BOUNDARY_PADDING`, `NODE_SPACING`, `DEFAULT_BOUNDARY_WIDTH`, `DEFAULT_BOUNDARY_HEIGHT`, and the unused `ceil`/`sqrt` import. Vertices, fan and connector choice are Task 8; leave `router`/`connector` as they are.
 
 - [ ] **Step 1: Write the failing tests**
@@ -889,7 +889,7 @@ git commit -m "feat(layout): port nodes for edges that cross boundary borders"
 Point = tuple[int, int]
 MAX_VERTICES = 1000
 
-def side_point(box: Box, side: Side | None) -> Point             # middle of that side; centre when side is None
+def side_point(box: Box, side: Side | None) -> Point             # middle of that side; center when side is None
 def straighten(points: list[Point], start: Point, end: Point, tol: float = 0.5) -> list[Point]
 def fan_offsets(k: int, edge_sep: int) -> list[float]            # (i - (k - 1) / 2) * edge_sep
 def label_positions(k: int) -> list[float]                       # [0.5] for k == 1, else 0.35..0.65 evenly, rounded to 4 places
@@ -905,7 +905,7 @@ Pinned (spec "Mapping to cells" and "Settled" item 3):
 - Order per cell: `_route_points`, then `straighten`, then fanning, then `drop_blocked`, then the vertex cap. `straighten` sees route points only; a fan vertex is never straightened (the middle cell of an odd fan sits exactly on the straight line and must keep its vertex).
 - `straighten`: one pass; drop a point whose perpendicular distance to the line through the previous kept point (or `start`) and the next point (or `end`) is under `tol`. `start`/`end` are `side_point` of the source and target boxes with the cell's port sides (`None` for a boundary end). This is the spec's rule, not Pele's `straighten`.
 - Fan groups: edge cells are grouped by unordered endpoint pair, `tuple(sorted((source_id, target_id)))`, in a dict in first-appearance order; `i` is the cell's position in its group, `k` the group size. For `k > 1`: a cell that still has route points after `straighten` gets `shift_cross(vertices, fan_offsets(k, 20)[i], direction)`; a cell with none whose route is lifted gets the single vertex `shift_cross([gap_midpoint(...)], ...)`; a cell whose route is not lifted gets none. The shift is along the cross axis (`y` in `LR`, `x` in `TB`) in screen coordinates, the same sign for forward and reverse cells. Its label gets `"position": label_positions(k)[i]`. For `k == 1` vertices are unshifted and the label has no `position` key.
-- `gap_midpoint`: rank-axis coordinate is the middle of the gap between the facing borders of `a` and `b` (the route's lifted children); cross-axis coordinate is the mean of the source and target box centres. Rounded with the shared rule.
+- `gap_midpoint`: rank-axis coordinate is the middle of the gap between the facing borders of `a` and `b` (the route's lifted children); cross-axis coordinate is the mean of the source and target box centers. Rounded with the shared rule.
 - After fanning, every cell's vertices go through `drop_blocked` with the boxes of all components that are neither a proper ancestor of the cell's source nor of its target. Then, if more than `routes.MAX_VERTICES` remain, the cell gets no vertices and a warning is logged.
 - A cell has a `vertices` key only when the list is non-empty; `connector` follows it as in Global Constraints.
 
@@ -1009,7 +1009,7 @@ git commit -m "feat(dfd): edge vertices, fanned parallel flows, connector and la
 
 Pinned:
 - CLI: `uv run python scripts/preview_dfd.py INPUT.json OUT.svg [--direction LR|TB] [--border-vertices]`. `main` sets `compound.LAYOUT_DIRECTION` and `compound.EMIT_BORDER_VERTICES` from the flags (defaults `LR`, false), builds cells, writes `render_svg(cells)`, prints `wrote OUT.svg: N nodes, M edges`, returns 0. A missing file, invalid JSON, or missing `components`/`flows` key returns 2 with the message on stderr and writes nothing. `OUT.svg` is a derived file and is overwritten on every run.
-- `render_svg`: `viewBox` is the bounding box of all node cells and vertices plus a 20px margin. Order: boundaries (cells without `ports`) by `zIndex`, as `<rect>` with no fill and a dashed stroke, name as `<text>` inside the top-left corner; then leaves as filled `<rect>` with centred `<text>`; then one `<polyline>` per edge through `side_point(source box, source port)`, its vertices, and `side_point(target box, target port)`, with an arrowhead marker; then each edge label as `<text>` at its `position` fraction (default 0.5) of the polyline's length. Exactly one `<rect>` per node cell and one `<polyline>` per edge cell (the arrowhead is a `<path>` in `<defs>`). All text goes through `html.escape`. No cell ids appear in the output, so two runs on equal input give identical bytes.
+- `render_svg`: `viewBox` is the bounding box of all node cells and vertices plus a 20px margin. Order: boundaries (cells without `ports`) by `zIndex`, as `<rect>` with no fill and a dashed stroke, name as `<text>` inside the top-left corner; then leaves as filled `<rect>` with centered `<text>`; then one `<polyline>` per edge through `side_point(source box, source port)`, its vertices, and `side_point(target box, target port)`, with an arrowhead marker; then each edge label as `<text>` at its `position` fraction (default 0.5) of the polyline's length. Exactly one `<rect>` per node cell and one `<polyline>` per edge cell (the arrowhead is a `<path>` in `<defs>`). All text goes through `html.escape`. No cell ids appear in the output, so two runs on equal input give identical bytes.
 - `tests/fixtures/dfd_preview/small.json` (hand-written, fixture format): tenant `t` containing network `n` (containing leaves `a`, `b`) and leaf `c`; root actor `u` named `User <admin> & "ops"`; flows `u -> a`, `a -> b` bidirectional, `b -> c`, `u -> c`.
 - `THIRD_PARTY_NOTICES.md` (not `NOTICE`: this repo is Apache-2.0, where a `NOTICE` file carries redistribution obligations of its own): one entry for Pele with the URL, commit `3a2f075`, the three files that contain ported code, and the full MIT text with `Copyright (c) 2026 kepano`. Before writing it, verify the copyright line against upstream: `curl -fsSL https://raw.githubusercontent.com/obsidianmd/pele/3a2f075/LICENSE`. If the fetch fails or the line differs from the header in Global Constraints, stop and report instead of guessing.
 

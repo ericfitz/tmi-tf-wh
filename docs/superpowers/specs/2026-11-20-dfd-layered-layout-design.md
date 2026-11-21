@@ -52,7 +52,7 @@ TMI's nested security boundaries and X6 edge cells.
   array of `{x, y}` (max 1000); `router` is one of `normal|orth|one_side|manhattan|metro|er`;
   `connector` one of `normal|rounded|smooth|jumpover`; label `position` may be a 0-1
   fraction.
-- X6 node `x`/`y` are absolute top-left; the layout works in centres and converts at the end.
+- X6 node `x`/`y` are absolute top-left; the layout works in centers and converts at the end.
 - Boundaries (`tenant`, `container`, `network`) have no ports; leaves have the four fixed
   ports.
 - A close port of Pele code carries Pele's MIT notice (copyright kepano) in each ported
@@ -146,7 +146,7 @@ target width of `sqrt(total_area * 1.6)` but never narrower than the widest part
 Pele `components.ts` `wrapComponents`.
 
 **Step 5, absolute positions (top-down):** add each parent's origin to its children;
-convert centres to top-left.
+convert centers to top-left.
 
 ### Mapping to cells
 
@@ -163,7 +163,8 @@ convert centres to top-left.
   unrelated node fell from 113/414 to 5/414.
 - **Bidirectional flows.** The builder already emits two edge cells. Give each one vertex,
   offset `edgeSep/2` either side of the shared midpoint (perpendicular to the flow
-  direction), and label positions 0.35 and 0.65.
+  direction), and label anchors at 0.35 and 0.65 from the canonical source (each cell's
+  own `position` is 0.35; the reverse cell measures from its own source, see Settled item 3).
 - **Connector/router.** `router: normal` throughout. `connector: smooth` for edges with no
   vertices, `rounded` for edges with vertices.
 - **Labels.** Width estimated as `chars * 7px + 16px` (constant in one place). TB: widen
@@ -230,9 +231,9 @@ overlap, nesting, port and edge tests unchanged. Add:
    cell with no vertices gets one offset vertex at the midpoint of its route at the lifted
    level (between the two lifted children), not the straight leaf-to-leaf midpoint. Label
    positions are spread evenly across 0.35-0.65, measured from the group's canonical
-   source (the source of its first cell), so cells running the opposite way use `1 - p`. Any fan vertex that would land inside a
-   node that is not an ancestor of one of the edge's ends is dropped (the label stagger
-   remains), so the vertex property test holds unconditionally.
+   source (the source of its first cell), so cells running the opposite way use `1 - p`.
+   Any fan vertex that would land inside a node that is not an ancestor of one of the
+   edge's ends is dropped (the label stagger remains), so the vertex property test holds unconditionally.
 4. **The LLM's `rank` and `sibling_order`.** `prompts/dfd_generation_system.txt` already
    asks for both and states a top-to-bottom direction. The layout ignores `rank` (it
    computes ranks) and uses `sibling_order` (then input index) as the "input order" every

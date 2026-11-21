@@ -63,7 +63,7 @@ def label_positions(k: int) -> list[float]:
 def gap_midpoint(
     a: Box, b: Box, source: Box, target: Box, direction: Direction
 ) -> Point:
-    """Middle of the gap between the lifted children `a` and `b`, centerd between the end boxes."""
+    """Middle of the gap between the lifted children `a` and `b`, centered between the end boxes."""
     if direction == "LR":
         lo, hi = ((a.x + a.w, b.x), (b.x + b.w, a.x))[a.x > b.x]
         if hi < lo:  # overlapping on the rank axis: fall back to the centers
