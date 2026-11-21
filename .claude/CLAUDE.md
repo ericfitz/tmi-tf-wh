@@ -14,7 +14,7 @@ uv run pytest tests/                        # all tests
 uv run pytest tests/test_repo_analyzer.py::TestDetectEnvironments::test_finds_single_environment  # one test
 ```
 
-Done gate: `uv run ruff check tmi_tf/ tests/ && uv run ruff format --check tmi_tf/ tests/ && uv run pyright && uv run pytest tests/`
+Done gate: `uv run ruff check tmi_tf/ tests/ scripts/ && uv run ruff format --check tmi_tf/ tests/ scripts/ && uv run pyright && uv run pytest tests/`
 
 ## Deploy (AWS EKS)
 
@@ -53,7 +53,9 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 - **`script_review.py`** — isolated, nonce-delimited LLM script review (60k-char cap), strict response validation, merge of static/LLM/injection hits into phase-3a-shaped threats (`finding_source`, `rule_id`, `digest`)
 - **`jev_shadow.py`** — optional TypeSafe Jev comparison (`JEV_SHADOW=1` + `JEV_API_KEY` + `uv sync --extra jev`); secrets masked before sending; never affects output. Offline eval: `scripts/eval_jev.py` on the frozen corpus `evals/jev/` (never edit it)
 - **`dfd_llm_generator.py`** — separate LLM call producing structured DFD component/flow data
-- **`diagram_builder.py`** — `DFDBuilder` converts that data to AntV X6 v2 cells for TMI diagrams
+- **`diagram_builder.py`** — `DFDBuilder` normalizes components/flows (malformed flows skipped), calls `compound_layout`, and maps boxes/routes to AntV X6 v2 cells for TMI diagrams, with direction-based ports
+- **`layout/`** — layered DFD layout: `layered.py` flat Sugiyama + Brandes-Koepf; `compound.py` nested boundaries, lifted edges, border ports, `LAYOUT_DIRECTION` ("LR" default), `EMIT_BORDER_VERTICES`; `pack.py` disconnected-part packing; `routes.py` vertex/fan/label helpers. Ported from Pele (MIT), see `THIRD_PARTY_NOTICES.md`
+- **`scripts/export_tmi_dfd.py`**, **`scripts/preview_dfd.py`** — anonymized fixture export from TMI diagrams; SVG preview of a layout
 - **`threat_processor.py`** — converts phase 3 findings into TMI threat objects
 - **`tmi_client_wrapper.py`** — wraps the generated client: auth, CRUD for notes/diagrams/threats, HTML sanitization via `nh3`
 - **`auth.py`** — Google PKCE (browser) or TMI client_credentials

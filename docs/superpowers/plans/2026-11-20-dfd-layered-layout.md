@@ -22,7 +22,7 @@
 - One layout direction per diagram: `compound.LAYOUT_DIRECTION`, `"LR"` (default, Eric's decision) or `"TB"`. Callers read it as a module attribute at call time (`from tmi_tf.layout import compound` then `compound.LAYOUT_DIRECTION`), never via `from ... import LAYOUT_DIRECTION` or a default argument, so tests can `monkeypatch.setattr` it.
 - Spacing constants (defaults of `compound.LayoutOptions`): `node_sep=40`, `edge_sep=20`, `rank_sep=60`, `pad=30`, `pad_top=60`, `label_margin=24`, `origin=50`. Label width estimate lives only in `compound.label_width`: `0` for empty text, else `min(len(text) * 7 + 16, 240)`.
 - Not ported from Pele (spec non-goals): `assignTracks`, `spread`, `settle`, `snap`, `alignLabels`, `alignPorts`, `pastLabels`, `emptyRanks`, Pele's `straighten`, label dummy nodes (`Kind.Label`, the `step = 2` path), `groups`/`orderOnly`/`key`/`hint`/`pin`/`span`, `tailDx`/`headDx` offsets, `routeCrossings`, the `flat` pre-pass, snapshots/refine pass, per-group directions, `BT`/`RL`.
-- Pele reference sources (read, port, never paste into the repo verbatim as TypeScript): `/Users/efitz/Projects/tmi-tf-wh/.local/pele/{layered.ts,compound.ts,components.ts,class_render.ts}`, commit `3a2f075`. `.local/` is git-ignored, so use this absolute path even from a worktree.
+- Pele reference sources (read, port, never paste into the repo verbatim as TypeScript): `<repo root>/.local/pele/{layered.ts,compound.ts,components.ts,class_render.ts}`, commit `3a2f075`. `.local/` is git-ignored, so use the main checkout's path even from a worktree.
 - Every file that ports Pele code (`layered.py`, `compound.py`, `pack.py`) starts with this header, `<file>` replaced by the Pele source file:
 
 ```python
