@@ -897,6 +897,23 @@ class TestRunGaps:
             "(HTTP 429 rate_limit_error); DFD not generated (HTTP 429 rate_limit_error)"
         )
 
+    def test_gapped_run_logs_a_warning_not_a_clean_finish(self, tmp_path, caplog):
+        analysis = _mock_analysis(gaps=ThreatGaps(3, failed=2, hints=("x",)))
+        with caplog.at_level("INFO", logger="tmi_tf.analyzer"):
+            self._run(tmp_path, analyses=[analysis])
+        msgs = [(r.levelname, r.getMessage()) for r in caplog.records]
+        assert (
+            "WARNING",
+            "Analysis completed with gaps: 2 of 3 threats not analyzed (x)",
+        ) in msgs
+        assert not any("Analysis complete!" in m for _, m in msgs)
+
+    def test_clean_run_still_logs_complete(self, tmp_path, caplog):
+        with caplog.at_level("INFO", logger="tmi_tf.analyzer"):
+            self._run(tmp_path)
+        assert any("Analysis complete!" in r.getMessage() for r in caplog.records)
+        assert not any("with gaps" in r.getMessage() for r in caplog.records)
+
     def test_dfd_refusal_is_a_gap(self, tmp_path):
         from tmi_tf.llm_analyzer import LLMRefusalError
         from tmi_tf.providers import LLMResponse

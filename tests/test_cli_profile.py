@@ -34,7 +34,9 @@ def test_profile_passed_to_run_analysis():
     with (
         patch("tmi_tf.cli.get_config", return_value=_cfg()),
         patch("tmi_tf.cli.TMIClient"),
-        patch("tmi_tf.cli.run_analysis", return_value=MagicMock(success=True)) as ra,
+        patch(
+            "tmi_tf.cli.run_analysis", return_value=MagicMock(success=True, gaps=[])
+        ) as ra,
     ):
         CliRunner().invoke(cli, ["analyze", "tm", "--profile", "other", "-e", "x"])
     assert ra.call_args.kwargs["profile"].name == "other"
@@ -44,7 +46,9 @@ def test_default_profile_used_without_flag():
     with (
         patch("tmi_tf.cli.get_config", return_value=_cfg()),
         patch("tmi_tf.cli.TMIClient"),
-        patch("tmi_tf.cli.run_analysis", return_value=MagicMock(success=True)) as ra,
+        patch(
+            "tmi_tf.cli.run_analysis", return_value=MagicMock(success=True, gaps=[])
+        ) as ra,
     ):
         CliRunner().invoke(cli, ["analyze", "tm", "-e", "x"])
     assert ra.call_args.kwargs["profile"].name == "test"
@@ -55,3 +59,30 @@ def test_config_info_lists_profiles():
         r = CliRunner().invoke(cli, ["config-info"])
     assert "LLM Profile (default): test" in r.output
     assert "LLM profile other: usable (oci/m)" in r.output
+
+
+def test_cli_prints_run_gaps():
+    result = MagicMock(
+        success=True, gaps=["2 of 3 threats not analyzed", "DFD not generated"]
+    )
+    with (
+        patch("tmi_tf.cli.get_config", return_value=_cfg()),
+        patch("tmi_tf.cli.TMIClient"),
+        patch("tmi_tf.cli.run_analysis", return_value=result),
+    ):
+        r = CliRunner().invoke(cli, ["analyze", "tm", "-e", "x"])
+    assert r.exit_code == 0
+    assert (
+        "Analysis completed with gaps: 2 of 3 threats not analyzed; DFD not generated"
+        in r.output
+    )
+
+
+def test_cli_prints_nothing_about_gaps_on_a_clean_run():
+    with (
+        patch("tmi_tf.cli.get_config", return_value=_cfg()),
+        patch("tmi_tf.cli.TMIClient"),
+        patch("tmi_tf.cli.run_analysis", return_value=MagicMock(success=True, gaps=[])),
+    ):
+        r = CliRunner().invoke(cli, ["analyze", "tm", "-e", "x"])
+    assert "with gaps" not in r.output

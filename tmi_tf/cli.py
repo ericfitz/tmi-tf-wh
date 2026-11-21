@@ -179,6 +179,11 @@ def analyze(
                 logger.error(err)
             sys.exit(1)
 
+        if result.gaps:
+            click.echo(
+                "Analysis completed with gaps: " + "; ".join(result.gaps), err=True
+            )
+
         # Save to files if requested
         if output:
             from pathlib import Path as _Path

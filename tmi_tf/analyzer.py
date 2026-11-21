@@ -895,7 +895,12 @@ def run_analysis(
                 else "Analysis complete",
             )
         logger.info("\n" + "=" * 80)
-        logger.info("Analysis %s", "failed" if all_failed else "complete!")
+        if all_failed:
+            logger.info("Analysis failed")
+        elif gaps:
+            logger.warning("Analysis completed with gaps: %s", "; ".join(gaps))
+        else:
+            logger.info("Analysis complete!")
         logger.info("=" * 80)
 
         return AnalysisResult(
