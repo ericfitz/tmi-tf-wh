@@ -229,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     listing = args.threat_model_id and not args.diagram_id
     try:
+        if args.cells_file and args.diagram_id:
+            raise ExportError("--diagram-id cannot be used with --cells-file")
         out = Path(args.out) if args.out else None
         if not listing:
             if out is None:

@@ -221,6 +221,16 @@ def test_main_requires_out(tmp_path, capsys):
     assert "--out" in capsys.readouterr().err
 
 
+def test_main_diagram_id_with_cells_file_is_usage_error(tmp_path, capsys):
+    cells_path = tmp_path / "cells.json"
+    cells_path.write_text(json.dumps(CELLS), encoding="utf-8")
+    out_path = tmp_path / "out.json"
+    args = ["--cells-file", str(cells_path), "--diagram-id", "d-1", "--out", str(out_path)]
+    assert export_tmi_dfd.main(args) == 2
+    assert "--diagram-id" in capsys.readouterr().err
+    assert not out_path.exists()
+
+
 def _fake_tmi(monkeypatch):
     calls = []
 
