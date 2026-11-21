@@ -586,6 +586,13 @@ isolated to the task named.
    reached)`) when less than 60 s is left, so that threats are still written and the
    job does not end as `failed: Job timed out`. Alternative: leave the DFD call at
    1200 s and accept that outcome. (Plan Tasks 4 and 6.)
+   **Amended 2026-11-21 (human decision, Eric, Option B):** the pre-flight scan found
+   that a timeout computed once is reused by later attempts (after a 429 wait, the
+   empty-response retry, a second timeout attempt) and can run past `JOB_TIMEOUT`.
+   `_dfd_timeout(budget)` is therefore evaluated per attempt, inside the retried
+   callable; an attempt for which it returns `None` is not made and the DFD fails with
+   `deadline reached`. Residual case accepted: on a streamed call the value is an httpx
+   per-read timeout, so a stream that keeps producing chunks is not wall-clock bounded.
 
 Assumptions to confirm in the first production run after deploy:
 
