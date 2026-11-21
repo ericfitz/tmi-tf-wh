@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from html import escape as html_escape
 from typing import Any
 
+from tmi_tf.error_hints import dfd_gap_text
 from tmi_tf.llm_analyzer import TerraformAnalysis
 from tmi_tf.tf_filter import Registry, _attr_tree, _select, load_registry
 
@@ -364,6 +365,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         threat_model_id: str,
         analyses: list[TerraformAnalysis],
         dfd_refused: bool = False,
+        dfd_error: str = "",
     ) -> str:
         """Generate Analysis Job Information section combining all metadata."""
         # UTC, explicitly labelled: these reports are read by people in other
@@ -408,6 +410,15 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
             refusals.append("DFD generation")
         if refusals:
             parts.append(f"**Model refusals (content_filter)**: {'; '.join(refusals)}")
+        gap_items = [
+            f"{a.repo_name}: {a.threat_gaps.summary()}"
+            for a in successful
+            if a.threat_gaps.summary()
+        ]
+        if dfd_error and not dfd_refused:
+            gap_items.append(dfd_gap_text(dfd_error))
+        if gap_items:
+            parts.append(f"**Analysis gaps**: {'; '.join(gap_items)}")
 
         # Per-repository metrics table
         if successful:
@@ -501,10 +512,12 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         environment_name: str | None = None,
         inventory_note_name: str | None = None,
         dfd_refused: bool = False,
+        dfd_error: str = "",
     ) -> str:
         """Analysis note: architecture narrative, diagram, pointer to the
         inventory note, security findings, consolidated findings, job info.
-        dfd_refused lists the DFD call under model refusals."""
+        dfd_refused lists the DFD call under model refusals; dfd_error (any
+        other DFD failure) is listed under analysis gaps."""
         sections = []
         title = "Terraform Infrastructure Analysis"
         if environment_name:
@@ -538,7 +551,9 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
 
         sections.append(self._generate_consolidated_findings(analyses))
         sections.append(
-            self._generate_analysis_job_info(threat_model_id, analyses, dfd_refused)
+            self._generate_analysis_job_info(
+                threat_model_id, analyses, dfd_refused, dfd_error
+            )
         )
         return "\n\n---\n\n".join(sections)
 

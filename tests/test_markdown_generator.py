@@ -2,7 +2,7 @@
 
 from typing import ClassVar
 
-from tmi_tf.llm_analyzer import TerraformAnalysis
+from tmi_tf.llm_analyzer import TerraformAnalysis, ThreatGaps
 from tmi_tf.markdown_generator import (
     MarkdownGenerator,
     _config_cell,
@@ -920,3 +920,44 @@ class TestNoteSize:
         assert len(report) < self.TMI_NOTE_CAP // 2
         assert "t3.micro" not in report
         assert "`root_block_device.encrypted` = true" in report
+
+
+class TestAnalysisGapsLine:
+    def test_job_info_lists_analysis_gaps(self):
+        gen = MarkdownGenerator(_fake_registry())
+        a = TerraformAnalysis(
+            "repo",
+            "u",
+            threat_gaps=ThreatGaps(28, failed=25, hints=("HTTP 429 rate_limit_error",)),
+        )
+        info = gen._generate_analysis_job_info(
+            "tm", [a], dfd_error="HTTP 429 rate_limit_error"
+        )
+        assert (
+            "**Analysis gaps**: repo: 25 of 28 threats not analyzed "
+            "(HTTP 429 rate_limit_error); DFD not generated (HTTP 429 rate_limit_error)"
+            in info
+        )
+
+    def test_job_info_has_no_gaps_line_for_a_clean_run(self):
+        gen = MarkdownGenerator(_fake_registry())
+        info = gen._generate_analysis_job_info("tm", [TerraformAnalysis("repo", "u")])
+        assert "Analysis gaps" not in info
+
+    def test_refused_dfd_is_not_repeated_as_a_gap(self):
+        gen = MarkdownGenerator(_fake_registry())
+        info = gen._generate_analysis_job_info(
+            "tm",
+            [TerraformAnalysis("repo", "u")],
+            dfd_refused=True,
+            dfd_error="refused (content_filter)",
+        )
+        assert "Analysis gaps" not in info
+        assert "DFD generation" in info
+
+    def test_report_passes_dfd_error_through(self):
+        gen = MarkdownGenerator(_fake_registry())
+        report = gen.generate_analysis_report(
+            "tm", "id", [TerraformAnalysis("repo", "u")], dfd_error="deadline reached"
+        )
+        assert "DFD not generated (deadline reached)" in report

@@ -70,3 +70,16 @@ def step_row(
         hint = error if isinstance(error, str) else error_hint(error)
         row = f"{step}: failed: {hint}"
     return f"{row} ({detail})" if detail else row
+
+
+DFD_REFUSED = "refused (content_filter)"
+
+
+def dfd_gap_text(dfd_error: str) -> str:
+    """Run-level gap text for a DFD that was not generated.
+
+    ``dfd_error`` is the step's failure reason; a content-filter refusal reads
+    ``refused``. Shared by the run result and the analysis report.
+    """
+    reason = "refused" if dfd_error == DFD_REFUSED else dfd_error
+    return f"DFD not generated ({reason})"

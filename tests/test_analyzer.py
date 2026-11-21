@@ -312,7 +312,7 @@ class TestDFDRefusal:
 
         tree = _tree(tmp_path, ["a"])
         tmi = _tmi_with_repo()
-        analysis = MagicMock(success=True, refusals="")
+        analysis = MagicMock(success=True, refusals="", threat_gaps=ThreatGaps())
         analysis.repo_name = "r"
         analysis.repo_url = "https://github.com/o/r"
         analysis.inventory = {"components": [], "services": []}
@@ -406,7 +406,7 @@ class TestRunAnalysisDeadline:
     def _run(self, tmp_path, deadline):
         tree = _tree(tmp_path, ["a"])
         tmi = _tmi_with_repo()
-        analysis = MagicMock(success=True, refusals="")
+        analysis = MagicMock(success=True, refusals="", threat_gaps=ThreatGaps())
         analysis.repo_name = "r"
         analysis.repo_url = "https://github.com/o/r"
         analysis.inventory = {"components": [], "services": []}
@@ -797,3 +797,174 @@ class TestThreatsNotCreatedText:
     def test_without_counts_and_without_hints(self):
         assert threats_not_created_text(["a"]) == "threats not created (a)"
         assert threats_not_created_text([]) == "threats not created (unknown error)"
+
+
+def _mock_analysis(name="r", url="https://github.com/o/r", gaps=None):
+    analysis = MagicMock(success=True, refusals="", threat_gaps=gaps or ThreatGaps())
+    analysis.repo_name = name
+    analysis.repo_url = url
+    analysis.inventory = {"components": [], "services": []}
+    analysis.infrastructure = {}
+    analysis.security_findings = []
+    return analysis
+
+
+class TestRunGaps:
+    def _run(
+        self,
+        tmp_path,
+        *,
+        analyses=None,
+        skip_threats=True,
+        deadline=None,
+        setup=None,
+        all_failed=False,
+    ):
+        tree = _tree(tmp_path, ["a"])
+        analyses = analyses or [_mock_analysis()]
+        if all_failed:
+            bad = MagicMock(success=False, error_message="boom")
+            bad.repo_name = "r"
+            bad.repo_url = "https://github.com/o/r"
+            analyses = [bad]
+        tmi = _tmi_with_repo()
+        if len(analyses) > 1:
+            repos = []
+            for a in analyses:
+                repo = MagicMock(id=a.repo_name, uri=a.repo_url)
+                repo.name = a.repo_name
+                repos.append(repo)
+            tmi.get_threat_model_repositories.return_value = repos
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        kwargs = {} if deadline is None else {"deadline": deadline}
+        with (
+            clone,
+            gh,
+            prov,
+            llm_cls as llm,
+            md as md_cls,
+            val,
+            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
+            patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
+            patch("tmi_tf.analyzer.DFDBuilder") as builder_cls,
+            patch("tmi_tf.analyzer.ThreatProcessor") as tp_cls,
+        ):
+            llm.return_value.analyze_repository = MagicMock(side_effect=analyses)
+            dfd_cls.return_value.generate_structured_components.return_value = {
+                "components": [],
+                "flows": [],
+            }
+            dfd_cls.return_value.last_error = ""
+            builder_cls.return_value.build_cells.return_value = [{}] * 12
+            if setup:
+                setup(md=md_cls, dfd=dfd_cls, tp=tp_cls, analysis=analyses[0])
+            result = run_analysis(
+                Config(), "tm1", tmi, PROFILE, skip_threats=skip_threats, **kwargs
+            )
+        return result, tmi, md_cls
+
+    @staticmethod
+    def _dfd_returns_none(reason):
+        def setup(dfd, **_):
+            dfd.return_value.generate_structured_components.return_value = None
+            dfd.return_value.last_error = reason
+
+        return setup
+
+    def test_clean_run_reports_no_gaps(self, tmp_path):
+        result, tmi, _ = self._run(tmp_path)
+        assert result.gaps == []
+        assert tmi.update_status_note.call_args.args[1] == "Analysis complete"
+
+    def test_threat_and_dfd_gaps_reach_the_result_and_the_final_row(self, tmp_path):
+        analysis = _mock_analysis(
+            gaps=ThreatGaps(28, failed=25, hints=("HTTP 429 rate_limit_error",))
+        )
+        result, tmi, _ = self._run(
+            tmp_path,
+            analyses=[analysis],
+            setup=self._dfd_returns_none("HTTP 429 rate_limit_error"),
+        )
+        assert result.success is True
+        assert result.gaps == [
+            "25 of 28 threats not analyzed (HTTP 429 rate_limit_error)",
+            "DFD not generated (HTTP 429 rate_limit_error)",
+        ]
+        assert tmi.update_status_note.call_args.args[1] == (
+            "Analysis completed with gaps: 25 of 28 threats not analyzed "
+            "(HTTP 429 rate_limit_error); DFD not generated (HTTP 429 rate_limit_error)"
+        )
+
+    def test_dfd_refusal_is_a_gap(self, tmp_path):
+        from tmi_tf.llm_analyzer import LLMRefusalError
+        from tmi_tf.providers import LLMResponse
+
+        refused = LLMResponse(
+            text=None,
+            input_tokens=1,
+            output_tokens=0,
+            cost=0.0,
+            finish_reason="content_filter",
+        )
+
+        def setup(dfd, **_):
+            dfd.return_value.generate_structured_components.side_effect = (
+                LLMRefusalError("DFD generation: model refused", refused)
+            )
+
+        result, _, _ = self._run(tmp_path, setup=setup)
+        assert result.gaps == ["DFD not generated (refused)"]
+
+    def test_dfd_skipped_at_the_deadline_is_a_gap(self, tmp_path):
+        result, _, _ = self._run(tmp_path, deadline=time.monotonic() + 1)
+        assert result.gaps == ["DFD not generated (deadline reached)"]
+
+    def test_threat_creation_shortfall_is_a_gap(self, tmp_path):
+        setup = TestStepRows()._threat_setup(["HTTP 500 internal_server_error"])
+        result, _, _ = self._run(tmp_path, skip_threats=False, setup=setup)
+        assert result.gaps == [
+            "1 of 3 threats not created in TMI (HTTP 500 internal_server_error)"
+        ]
+
+    def test_repo_name_prefix_only_with_several_analyses(self, tmp_path):
+        a1 = _mock_analysis("r1", "https://github.com/o/r1")
+        a2 = _mock_analysis(
+            "r2",
+            "https://github.com/o/r2",
+            gaps=ThreatGaps(2, failed=1, hints=("RuntimeError",)),
+        )
+        result, _, _ = self._run(tmp_path, analyses=[a1, a2])
+        assert result.gaps == ["r2: 1 of 2 threats not analyzed (RuntimeError)"]
+
+    def test_dfd_failure_rewrites_the_analysis_note(self, tmp_path):
+        result, _, md_cls = self._run(
+            tmp_path, setup=self._dfd_returns_none("HTTP 429 rate_limit_error")
+        )
+        calls = md_cls.return_value.generate_analysis_report.call_args_list
+        assert len(calls) == 2
+        assert calls[-1].kwargs["dfd_error"] == "HTTP 429 rate_limit_error"
+        assert not calls[-1].kwargs.get("dfd_refused", False)
+        assert result.gaps == ["DFD not generated (HTTP 429 rate_limit_error)"]
+
+    def test_dfd_refusal_rewrite_passes_refused_only(self, tmp_path):
+        from tmi_tf.llm_analyzer import LLMRefusalError
+        from tmi_tf.providers import LLMResponse
+
+        refused = LLMResponse(None, 1, 0, 0.0, finish_reason="content_filter")
+
+        def setup(dfd, **_):
+            dfd.return_value.generate_structured_components.side_effect = (
+                LLMRefusalError("DFD generation: model refused", refused)
+            )
+
+        _, _, md_cls = self._run(tmp_path, setup=setup)
+        last = md_cls.return_value.generate_analysis_report.call_args_list[-1]
+        assert last.kwargs["dfd_refused"] is True
+        assert not last.kwargs.get("dfd_error")
+
+    def test_all_failed_path_is_unchanged(self, tmp_path):
+        result, tmi, _ = self._run(tmp_path, all_failed=True)
+        assert result.success is False and result.gaps == []
+        assert tmi.update_status_note.call_args.args[1].startswith("Analysis failed: ")

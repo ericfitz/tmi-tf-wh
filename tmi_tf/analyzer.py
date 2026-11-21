@@ -19,7 +19,7 @@ from tmi_tf.artifact_metadata import (
 from tmi_tf.config import Config
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
-from tmi_tf.error_hints import error_hint, step_row
+from tmi_tf.error_hints import DFD_REFUSED, dfd_gap_text, error_hint, step_row
 from tmi_tf.github_client import GitHubClient
 from tmi_tf.jev_shadow import jev_shadow_from_env
 from tmi_tf.llm_analyzer import LLMAnalyzer, LLMRefusalError, TerraformAnalysis
@@ -108,6 +108,9 @@ class AnalysisResult:
     errors: list[str] = field(default_factory=list)
     inventory_content: str = ""
     analysis_content: str = ""
+    # Run-level shortfalls on a successful run (spec section 6.4); empty when
+    # nothing is missing or every analysis failed.
+    gaps: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -603,6 +606,30 @@ def run_analysis(
             logger.warning(f"Failed to set analysis note metadata: {e}")
         tmi_client.update_status_note(threat_model_id, step_row(step))
 
+        def rewrite_analysis_note(*, dfd_refused: bool, dfd_error: str) -> None:
+            nonlocal analysis_content
+            try:
+                analysis_content = markdown_gen.generate_analysis_report(
+                    threat_model_name=threat_model.name,
+                    threat_model_id=threat_model_id,
+                    analyses=analyses,
+                    environment_name=selected_env_name,
+                    inventory_note_name=inventory_note_name,
+                    dfd_refused=dfd_refused,
+                    dfd_error=dfd_error,
+                )
+                tmi_client.create_or_update_note(
+                    threat_model_id=threat_model_id,
+                    name=analysis_note_name,
+                    content=analysis_content,
+                    description=f"Terraform analysis for {repo_word}: {repo_list}",
+                )
+            except Exception as note_err:
+                logger.warning(
+                    "Failed to record DFD failure in analysis note: %s",
+                    type(note_err).__name__,
+                )
+
         # Generate and create data flow diagram
         # dfd_error is "" only when the DFD was created or skip_diagram is set.
         dfd_error = ""
@@ -708,36 +735,23 @@ def run_analysis(
             except _DfdSkipped:
                 dfd_error = "deadline reached"
             except LLMRefusalError as e:
-                dfd_error = "refused (content_filter)"
-                # The analysis note is already written; rewrite it so its
-                # job info lists the refusal (#89).
+                dfd_error = DFD_REFUSED
                 logger.error(f"Diagram not generated: {e}")
                 tmi_client.update_status_note(
                     threat_model_id, "Model refusals (content_filter): DFD generation"
                 )
-                analysis_content = markdown_gen.generate_analysis_report(
-                    threat_model_name=threat_model.name,
-                    threat_model_id=threat_model_id,
-                    analyses=analyses,
-                    environment_name=selected_env_name,
-                    inventory_note_name=inventory_note_name,
-                    dfd_refused=True,
-                )
-                try:
-                    tmi_client.create_or_update_note(
-                        threat_model_id=threat_model_id,
-                        name=analysis_note_name,
-                        content=analysis_content,
-                        description=f"Terraform analysis for {repo_word}: {repo_list}",
-                    )
-                except Exception as note_err:
-                    logger.warning(
-                        f"Failed to record DFD refusal in analysis note: {note_err}"
-                    )
             except Exception as e:
                 logger.error(f"Failed to generate diagram: {e}")
                 logger.info("Continuing without diagram...")
                 dfd_error = error_hint(e)
+
+            if dfd_error:
+                # The analysis note is already written; rewrite it so its job
+                # info lists the refusal (#89) or the DFD failure.
+                rewrite_analysis_note(
+                    dfd_refused=dfd_error == DFD_REFUSED,
+                    dfd_error="" if dfd_error == DFD_REFUSED else dfd_error,
+                )
 
             tmi_client.update_status_note(
                 threat_model_id,
@@ -834,7 +848,7 @@ def run_analysis(
                 logger.error(f"Failed to create threats: {e}")
                 logger.info("Continuing without threat creation...")
                 creation_error = error_hint(e)
-                threats_not_created = threats_not_created_text(  # noqa: F841 (Task 7)
+                threats_not_created = threats_not_created_text(
                     [creation_error], phrase=_GAP_PHRASE
                 )
 
@@ -851,6 +865,7 @@ def run_analysis(
 
         step = "Finalization"
         all_failed = not any(a.success for a in analyses)
+        gaps: list[str] = []
         if all_failed:
             # #53: every LLM analysis failed (e.g. phase 1 unparseable twice);
             # surface it as a failed job, not "Analysis complete".
@@ -859,7 +874,26 @@ def run_analysis(
                 threat_model_id, "Analysis failed: " + "; ".join(errors)
             )
         else:
-            tmi_client.update_status_note(threat_model_id, "Analysis complete")
+            # Spec section 6.4 order: analysis gaps, DFD, threat creation.
+            successful = [a for a in analyses if a.success]
+            prefix = len(analyses) > 1
+            gaps = [
+                f"{a.repo_name}: {a.threat_gaps.summary()}"
+                if prefix
+                else a.threat_gaps.summary()
+                for a in successful
+                if a.threat_gaps.summary()
+            ]
+            if dfd_error:
+                gaps.append(dfd_gap_text(dfd_error))
+            if threats_not_created:
+                gaps.append(threats_not_created)
+            tmi_client.update_status_note(
+                threat_model_id,
+                "Analysis completed with gaps: " + "; ".join(gaps)
+                if gaps
+                else "Analysis complete",
+            )
         logger.info("\n" + "=" * 80)
         logger.info("Analysis %s", "failed" if all_failed else "complete!")
         logger.info("=" * 80)
@@ -870,6 +904,7 @@ def run_analysis(
             errors=errors,
             inventory_content=inventory_content,
             analysis_content=analysis_content,
+            gaps=gaps,
         )
 
     except Exception as e:
