@@ -396,14 +396,21 @@ class DFDBuilder:
             ids = sorted((flow["source_id"], flow["target_id"]))
             groups.setdefault((ids[0], ids[1]), []).append(pos)
         slot: dict[int, tuple[int, int]] = {}
+        group_first: dict[int, int] = {}
         for members in groups.values():
             for i, pos in enumerate(members):
                 slot[pos] = (i, len(members))
+                group_first[pos] = members[0]
 
         for pos, (index, source, target, label, sides, forward) in enumerate(specs):
             i, k = slot[pos]
             vertices = self._edge_vertices(index, source, target, sides, forward, i, k)
-            position = routes.label_positions(k)[i] if k > 1 else None
+            position = None
+            if k > 1:
+                position = routes.label_positions(k)[i]
+                canonical_source = specs[group_first[pos]][1]
+                if source is not canonical_source and source is not target:
+                    position = round(1 - position, 4)
             edge = self._create_edge_cell(
                 source,
                 target,
@@ -509,7 +516,7 @@ class DFDBuilder:
     def _cross_delta(
         source: dict[str, Any], target: dict[str, Any], direction: str
     ) -> float:
-        """Target centre minus source centre on the cross axis."""
+        """Target center minus source center on the cross axis."""
         if direction == "TB":
             return (target["x"] + target["width"] / 2) - (
                 source["x"] + source["width"] / 2

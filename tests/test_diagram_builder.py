@@ -589,8 +589,19 @@ class TestEdgeGeometry:
         fwd, rev = build_edges([("c1", "c2", True)])
         (v1,), (v2,) = fwd["vertices"], rev["vertices"]
         assert v1["x"] == v2["x"] and v2["y"] - v1["y"] == 20
-        assert [e["labels"][0]["position"] for e in (fwd, rev)] == [0.35, 0.65]
+        assert [e["labels"][0]["position"] for e in (fwd, rev)] == [0.35, 0.35]
         assert fwd["connector"] == rev["connector"] == {"name": "rounded"}
+
+    def test_bidirectional_halves_get_different_label_points(self):
+        fwd, rev = build_edges([("c1", "c2", True)])
+        # rev runs c2 -> c1, so its position is measured from c2; convert to c1.
+        absolute_fwd = fwd["labels"][0]["position"]
+        absolute_rev = 1 - rev["labels"][0]["position"]
+        assert absolute_fwd != absolute_rev
+
+    def test_opposite_direction_cells_use_complement_position(self):
+        edges = build_edges([("c1", "c2"), ("c2", "c1")])
+        assert [e["labels"][0]["position"] for e in edges] == [0.35, 0.35]
 
     def test_three_cells_on_one_pair_share_a_fan(self):
         edges = build_edges([("c1", "c2"), ("c2", "c1"), ("c1", "c2")])

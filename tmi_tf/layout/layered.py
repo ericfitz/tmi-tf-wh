@@ -49,8 +49,8 @@ class LNode:
     w: float  # cross-axis extent
     h: float  # rank-axis extent
     kind: Kind = Kind.NODE
-    x: float = 0.0  # output: centre on the cross axis
-    y: float = 0.0  # output: centre on the rank axis
+    x: float = 0.0  # output: center on the cross axis
+    y: float = 0.0  # output: center on the rank axis
     rank: int = 0  # output
 
 
@@ -569,7 +569,7 @@ def _align_variant(
 
 
 def position(layers: Layers, opt: LayeredOptions) -> list[float]:
-    """Brandes-Koepf coordinates: cross-axis centre per vertex."""
+    """Brandes-Koepf coordinates: cross-axis center per vertex."""
     net = _Net(layers)
     total = net.total
     if total == 0:

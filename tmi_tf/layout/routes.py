@@ -13,7 +13,7 @@ def _round(v: float) -> int:
 
 
 def side_point(box: Box, side: Side | None) -> Point:
-    """Middle of the given side of `box`; the centre when `side` is None."""
+    """Middle of the given side of `box`; the center when `side` is None."""
     cx = _round(box.x + box.w / 2)
     cy = _round(box.y + box.h / 2)
     if side == "top":
@@ -63,10 +63,10 @@ def label_positions(k: int) -> list[float]:
 def gap_midpoint(
     a: Box, b: Box, source: Box, target: Box, direction: Direction
 ) -> Point:
-    """Middle of the gap between the lifted children `a` and `b`, centred between the end boxes."""
+    """Middle of the gap between the lifted children `a` and `b`, centerd between the end boxes."""
     if direction == "LR":
         lo, hi = ((a.x + a.w, b.x), (b.x + b.w, a.x))[a.x > b.x]
-        if hi < lo:  # overlapping on the rank axis: fall back to the centres
+        if hi < lo:  # overlapping on the rank axis: fall back to the centers
             lo = hi = (a.x + a.w / 2 + b.x + b.w / 2) / 2
         rank = (lo + hi) / 2
         cross = (source.y + source.h / 2 + target.y + target.h / 2) / 2
