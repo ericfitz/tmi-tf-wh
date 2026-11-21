@@ -1,17 +1,24 @@
 """Tests for tmi_tf.analyzer module."""
 
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+from llm_errors import FakeClock
+
 from tmi_tf.analyzer import (
     AnalysisResult,
     FanoutTarget,
+    _dfd_timeout,
+    _retry_budgets,
     resolve_fanout_targets,
     run_analysis,
 )
 from tmi_tf.config import Config
 from tmi_tf.llm_profiles import LLMProfile
+from tmi_tf.retry import RetryBudget
 
 PROFILE = LLMProfile("t", "oci", "m", "oci")
 
@@ -346,3 +353,98 @@ class TestDFDRefusal:
             if c.kwargs["name"].startswith("Terraform Analysis")
         ]
         assert analysis_writes[-1] == "REFUSED"
+
+
+class TestRetryBudgets:
+    def test_no_deadline_means_no_budgets(self):
+        assert _retry_budgets(None, 0.0) == (None, None)
+
+    def test_default_job_timeout(self):
+        analysis, dfd = _retry_budgets(3600.0, 0.0)
+        assert analysis is not None and dfd is not None
+        assert (analysis.deadline, dfd.deadline) == (3000.0, 3480.0)
+
+    def test_small_job_timeout_keeps_a_positive_window(self):
+        analysis, dfd = _retry_budgets(10.0, 0.0)
+        assert analysis is not None and dfd is not None
+        assert (analysis.deadline, dfd.deadline) == (8.0, 9.5)
+
+    def test_deadline_already_passed(self):
+        analysis, dfd = _retry_budgets(5.0, 9.0)
+        assert analysis is not None and dfd is not None
+        assert analysis.deadline == dfd.deadline == 5.0
+
+
+class TestDfdTimeout:
+    def test_no_budget_keeps_the_full_timeout(self):
+        assert _dfd_timeout(None) == 1200.0
+
+    @pytest.mark.parametrize(
+        ("remaining", "expected"),
+        [
+            (5000.0, 1200.0),
+            (400.0, 400.0),
+            (60.0, 60.0),
+            (59.9, None),
+            (0.0, None),
+            (-30.0, None),
+        ],
+    )
+    def test_timeout_is_capped_and_a_short_window_skips(self, remaining, expected):
+        clock = FakeClock()
+        assert _dfd_timeout(RetryBudget(remaining, clock)) == expected
+
+    def test_exhausted_budget_skips(self):
+        budget = RetryBudget(5000.0, FakeClock())
+        budget.exhausted = True
+        assert _dfd_timeout(budget) is None
+
+
+class TestRunAnalysisDeadline:
+    def _run(self, tmp_path, deadline):
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+        analysis = MagicMock(success=True, refusals="")
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        analysis.inventory = {"components": [], "services": []}
+        analysis.infrastructure = {}
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        with (
+            clone,
+            gh,
+            prov,
+            llm_cls as llm,
+            md,
+            val,
+            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
+            patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
+        ):
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            dfd_cls.return_value.generate_structured_components.return_value = None
+            kwargs = {} if deadline is None else {"deadline": deadline}
+            run_analysis(Config(), "tm1", tmi, PROFILE, skip_threats=True, **kwargs)
+        return tmi, llm, dfd_cls
+
+    def test_dfd_gets_a_bounded_timeout_and_a_per_attempt_timeout_fn(self, tmp_path):
+        _, _, dfd_cls = self._run(tmp_path, time.monotonic() + 3600)
+        gen = dfd_cls.return_value.generate_structured_components
+        kw = gen.call_args.kwargs
+        assert 60 <= kw["timeout"] <= 1200
+        fn = kw["timeout_fn"]
+        assert fn is not None and 60 <= fn() <= 1200
+        assert isinstance(dfd_cls.call_args.kwargs["retry_budget"], RetryBudget)
+
+    def test_short_dfd_window_skips_the_dfd(self, tmp_path):
+        tmi, _, dfd_cls = self._run(tmp_path, time.monotonic() + 1)
+        dfd_cls.return_value.generate_structured_components.assert_not_called()
+        tmi.create_or_update_diagram.assert_not_called()
+
+    def test_analyzer_gets_a_retry_budget_only_with_a_deadline(self, tmp_path):
+        _, llm, _ = self._run(tmp_path, time.monotonic() + 3600)
+        assert isinstance(llm.call_args.kwargs["retry_budget"], RetryBudget)
+        (tmp_path / "second").mkdir()
+        _, llm, _ = self._run(tmp_path / "second", None)
+        assert llm.call_args.kwargs["retry_budget"] is None

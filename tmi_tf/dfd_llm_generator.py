@@ -8,12 +8,14 @@ from Terraform analysis structured JSON.
 import json
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.json_extract import extract_json_object
 from tmi_tf.llm_analyzer import LLMRefusalError, call_llm_checked
 from tmi_tf.providers import LLMProvider, LLMResponse
+from tmi_tf.retry import RetryBudget
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +23,23 @@ logger = logging.getLogger(__name__)
 class DFDLLMGenerator:
     """Generates structured DFD data using LLM."""
 
-    def __init__(self, llm_provider: LLMProvider):
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        retry_budget: RetryBudget | None = None,
+        on_wait: Callable[[str], None] | None = None,
+    ):
         """
         Initialize the DFD LLM generator.
 
         Args:
             llm_provider: LLMProvider instance to use for completions.
+            retry_budget: Optional job-deadline budget for retries.
+            on_wait: Optional callback receiving each retry wait row.
         """
         self.llm_provider = llm_provider
+        self.retry_budget = retry_budget
+        self.on_wait = on_wait
         self.provider = llm_provider.provider
         self.model = llm_provider.model
         self.input_tokens = 0
@@ -56,6 +67,8 @@ class DFDLLMGenerator:
         self,
         inventory: dict[str, Any],
         infrastructure: dict[str, Any],
+        timeout: float = 1200.0,
+        timeout_fn: Callable[[], float | None] | None = None,
     ) -> dict[str, list[dict[str, Any]]] | None:
         """
         Generate structured component and flow data from analysis JSON.
@@ -63,6 +76,9 @@ class DFDLLMGenerator:
         Args:
             inventory: Phase 1 inventory JSON (components, services)
             infrastructure: Phase 2 infrastructure JSON (relationships, flows, boundaries)
+            timeout: Per-attempt request timeout in seconds
+            timeout_fn: If given, asked for each attempt's timeout instead
+                (None means the job deadline passed; the call fails)
 
         Returns:
             Dictionary with "components" and "flows" keys, or None on error
@@ -86,7 +102,10 @@ class DFDLLMGenerator:
                     user_prompt,
                     "DFD generation",
                     max_tokens=64000,
-                    timeout=1200.0,
+                    timeout=timeout,
+                    budget=self.retry_budget,
+                    on_wait=self.on_wait,
+                    timeout_fn=timeout_fn,
                 )
             except LLMRefusalError as e:
                 # Never build a diagram from refused (possibly partial) output;

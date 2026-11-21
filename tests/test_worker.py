@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, MagicMock, patch
 
@@ -1053,3 +1054,30 @@ class TestProfiles:
                 )
             )
         assert ra.call_args.kwargs["profile"].name == "other"
+
+
+class TestJobDeadline:
+    def test_child_passes_a_deadline_within_job_timeout(self):
+        pool, _ = _pool()
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
+            ) as ra,
+            patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+        ):
+            asyncio.run(
+                pool._run_job(
+                    _job(job_id="p1:aws-public", environment="aws-public"),
+                    receipt="rc",
+                )
+            )
+        deadline = ra.call_args.kwargs["deadline"]
+        assert isinstance(deadline, float)
+        assert 0 < deadline - time.monotonic() <= pool.config.job_timeout

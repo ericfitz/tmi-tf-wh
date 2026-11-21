@@ -1,13 +1,16 @@
+# pyright: reportPrivateImportUsage=false
 """Tests for tmi_tf.dfd_llm_generator refusal and empty-response handling (#89)."""
 
 import json
 from unittest.mock import MagicMock
 
 import pytest
+from llm_errors import FakeClock, rate_limit_error
 
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.llm_analyzer import LLMRefusalError
 from tmi_tf.providers import LLMResponse
+from tmi_tf.retry import RetryBudget
 
 VALID = json.dumps(
     {
@@ -67,3 +70,29 @@ class TestDFDEmptyResponse:
         assert data is not None and data["components"][0]["name"] == "web"
         assert (gen.input_tokens, gen.output_tokens) == (30, 5)
         assert gen.total_cost == pytest.approx(0.3)
+
+
+class TestDFDRetry:
+    def test_rate_limit_is_retried_with_budget_and_wait_rows(self, monkeypatch):
+        monkeypatch.setattr("tmi_tf.retry.random.random", lambda: 0.0)
+        clock = FakeClock()
+        monkeypatch.setattr("tmi_tf.retry.time.sleep", clock.sleep)
+        provider = MagicMock(model="anthropic/m", provider="anthropic")
+        provider.complete.side_effect = [
+            rate_limit_error({"retry-after": "20"}),
+            _response(VALID),
+        ]
+        rows: list[str] = []
+        gen = DFDLLMGenerator(
+            provider, retry_budget=RetryBudget(100.0, clock), on_wait=rows.append
+        )
+        assert gen.generate_structured_components({}, {}) is not None
+        assert clock.t == 20.0 and len(rows) == 1
+
+    def test_timeout_and_timeout_fn_are_passed_through(self):
+        gen, provider = _generator(_response(VALID))
+        gen.generate_structured_components({}, {}, timeout=123.0)
+        assert provider.complete.call_args.args[3] == 123.0
+        gen, provider = _generator(_response(VALID))
+        gen.generate_structured_components({}, {}, timeout=1.0, timeout_fn=lambda: 7.0)
+        assert provider.complete.call_args.args[3] == 7.0

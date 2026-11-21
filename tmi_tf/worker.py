@@ -5,6 +5,7 @@ import logging
 import shutil
 import tempfile
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -197,6 +198,7 @@ class WorkerPool:
 
     async def _run_job(self, job: Job, receipt: str) -> None:
         """Run analysis in thread pool."""
+        deadline = time.monotonic() + self.config.job_timeout
         callback = None
         if job.callback_url and self.config.webhook_secret:
             callback = AddonCallback(job.callback_url, self.config.webhook_secret)
@@ -229,6 +231,7 @@ class WorkerPool:
                     temp_dir=job.temp_dir,
                     callback=callback,
                     environment=job.environment,
+                    deadline=deadline,
                 )
                 await self._finish_child(job, "success" if result.success else "failed")
             else:

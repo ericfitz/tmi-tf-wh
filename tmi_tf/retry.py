@@ -47,6 +47,11 @@ RATELIMIT_DIMENSIONS: tuple[str, ...] = (
 )
 
 
+class DeadlineReached(Exception):
+    """The job deadline passed before an LLM attempt could start. Not transient:
+    it is never retried."""
+
+
 class RetryBudget:
     """One absolute monotonic deadline shared by all LLM calls of a job."""
 

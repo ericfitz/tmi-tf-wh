@@ -5,6 +5,7 @@ both the CLI command and the webhook worker.
 """
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.markdown_generator import MarkdownGenerator
 from tmi_tf.providers import get_llm_provider
 from tmi_tf.repo_analyzer import RepositoryAnalyzer
+from tmi_tf.retry import RetryBudget
 from tmi_tf.scope import LATEST, match_environments, normalize_scope
 from tmi_tf.script_scan import load_rules
 from tmi_tf.tf_validator import validate_and_sanitize
@@ -31,6 +33,42 @@ from tmi_tf.threat_processor import ThreatProcessor
 from tmi_tf.tmi_client_wrapper import TMIClient
 
 logger = logging.getLogger(__name__)
+
+
+# Seconds before the job deadline reserved for finalizing notes and diagram
+# (analysis budget) and for writing threats (DFD budget). Both are capped at a
+# fraction of the job so a small JOB_TIMEOUT keeps a positive window.
+FINALIZE_RESERVE_SECONDS = 600.0
+THREAT_WRITE_RESERVE_SECONDS = 120.0
+# A DFD call with less than this left is not worth starting.
+DFD_MIN_SECONDS = 60.0
+DFD_MAX_TIMEOUT = 1200.0
+
+
+class _DfdSkipped(Exception):
+    """Internal: the DFD window is too short; no call and no diagram."""
+
+
+def _retry_budgets(
+    deadline: float | None, now: float
+) -> tuple[RetryBudget | None, RetryBudget | None]:
+    """(analysis budget, DFD budget) for an absolute monotonic job deadline."""
+    if deadline is None:
+        return None, None
+    total = max(deadline - now, 0.0)
+    return (
+        RetryBudget(deadline - min(FINALIZE_RESERVE_SECONDS, 0.2 * total)),
+        RetryBudget(deadline - min(THREAT_WRITE_RESERVE_SECONDS, 0.05 * total)),
+    )
+
+
+def _dfd_timeout(budget: RetryBudget | None) -> float | None:
+    """Timeout for one DFD attempt, or None to skip the DFD (window too short)."""
+    if budget is None:
+        return DFD_MAX_TIMEOUT
+    if budget.expired() or budget.remaining() < DFD_MIN_SECONDS:
+        return None
+    return min(DFD_MAX_TIMEOUT, budget.remaining())
 
 
 class StatusCallback(Protocol):
@@ -222,6 +260,7 @@ def run_analysis(
     skip_diagram: bool = False,
     skip_threats: bool = False,
     environment: str | None = None,
+    deadline: float | None = None,
 ) -> AnalysisResult:
     """Run the full Terraform analysis pipeline.
 
@@ -240,6 +279,7 @@ def run_analysis(
         skip_diagram: Skip diagram generation.
         skip_threats: Skip threat creation.
         environment: If given, filter to this Terraform environment name.
+        deadline: Absolute ``time.monotonic()`` job deadline; bounds LLM retries.
 
     Returns:
         AnalysisResult with success flag, analyses, and generated content.
@@ -247,6 +287,7 @@ def run_analysis(
     errors: list[str] = []
 
     try:
+        analysis_budget, dfd_budget = _retry_budgets(deadline, time.monotonic())
         logger.info("=" * 80)
         logger.info("TMI Terraform Analysis Tool")
         logger.info("=" * 80)
@@ -260,7 +301,9 @@ def run_analysis(
         repo_analyzer = RepositoryAnalyzer(config)
         llm_provider = get_llm_provider(profile)
         llm_analyzer = LLMAnalyzer(
-            llm_provider, jev_shadow=jev_shadow_from_env(load_rules())
+            llm_provider,
+            jev_shadow=jev_shadow_from_env(load_rules()),
+            retry_budget=analysis_budget,
         )
         markdown_gen = MarkdownGenerator()
 
@@ -520,8 +563,19 @@ def run_analysis(
         if not skip_diagram:
             tmi_client.update_status_note(threat_model_id, "Generating DFD diagram")
             logger.info("\n[8/9] Generating data flow diagram...")
+            dfd_timeout = _dfd_timeout(dfd_budget)
+            dfd_skipped_for_deadline = dfd_timeout is None  # noqa: F841 (Task 6)
             try:
-                dfd_generator = DFDLLMGenerator(llm_provider)
+                if dfd_timeout is None:
+                    logger.warning(
+                        "Skipping DFD generation: not enough time before the job deadline"
+                    )
+                    raise _DfdSkipped
+                dfd_generator = DFDLLMGenerator(
+                    llm_provider,
+                    retry_budget=dfd_budget,
+                    on_wait=lambda m: tmi_client.update_status_note(threat_model_id, m),
+                )
 
                 combined_inventory: dict = {"components": [], "services": []}
                 combined_infrastructure: dict = {
@@ -559,6 +613,8 @@ def run_analysis(
                 structured_data = dfd_generator.generate_structured_components(
                     inventory=combined_inventory,
                     infrastructure=combined_infrastructure,
+                    timeout=dfd_timeout,
+                    timeout_fn=lambda: _dfd_timeout(dfd_budget),
                 )
 
                 if structured_data:
@@ -600,6 +656,8 @@ def run_analysis(
                 else:
                     logger.warning("Failed to generate structured data for diagram")
 
+            except _DfdSkipped:
+                pass
             except LLMRefusalError as e:
                 # The analysis note is already written; rewrite it so its
                 # job info lists the refusal (#89).

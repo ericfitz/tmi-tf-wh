@@ -1,10 +1,15 @@
+# pyright: reportPrivateImportUsage=false
 """Tests for Phase 3a/3b flow in tmi_tf.llm_analyzer."""
 
 import json
 from unittest.mock import MagicMock
 
-from tmi_tf.llm_analyzer import LLMAnalyzer
+import pytest
+from llm_errors import rate_limit_error
+
+from tmi_tf.llm_analyzer import LLMAnalyzer, call_llm_checked
 from tmi_tf.providers import LLMResponse
+from tmi_tf.retry import DeadlineReached
 
 
 def _make_provider(model: str = "anthropic/test-model") -> MagicMock:
@@ -535,3 +540,109 @@ def test_format_terraform_contents_is_module_level():
     text = format_terraform_contents({"b.tf": "x", "a.tf": "y"})
     assert text.index("### File: a.tf") < text.index("### File: b.tf")
     assert "```hcl\ny\n```" in text
+
+
+INVENTORY = {
+    "components": [{"id": "aws_s3_bucket.b"}],
+    "services": [],
+}
+INFRASTRUCTURE = {"relationships": [], "data_flows": [], "trust_boundaries": []}
+THREAT_ANALYSIS = {"threat_type": "Tampering", "severity": "High", "cwe_id": []}
+THREE = [
+    {
+        "name": f"T{i}",
+        "description": f"threat {i}",
+        "affected_components": ["aws_s3_bucket.b"],
+    }
+    for i in (1, 2, 3)
+]
+
+
+class TestPhase3bRateLimit:
+    def test_rate_limited_calls_are_retried_and_no_threat_is_dropped(self, monkeypatch):
+        sleeps: list[float] = []
+        monkeypatch.setattr("tmi_tf.retry.time.sleep", sleeps.append)
+        monkeypatch.setattr("tmi_tf.retry.random.random", lambda: 0.0)
+        limited = rate_limit_error({"retry-after": "30"})
+        ok = _make_llm_response(json.dumps(THREAT_ANALYSIS))
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+            _make_llm_response(json.dumps(THREE)),
+            limited,
+            limited,
+            limited,
+            ok,  # T1: three 429s, then an answer
+            ok,  # T2
+            limited,
+            ok,  # T3: one 429
+        ]
+        rows: list[str] = []
+        analyzer = LLMAnalyzer(provider)
+        result = analyzer.analyze_repository(
+            _make_tf_repo(), status_callback=rows.append
+        )
+        assert [f["name"] for f in result.security_findings] == ["T1", "T2", "T3"]
+        assert sleeps == [30.0, 30.0, 30.0, 30.0]
+        waits = [r for r in rows if "rate limited (HTTP 429), waiting 30s" in r]
+        assert len(waits) == 4
+        assert waits[0].endswith("(attempt 1 of 8)")
+        # The callback is released once the run ends.
+        assert analyzer._on_wait is None
+
+
+class TestTimeoutFn:
+    def _ok(self):
+        return _make_llm_response("fine")
+
+    def test_timeout_fn_is_called_once_per_attempt(self, monkeypatch):
+        monkeypatch.setattr("tmi_tf.retry.time.sleep", lambda s: None)
+        monkeypatch.setattr("tmi_tf.retry.random.random", lambda: 0.0)
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            rate_limit_error({"retry-after": "1"}),
+            self._ok(),
+        ]
+        values = iter([900.0, 400.0])
+        calls: list[int] = []
+
+        def timeout_fn() -> float | None:
+            calls.append(1)
+            return next(values)
+
+        call_llm_checked(provider, "s", "u", "DFD", timeout_fn=timeout_fn)
+        assert len(calls) == 2
+        timeouts = [c.args[3] for c in provider.complete.call_args_list]
+        assert timeouts == [900.0, 400.0]
+
+    def test_none_on_a_later_attempt_raises_deadline_reached_without_a_call(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr("tmi_tf.retry.time.sleep", lambda s: None)
+        monkeypatch.setattr("tmi_tf.retry.random.random", lambda: 0.0)
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            rate_limit_error({"retry-after": "1"}),
+            self._ok(),
+        ]
+        values = iter([900.0, None])
+        with pytest.raises(DeadlineReached):
+            call_llm_checked(provider, "s", "u", "DFD", timeout_fn=lambda: next(values))
+        assert provider.complete.call_count == 1
+
+    def test_timeout_fn_is_consulted_for_the_empty_response_retry(self):
+        provider = _make_provider()
+        empty = LLMResponse(
+            text=None, input_tokens=1, output_tokens=0, cost=0.0, finish_reason="stop"
+        )
+        provider.complete.side_effect = [empty, self._ok()]
+        values = iter([100.0, 50.0])
+        call_llm_checked(provider, "s", "u", "DFD", timeout_fn=lambda: next(values))
+        assert [c.args[3] for c in provider.complete.call_args_list] == [100.0, 50.0]
+
+    def test_without_timeout_fn_the_float_is_used(self):
+        provider = _make_provider()
+        provider.complete.side_effect = [self._ok()]
+        call_llm_checked(provider, "s", "u", "x", timeout=77.0)
+        assert provider.complete.call_args.args[3] == 77.0

@@ -30,7 +30,7 @@ from tmi_tf.metadata_scan import (
 )
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
-from tmi_tf.retry import retry_transient_llm_call
+from tmi_tf.retry import DeadlineReached, RetryBudget, retry_transient_llm_call
 from tmi_tf.script_review import build_review_input, merge_findings, parse_review
 from tmi_tf.script_scan import (
     RuleHit,
@@ -79,17 +79,36 @@ def call_llm_checked(
     description: str,
     max_tokens: int = 64000,
     timeout: float = 1200.0,
+    *,
+    budget: RetryBudget | None = None,
+    on_wait: Callable[[str], None] | None = None,
+    timeout_fn: Callable[[], float | None] | None = None,
 ) -> LLMResponse:
     """Call the provider with transient-error retry, retry an empty response
-    that stopped normally once, and raise LLMRefusalError on content_filter."""
+    that stopped normally once, and raise LLMRefusalError on content_filter.
+
+    With timeout_fn, every provider attempt (each transient retry and the
+    empty-response retry) asks it for that attempt's timeout; None raises
+    DeadlineReached before the attempt is made."""
     logger.info("%s: Calling LLM provider", description)
+
+    def attempt() -> LLMResponse:
+        attempt_timeout = timeout
+        if timeout_fn is not None:
+            computed = timeout_fn()
+            if computed is None:
+                raise DeadlineReached(f"{description}: job deadline reached")
+            attempt_timeout = computed
+        return llm_provider.complete(
+            system_prompt, user_prompt, max_tokens, attempt_timeout
+        )
 
     def call() -> LLMResponse:
         return retry_transient_llm_call(
-            lambda: llm_provider.complete(
-                system_prompt, user_prompt, max_tokens, timeout
-            ),
+            attempt,
             description=description,
+            budget=budget,
+            on_wait=on_wait,
         )
 
     response = call()
@@ -233,7 +252,12 @@ class TerraformAnalysis:
 class LLMAnalyzer:
     """Phased LLM analyzer for Terraform files using LiteLLM."""
 
-    def __init__(self, llm_provider: LLMProvider, jev_shadow: Any | None = None):
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        jev_shadow: Any | None = None,
+        retry_budget: RetryBudget | None = None,
+    ):
         """
         Initialize LLM analyzer.
 
@@ -242,8 +266,12 @@ class LLMAnalyzer:
             jev_shadow: Optional JevShadow instance (#14 Task 10); runs a
                 background comparison against Jev/System One and never
                 affects findings, redactions, prompts, or run success.
+            retry_budget: Optional job-deadline budget shared by every LLM
+                call; waits that would pass it are not started.
         """
         self.llm_provider = llm_provider
+        self.retry_budget = retry_budget
+        self._on_wait: Callable[[str], None] | None = None
         self.model = llm_provider.model
         self.provider = llm_provider.provider
         self.jev_shadow = jev_shadow
@@ -467,6 +495,17 @@ class LLMAnalyzer:
         Returns:
             TerraformAnalysis result with structured JSON from all phases
         """
+        self._on_wait = status_callback
+        try:
+            return self._analyze_repository(terraform_repo, status_callback)
+        finally:
+            self._on_wait = None
+
+    def _analyze_repository(
+        self,
+        terraform_repo: TerraformRepository,
+        status_callback: Callable[[str], None] | None,
+    ) -> TerraformAnalysis:
         logger.info("Analyzing repository: %s", terraform_repo.name)
 
         total_input_tokens = 0
@@ -992,6 +1031,8 @@ class LLMAnalyzer:
             f"Phase {phase_name}",
             max_tokens,
             timeout,
+            budget=self.retry_budget,
+            on_wait=self._on_wait,
         )
 
     def _call_llm_json(
