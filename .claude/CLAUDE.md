@@ -44,7 +44,7 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 ### Modules
 
 - **`cli.py`** — Click CLI; orchestrates auth → fetch repos → clone → analyze → reports → TMI artifacts
-- **`llm_analyzer.py`** — `LLMAnalyzer`; runs the 3 phases through LiteLLM; extracts JSON from responses (code blocks, raw, embedded)
+- **`llm_analyzer.py`** — `LLMAnalyzer`; runs the 3 phases through LiteLLM; extracts JSON from responses (code blocks, raw, embedded); phase 3b sends the shared inventory/infrastructure JSON as a cache prefix (`cache_prefix`, split at the `<!-- cache-breakpoint -->` line of `threat_analysis_user.txt`) and counts unanalyzed threats in `ThreatGaps`
 - **`repo_analyzer.py`** — sparse git clone, Terraform environment detection, module resolution; `TerraformRepository` / `TerraformEnvironment` dataclasses
 - **`tf_parser.py`** — static HCL parsing with python-hcl2 (8.x dict shape: quoted literals, `${expr}`, `__is_block__`); `StaticInventory`; files that fail to parse are listed in `unparsed_files`
 - **`tf_filter.py`** — applies `data/resource_registry.yaml` (category + security attrs per resource type; unknown types keep everything) to produce filtered HCL via `hcl2.dumps` and the pre-built inventory; `merge_phase1` folds the LLM's semantic answer back into the phase-1 schema
@@ -59,11 +59,12 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 - **`threat_processor.py`** — converts phase 3 findings into TMI threat objects
 - **`tmi_client_wrapper.py`** — wraps the generated client: auth, CRUD for notes/diagrams/threats, HTML sanitization via `nh3`
 - **`auth.py`** — Google PKCE (browser) or TMI client_credentials
-- **`retry.py`** — exponential backoff for transient LLM/API errors
+- **`retry.py`** — LLM retry: waits for `retry-after`, else the `anthropic-ratelimit-*-reset` headers, else jittered exponential backoff; attempt limits per error class; `RetryBudget` stops waits at the job deadline; `DeadlineReached` is raised when the DFD's per-attempt timeout finds under 60 s of budget left. Also the TMI API 429 wait (`tmi_retry_wait`)
+- **`error_hints.py`** — `error_hint` (HTTP status + fixed label, never exception text) and `step_row` for status-note outcome rows; `dfd_gap_text` / `DFD_REFUSED` build the "DFD not generated (...)" gap phrase
 - **`config.py`** — `Config` loads `.env`; `save_llm_response()` dumps raw LLM output to temp files for debugging
 
 ### LLM providers
 
-Named profiles in `llm-profiles.yaml` (`llm_profiles.py`) set provider, model, `auth`, the key's env var name, `api` (chat/responses), and optional `base_url`. `LLM_PROFILE` is the default; `--profile` / `user_data.profile` select per run. Providers: `anthropic`, `openai`, `xai`, `gemini`, `oci`; the LiteLLM model string is built from the profile (e.g. `openai/responses/gpt-5.6-cyber`). Keys are passed per call, never written to `os.environ`.
+Named profiles in `llm-profiles.yaml` (`llm_profiles.py`) set provider, model, `auth`, the key's env var name, `api` (chat/responses), and optional `base_url`. `LLM_PROFILE` is the default; `--profile` / `user_data.profile` select per run. Providers: `anthropic`, `openai`, `xai`, `gemini`, `oci`; the LiteLLM model string is built from the profile (e.g. `openai/responses/gpt-5.6-cyber`). Keys are passed per call, never written to `os.environ`. Provider `anthropic` marks a `cache_prefix` with `cache_control`; other providers get it concatenated. `num_retries=0`: `retry.py` is the only retry.
 
 Profile names are the model name with `.` replaced by `_` (ADR 0004); after adding or removing a profile and deploying, an admin re-runs `scripts/addon-profile-param.py --apply` to sync the TMI addon's `profile` picker.

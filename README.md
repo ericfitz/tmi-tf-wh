@@ -353,7 +353,11 @@ uv run tmi-tf auth
 
 **LLM API**:
 - Check your provider's account limits (Anthropic, OpenAI, x.ai, Google)
-- Tool will retry with exponential backoff
+- On a rate limit the tool waits for the provider's `retry-after` (or backs off
+  exponentially) and retries; the status note shows each wait
+- In the webhook service, waits stop before `JOB_TIMEOUT`; threats that could not be
+  analyzed are reported as gaps ("completed with gaps: ...") instead of being dropped
+- With Anthropic profiles, phase 3b reuses its shared context through prompt caching
 
 ### Clone Timeouts
 
