@@ -111,3 +111,33 @@ def test_main_reports_malformed_components_and_unwritable_output(tmp_path, capsy
     assert not (tmp_path / "o.svg").exists()
     assert preview_dfd.main([str(SMALL), str(tmp_path / "nodir" / "o.svg")]) == 2
     assert "cannot write" in capsys.readouterr().err
+
+
+def _seen_flag(monkeypatch, argv):
+    seen = []
+    real = preview_dfd.DFDBuilder
+
+    class Spy(real):
+        def build_cells(self):
+            seen.append(compound.EMIT_BORDER_VERTICES)
+            return super().build_cells()
+
+    monkeypatch.setattr(preview_dfd, "DFDBuilder", Spy)
+    assert preview_dfd.main(argv) == 0
+    return seen[0]
+
+
+def test_border_vertices_default_follows_module_constant(tmp_path, monkeypatch):
+    out = str(tmp_path / "o.svg")
+    assert compound.EMIT_BORDER_VERTICES is True
+    assert _seen_flag(monkeypatch, [str(SMALL), out]) is True
+    monkeypatch.setattr(compound, "EMIT_BORDER_VERTICES", False)
+    assert _seen_flag(monkeypatch, [str(SMALL), out]) is False
+
+
+def test_border_vertices_flags_override_module_constant(tmp_path, monkeypatch):
+    out = str(tmp_path / "o.svg")
+    assert _seen_flag(monkeypatch, [str(SMALL), out, "--no-border-vertices"]) is False
+    monkeypatch.setattr(compound, "EMIT_BORDER_VERTICES", False)
+    assert _seen_flag(monkeypatch, [str(SMALL), out, "--border-vertices"]) is True
+    assert compound.EMIT_BORDER_VERTICES is False

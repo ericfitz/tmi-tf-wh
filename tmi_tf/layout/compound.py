@@ -47,7 +47,7 @@ Direction = Literal["LR", "TB"]
 Side = Literal["top", "right", "bottom", "left"]
 
 LAYOUT_DIRECTION: Direction = "LR"
-EMIT_BORDER_VERTICES: bool = False
+EMIT_BORDER_VERTICES: bool = True
 LABEL_CHAR_W = 7
 LABEL_PAD = 16
 LABEL_MAX_W = 240

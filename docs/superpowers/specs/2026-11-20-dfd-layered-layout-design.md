@@ -158,7 +158,9 @@ convert centres to top-left.
   (absolute) as `vertices`. Drop any vertex within 0.5px of the straight line between its
   neighbours (Pele `straighten`).
 - **Border-crossing vertices** (port node positions) are emitted only when module flag
-  `EMIT_BORDER_VERTICES` is true; default false, revisit after visual review.
+  `EMIT_BORDER_VERTICES` is true. **Human decision (Eric, 2026-11-20):** emitted by default
+  (`EMIT_BORDER_VERTICES = True`); measured on 300-component diagrams, edges crossing an
+  unrelated node fell from 113/414 to 5/414.
 - **Bidirectional flows.** The builder already emits two edge cells. Give each one vertex,
   offset `edgeSep/2` either side of the shared midpoint (perpendicular to the flow
   direction), and label positions 0.35 and 0.65.
@@ -227,7 +229,8 @@ overlap, nesting, port and edge tests unchanged. Add:
    perpendicular to the flow direction by `(i - (k-1)/2) * edgeSep`, i in input order; a
    cell with no vertices gets one offset vertex at the midpoint of its route at the lifted
    level (between the two lifted children), not the straight leaf-to-leaf midpoint. Label
-   positions are spread evenly across 0.35-0.65. Any fan vertex that would land inside a
+   positions are spread evenly across 0.35-0.65, measured from the group's canonical
+   source (the source of its first cell), so cells running the opposite way use `1 - p`. Any fan vertex that would land inside a
    node that is not an ancestor of one of the edge's ends is dropped (the label stagger
    remains), so the vertex property test holds unconditionally.
 4. **The LLM's `rank` and `sibling_order`.** `prompts/dfd_generation_system.txt` already

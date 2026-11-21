@@ -1,6 +1,6 @@
 """Render a DFD layout to SVG so layouts can be judged without pushing to TMI.
 
-Usage: uv run python scripts/preview_dfd.py INPUT.json OUT.svg [--direction LR|TB] [--border-vertices]
+Usage: uv run python scripts/preview_dfd.py INPUT.json OUT.svg [--direction LR|TB] [--border-vertices | --no-border-vertices]
 
 INPUT.json holds {"components": [...], "flows": [...]}. OUT.svg is a derived file and is
 overwritten on every run. Standard library plus the project's own modules only.
@@ -139,7 +139,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--direction", choices=["LR", "TB"], default="LR")
-    parser.add_argument("--border-vertices", action="store_true")
+    parser.add_argument(
+        "--border-vertices",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="emit border-crossing vertices (default: compound.EMIT_BORDER_VERTICES)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -157,7 +162,8 @@ def main(argv: list[str] | None = None) -> int:
 
     saved = (compound.LAYOUT_DIRECTION, compound.EMIT_BORDER_VERTICES)
     compound.LAYOUT_DIRECTION = args.direction
-    compound.EMIT_BORDER_VERTICES = args.border_vertices
+    if args.border_vertices is not None:
+        compound.EMIT_BORDER_VERTICES = args.border_vertices
     try:
         cells = DFDBuilder(data["components"], data["flows"]).build_cells()
         svg = render_svg(cells)
