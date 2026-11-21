@@ -557,6 +557,12 @@ it, the next call rewrites the cache at the write price and counts toward ITPM a
 
 ## 12. Open questions and assumptions
 
+**Resolved 2026-11-21.** Eric decided Questions 3 and 4: refusals count as gaps
+(human decision), and threat-creation failures count as gaps (human decision).
+Questions 1, 2, 5 and 6 take the defaults below; they follow from his decision
+that each completed step shows success or failure with an error hint. The plan
+implements every default unchanged.
+
 Questions that change behavior. The plan implements the stated default; each is
 isolated to the task named.
 
