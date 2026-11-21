@@ -1221,6 +1221,21 @@ class TestUnparseableAnswersAreFailures:
         assert "Phase 3a (Threat Identification): failed: unparseable response" in rows
         assert not any('"name"' in r for r in rows)
 
+    def test_failed_3a_keeps_tokens_and_cost(self):
+        for text, reason in (("no array", "stop"), ('[{"na', "length")):
+            bad = LLMResponse(
+                text=text,
+                input_tokens=7,
+                output_tokens=64000,
+                cost=0.5,
+                finish_reason=reason,
+            )
+            result, _ = self._run([*self._two(), bad])
+            assert result.success is False
+            assert result.input_tokens == 100 + 100 + 7
+            assert result.output_tokens == 50 + 50 + 64000
+            assert result.total_cost == pytest.approx(0.01 + 0.01 + 0.5)
+
     def test_3a_empty_answer_fails(self):
         empty = LLMResponse(
             text="", input_tokens=1, output_tokens=0, cost=0.0, finish_reason="stop"

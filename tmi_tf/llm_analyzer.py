@@ -740,6 +740,12 @@ class LLMAnalyzer:
             total_output_tokens += tid_tokens_out
             total_cost += tid_cost
 
+            if raw_threats is None:
+                raise LLMOutputError(
+                    "Phase 3a (threat identification) returned no usable JSON array "
+                    "(empty, truncated or malformed output)."
+                )
+
             logger.info("Phase 3a complete: identified %d threats", len(raw_threats))
             if status_callback:
                 status_callback(
@@ -1319,7 +1325,7 @@ class LLMAnalyzer:
         phase_name: str,
         max_tokens: int = 64000,
         timeout: float = 1200.0,
-    ) -> tuple[list[dict[str, Any]], int, int, float]:
+    ) -> tuple[list[dict[str, Any]] | None, int, int, float]:
         """
         Call LLM and parse JSON array response.
 
@@ -1331,28 +1337,30 @@ class LLMAnalyzer:
             timeout: Request timeout in seconds
 
         Returns:
-            Tuple of (parsed JSON list, input_tokens, output_tokens, cost)
+            Tuple of (parsed JSON list, or None when the answer was empty,
+            truncated or unparseable; input_tokens, output_tokens, cost)
         """
         response = self._call_llm(
             system_prompt, user_prompt, phase_name, max_tokens, timeout
         )
 
-        # Empty, truncated and unparseable answers are failures (as for phases 1
-        # and 2); only a valid JSON array, including [], is a result.
+        # Empty, truncated and unparseable answers return None (the caller adds
+        # the billed tokens and cost, then fails the phase); only a valid JSON
+        # array, including [], is a result.
+        usage = (response.input_tokens, response.output_tokens, response.cost)
         if not response.text or response.finish_reason == "length":
             logger.error(
                 "Phase %s: empty or truncated response (finish_reason=%s)",
                 phase_name,
                 response.finish_reason,
             )
-            raise LLMOutputError(f"Phase {phase_name}: empty or truncated response")
+            return (None, *usage)
         parsed = extract_json_array(response.text)
         if parsed is None:
             logger.error(
                 "Phase %s: Failed to parse JSON array from response", phase_name
             )
-            raise LLMOutputError(f"Phase {phase_name}: no JSON array in response")
-        return parsed, response.input_tokens, response.output_tokens, response.cost
+        return (parsed, *usage)
 
     def _format_terraform_contents(self, tf_contents: dict[str, str]) -> str:
         """Kept for callers/tests that use the method form."""

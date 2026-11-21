@@ -599,14 +599,14 @@ isolated to the task named.
    `deadline reached`. Residual case accepted: on a streamed call the value is an httpx
    per-read timeout, so a stream that keeps producing chunks is not wall-clock bounded.
 
-   **Amended 2026-11-21 (human decision, Eric, final review Finding 1, Option A):** an
-   empty, truncated (`finish_reason == "length"`) or unparseable phase-3a answer raises
-   `LLMOutputError`, so phase 3a fails through the same path as phases 1 and 2
-   (`Phase 3a (Threat Identification): failed: unparseable response`); a valid `[]` stays a
-   success with 0 threats. Likewise a script-review answer that is truncated or not a JSON
-   array records `script review failed: unparseable response` and writes a failed
-   `Script review` row; a valid empty array stays a success. `parse_review` still returns
-   `[]` for garbage; `is_review_array` supplies the signal.
+**Final-review decision 2026-11-21 (human decision, Eric, Finding 1, Option A):** an
+empty, truncated (`finish_reason == "length"`) or unparseable phase-3a answer raises
+`LLMOutputError`, so phase 3a fails through the same path as phases 1 and 2
+(`Phase 3a (Threat Identification): failed: unparseable response`); a valid `[]` stays a
+success with 0 threats. Likewise a script-review answer that is truncated or not a JSON
+array records `script review failed: unparseable response` and writes a failed
+`Script review` row; a valid empty array stays a success. `parse_review` still returns
+`[]` for garbage; `is_review_array` supplies the signal.
 
 Assumptions to confirm in the first production run after deploy:
 
