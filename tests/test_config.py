@@ -38,6 +38,22 @@ class TestLLMProfiles:
         assert config.llm_profile == "opus48"
         assert "fable51" in config.llm_profiles
 
+    def test_2026_11_profiles_present(self):
+        profiles = Config().llm_profiles
+        expected = {
+            "mythos52": "claude-mythos-5-2",
+            "fable52": "claude-fable-5-2",
+            "gpt62astra": "gpt-6.2-astra",
+            "gpt62sol": "gpt-6.2-sol",
+            "gpt61sol": "gpt-6.1-sol",
+            "gpt61terra": "gpt-6.1-terra",
+        }
+        for name, model in expected.items():
+            assert profiles[name].model == model
+        for name in ("gpt62astra", "gpt62sol", "gpt61sol", "gpt61terra"):
+            assert profiles[name].api == "responses"
+        assert "gpt61astra" not in profiles
+
     def test_no_default_profile(self):
         os.environ.pop("LLM_PROFILE", None)
         assert Config().llm_profile is None

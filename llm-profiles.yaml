@@ -2,9 +2,19 @@
 # {"profile": "<name>"}, per CLI run with --profile, or by default with
 # LLM_PROFILE. api_key names the env var / secret holding the key, never the
 # key itself. Fields and rules: docs/superpowers/specs/2026-09-22-llm-profiles-design.md
-# ANTHROPIC_CVP_API_KEY: reduced guardrails, no Mythos access.
+# ANTHROPIC_CVP_API_KEY: filled from the cyber key; reaches Mythos 5.2 (ADR 0004).
 # OPENAI_API_KEY: standard key, no cyber-model access.
 profiles:
+  mythos52:
+    provider: anthropic
+    model: claude-mythos-5-2
+    auth: api_key
+    api_key: ANTHROPIC_CVP_API_KEY
+  fable52:
+    provider: anthropic
+    model: claude-fable-5-2
+    auth: api_key
+    api_key: ANTHROPIC_CVP_API_KEY
   fable51:
     provider: anthropic
     model: claude-fable-5-1
@@ -36,6 +46,30 @@ profiles:
     auth: api_key
     api_key: ANTHROPIC_CVP_API_KEY
   # gpt-6 models reject max_tokens on chat completions; responses works.
+  gpt62astra:
+    provider: openai
+    model: gpt-6.2-astra
+    api: responses
+    auth: api_key
+    api_key: OPENAI_API_KEY
+  gpt62sol:
+    provider: openai
+    model: gpt-6.2-sol
+    api: responses
+    auth: api_key
+    api_key: OPENAI_API_KEY
+  gpt61sol:
+    provider: openai
+    model: gpt-6.1-sol
+    api: responses
+    auth: api_key
+    api_key: OPENAI_API_KEY
+  gpt61terra:
+    provider: openai
+    model: gpt-6.1-terra
+    api: responses
+    auth: api_key
+    api_key: OPENAI_API_KEY
   gpt6astra:
     provider: openai
     model: gpt-6-astra
