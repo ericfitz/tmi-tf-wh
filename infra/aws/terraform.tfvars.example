@@ -7,10 +7,10 @@
 # ingress_group       = "tmi-webhooks"
 # url_prefix          = "/tf"
 # app_image_tag       = "latest"
-# llm_profile         = "fable51"      # default profile from llm-profiles.yaml
+# llm_profile         = "claude-fable-5-2"      # default profile from llm-profiles.yaml
 # llm_profiles_yaml   = <<-EOT             # replaces the image's llm-profiles.yaml
 #   profiles:
-#     opus48: {provider: anthropic, model: claude-opus-4-8, auth: api_key, api_key: ANTHROPIC_CVP_API_KEY}
+#     claude-opus-4-8: {provider: anthropic, model: claude-opus-4-8, auth: api_key, api_key: ANTHROPIC_CVP_API_KEY}
 # EOT
 # tmi_server_url      = "https://api.tmi.dev"
 # max_concurrent_jobs = 3

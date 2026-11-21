@@ -77,7 +77,7 @@ def create_artifact_metadata(
         input_tokens: Number of input tokens used
         output_tokens: Number of output tokens generated
         cost_estimate_usd: Estimated cost in USD
-        profile: LLM profile name (e.g. 'fable51')
+        profile: LLM profile name (e.g. 'claude-fable-5-2')
 
     Returns:
         ArtifactMetadata instance
