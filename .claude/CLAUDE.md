@@ -65,3 +65,5 @@ Each phase has a system/user prompt pair in `prompts/`; user prompts are Python 
 ### LLM providers
 
 Named profiles in `llm-profiles.yaml` (`llm_profiles.py`) set provider, model, `auth`, the key's env var name, `api` (chat/responses), and optional `base_url`. `LLM_PROFILE` is the default; `--profile` / `user_data.profile` select per run. Providers: `anthropic`, `openai`, `xai`, `gemini`, `oci`; the LiteLLM model string is built from the profile (e.g. `openai/responses/gpt-5.6-cyber`). Keys are passed per call, never written to `os.environ`.
+
+Profile names are the model name with `.` replaced by `_` (ADR 0004); after adding or removing a profile and deploying, an admin re-runs `scripts/addon-profile-param.py --apply` to sync the TMI addon's `profile` picker.
