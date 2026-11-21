@@ -695,15 +695,30 @@ class TestStepRows:
         return setup
 
     def test_threat_creation_rows(self, tmp_path):
-        _, notes, _, _ = self._run(
-            tmp_path,
-            skip_threats=False,
-            setup=self._threat_setup(["HTTP 500 internal_server_error"]),
-        )
+        from tmi_tf import analyzer as mod
+
+        real = mod.threats_not_created_text
+        gap_calls: list[str] = []
+
+        def spy(*a, **kw):
+            text = real(*a, **kw)
+            if kw.get("phrase"):
+                gap_calls.append(text)
+            return text
+
+        with patch("tmi_tf.analyzer.threats_not_created_text", spy):
+            _, notes, _, _ = self._run(
+                tmp_path,
+                skip_threats=False,
+                setup=self._threat_setup(["HTTP 500 internal_server_error"]),
+            )
         assert (
             "Threat creation: failed: 1 of 3 threats not created "
             "(HTTP 500 internal_server_error)" in notes
         )
+        assert gap_calls == [
+            ("1 of 3 threats not created in TMI (HTTP 500 internal_server_error)")
+        ]
 
     def test_threat_creation_success_row(self, tmp_path):
         def setup(tp, analysis, **kw):
@@ -718,20 +733,48 @@ class TestStepRows:
         assert "Threat creation: succeeded (0 created)" in notes
 
     def test_threat_creation_unknown_error_text(self, tmp_path):
-        _, notes, _, _ = self._run(
-            tmp_path, skip_threats=False, setup=self._threat_setup([])
-        )
+        from tmi_tf import analyzer as mod
+
+        real = mod.threats_not_created_text
+        gap_calls: list[str] = []
+
+        def spy(*a, **kw):
+            text = real(*a, **kw)
+            if kw.get("phrase"):
+                gap_calls.append(text)
+            return text
+
+        with patch("tmi_tf.analyzer.threats_not_created_text", spy):
+            _, notes, _, _ = self._run(
+                tmp_path, skip_threats=False, setup=self._threat_setup([])
+            )
         assert (
             "Threat creation: failed: 1 of 3 threats not created (unknown error)"
             in notes
         )
+        assert gap_calls == ["1 of 3 threats not created in TMI (unknown error)"]
 
     def test_threat_creation_exception_row(self, tmp_path):
         def setup(tp, analysis, **_):
             analysis.security_findings = [{"name": "x"}]
             tp.return_value.threats_from_findings.side_effect = _Http503("secret-body")
 
-        _, notes, _, _ = self._run(tmp_path, skip_threats=False, setup=setup)
+        from tmi_tf import analyzer as mod
+
+        real = mod.threats_not_created_text
+        gap_calls: list[str] = []
+
+        def spy(*a, **kw):
+            text = real(*a, **kw)
+            if kw.get("phrase"):
+                gap_calls.append(text)
+            return text
+
+        with patch("tmi_tf.analyzer.threats_not_created_text", spy):
+            _, notes, _, _ = self._run(tmp_path, skip_threats=False, setup=setup)
+        assert gap_calls == [
+            "threats not created in TMI (HTTP 503 service_unavailable)"
+        ]
         assert "Threat creation: failed: HTTP 503 service_unavailable" in notes
         assert not any("secret-body" in n for n in notes)
 

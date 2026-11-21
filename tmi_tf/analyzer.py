@@ -51,6 +51,9 @@ class _DfdSkipped(Exception):
     """Internal: the DFD window is too short; no call and no diagram."""
 
 
+_GAP_PHRASE = "threats not created in TMI"
+
+
 def threats_not_created_text(
     hints: Sequence[str],
     *,
@@ -747,10 +750,12 @@ def run_analysis(
             logger.info("\n[8/9] Skipping diagram generation (skip_diagram)")
 
         # Create threats from security issues
-        # threats_not_created is "" or the gap text of spec section 6.4.
+        # threats_not_created is "" or the gap text of spec section 6.4
+        # ("... in TMI"); the status row uses the shorter default phrase.
         threats_not_created = ""
         step = "Threat creation"
         creation_error = ""
+        creation_row_error = ""
         created_count = 0
         if not skip_threats:
             tmi_client.update_status_note(threat_model_id, "Creating threats")
@@ -814,6 +819,12 @@ def run_analysis(
                             threat_processor.create_error_hints,
                             missing=missing,
                             total=len(all_threats),
+                            phrase=_GAP_PHRASE,
+                        )
+                        creation_row_error = threats_not_created_text(
+                            threat_processor.create_error_hints,
+                            missing=missing,
+                            total=len(all_threats),
                         )
                     created_count = len(created_threats)
                 else:
@@ -823,12 +834,14 @@ def run_analysis(
                 logger.error(f"Failed to create threats: {e}")
                 logger.info("Continuing without threat creation...")
                 creation_error = error_hint(e)
-                threats_not_created = threats_not_created_text([creation_error])
+                threats_not_created = threats_not_created_text(  # noqa: F841 (Task 7)
+                    [creation_error], phrase=_GAP_PHRASE
+                )
 
             if creation_error:
                 row = step_row(step, error=creation_error)
-            elif threats_not_created:
-                row = step_row(step, error=threats_not_created)
+            elif creation_row_error:
+                row = step_row(step, error=creation_row_error)
             else:
                 row = step_row(step, detail=f"{created_count} created")
             tmi_client.update_status_note(threat_model_id, row)
