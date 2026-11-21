@@ -50,7 +50,7 @@ kubectl --context tmi-eks -n tmi-tf get pods,ingress
 
 The model is chosen per invocation from the named profiles in
 `llm-profiles.yaml` (built into the image): `{"environments": "aws",
-"profile": "fable51"}` in the addon invocation's `user_data`. With no
+"profile": "claude-fable-5-2"}` in the addon invocation's `user_data`. With no
 `profile`, `llm_profile` (the pod's `LLM_PROFILE`) is used.
 
 - Keys: `llm_api_keys` in `secrets.auto.tfvars`, keyed by the env var names

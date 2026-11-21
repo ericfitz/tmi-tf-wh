@@ -83,7 +83,7 @@ A profile names everything LiteLLM needs to run the analysis. Profiles live in
 
 ```yaml
 profiles:
-  gpt6sol:
+  gpt-6-sol:
     provider: openai
     model: gpt-6-sol
     api: responses
@@ -100,9 +100,11 @@ profiles:
 | `api` | no | `chat` (default) or `responses` (OpenAI Responses API; openai only) |
 | `base_url` | no | Send calls to a proxy or compatible gateway |
 
+Each profile is named after its model, with `.` replaced by `_` (profile
+`gpt-6_2-astra` runs `gpt-6.2-astra`).
 The LiteLLM model string is built from these fields (`openai/responses/gpt-6-sol`).
 Select a profile with `--profile` on the CLI or `"profile"` in the addon
-invocation's `user_data`, e.g. `{"environments": "aws", "profile": "gpt6sol"}`;
+invocation's `user_data`, e.g. `{"environments": "aws", "profile": "gpt-6-sol"}`;
 otherwise `LLM_PROFILE` is used. An unknown profile or a missing key fails the
 run before any clone or LLM call. `tmi-tf config-info` shows which profiles are
 usable.
@@ -212,7 +214,10 @@ finishes (see [Invocation tracking](#invocation-tracking) below).
 
 **Operator setup**: register the addon in TMI with a string parameter named
 `environments`, default `latest`, described as accepting `latest`, `all`, or a
-comma-separated list of environment names/globs.
+comma-separated list of environment names/globs, and an enum parameter named
+`profile` whose values are the profile names in `llm-profiles.yaml`, default
+`claude-fable-5-2`. `scripts/addon-profile-param.py` builds and applies that
+PATCH (admin token required).
 
 ### Invocation tracking
 

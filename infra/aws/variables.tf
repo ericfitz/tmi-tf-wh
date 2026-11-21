@@ -70,7 +70,7 @@ variable "app_image_tag" {
 variable "llm_profile" {
   description = "Default LLM profile name (LLM_PROFILE); profiles live in llm-profiles.yaml"
   type        = string
-  default     = "fable51"
+  default     = "claude-fable-5-2"
 }
 
 variable "llm_profiles_yaml" {

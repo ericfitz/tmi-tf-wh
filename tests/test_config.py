@@ -36,23 +36,27 @@ class TestLLMProfiles:
     def test_default_profile_from_env(self):
         config = Config()
         assert config.llm_profile == "opus48"
-        assert "fable51" in config.llm_profiles
+        assert "claude-fable-5-2" in config.llm_profiles
 
     def test_2026_11_profiles_present(self):
         profiles = Config().llm_profiles
         expected = {
-            "mythos52": "claude-mythos-5-2",
-            "fable52": "claude-fable-5-2",
-            "gpt62astra": "gpt-6.2-astra",
-            "gpt62sol": "gpt-6.2-sol",
-            "gpt61sol": "gpt-6.1-sol",
-            "gpt61terra": "gpt-6.1-terra",
+            "claude-mythos-5-2": "claude-mythos-5-2",
+            "claude-fable-5-2": "claude-fable-5-2",
+            "gpt-6_2-astra": "gpt-6.2-astra",
+            "gpt-6_2-sol": "gpt-6.2-sol",
+            "gpt-6_1-sol": "gpt-6.1-sol",
+            "gpt-6_1-terra": "gpt-6.1-terra",
         }
         for name, model in expected.items():
             assert profiles[name].model == model
-        for name in ("gpt62astra", "gpt62sol", "gpt61sol", "gpt61terra"):
+        for name in ("gpt-6_2-astra", "gpt-6_2-sol", "gpt-6_1-sol", "gpt-6_1-terra"):
             assert profiles[name].api == "responses"
-        assert "gpt61astra" not in profiles
+        assert "gpt-6_1-astra" not in profiles
+
+    def test_profile_names_follow_model_names(self):
+        for name, profile in Config().llm_profiles.items():
+            assert name == profile.model.replace(".", "_")
 
     def test_no_default_profile(self):
         os.environ.pop("LLM_PROFILE", None)
