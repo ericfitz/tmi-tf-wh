@@ -167,6 +167,22 @@ def backoff_delay(
     return min(base * 2.0**exponent, cap) * (1 + JITTER_FRACTION * jitter)
 
 
+TMI_RATE_LIMIT_MAX_ATTEMPTS: int = 4
+TMI_RETRY_AFTER_MAX: float = 30.0
+
+
+def tmi_retry_wait(
+    headers: Mapping[str, str] | None, retry_number: int, jitter: float = 0.0
+) -> float:
+    """Wait before retrying a TMI API 429: a valid Retry-After (clamped), else backoff."""
+    server = parse_retry_after(headers)
+    if server is not None:
+        return min(server, TMI_RETRY_AFTER_MAX)
+    return backoff_delay(
+        retry_number, base=DEFAULT_RETRY_DELAY, cap=TMI_RETRY_AFTER_MAX, jitter=jitter
+    )
+
+
 def _wait_for(
     error: BaseException,
     status: int | None,

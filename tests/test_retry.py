@@ -18,6 +18,7 @@ from tmi_tf.retry import (
     parse_retry_after,
     response_headers,
     retry_transient_llm_call,
+    tmi_retry_wait,
 )
 
 
@@ -440,3 +441,17 @@ class TestPureHelpers:
 
     def test_response_headers_of_plain_exception(self):
         assert response_headers(Exception()) == {}
+
+
+class TestTmiRetryWait:
+    def test_backoff_from_the_default_delay(self):
+        assert [tmi_retry_wait(None, n) for n in (1, 2, 3)] == [3.0, 6.0, 12.0]
+        assert tmi_retry_wait(None, 1, jitter=1.0) == pytest.approx(3.6)
+
+    def test_retry_after_is_honored_and_clamped(self):
+        assert tmi_retry_wait({"Retry-After": "7"}, 1) == 7.0
+        assert tmi_retry_wait({"Retry-After": "600"}, 1) == 30.0
+
+    @pytest.mark.parametrize("value", ["soon", "-1", "nan"])
+    def test_bad_retry_after_falls_back(self, value):
+        assert tmi_retry_wait({"Retry-After": value}, 2) == 6.0

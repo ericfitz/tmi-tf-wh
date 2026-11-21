@@ -5,6 +5,7 @@ import logging
 
 # Add tmi-client to path
 import os as _os
+import random
 import re
 import sys
 import threading
@@ -98,7 +99,12 @@ from tmi_client.rest import ApiException  # type: ignore[import-not-found]
 
 from tmi_tf.auth import TMIAuthenticator
 from tmi_tf.config import Config
-from tmi_tf.retry import DEFAULT_RETRY_DELAY, TRANSIENT_API_STATUSES
+from tmi_tf.retry import (
+    DEFAULT_RETRY_DELAY,
+    TMI_RATE_LIMIT_MAX_ATTEMPTS,
+    TRANSIENT_API_STATUSES,
+    tmi_retry_wait,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -365,31 +371,44 @@ class TMIClient:
     def _call_with_retry(self, api_call: Callable[[], T]) -> T:
         """Execute an API call with retry on auth failure or transient errors.
 
-        Retries once on:
-        - 401 Unauthorized (re-authenticates first)
-        - Transient HTTP errors (429, 500, 502, 503, 504) after a brief delay
+        - 401 Unauthorized: re-authenticate once, then continue; a second 401 raises.
+        - 429: up to four calls, waiting a valid Retry-After (clamped) or backoff.
+        - 500/502/503/504: one retry (more could duplicate a create that was
+          committed before the error). One attempt counter serves 429 and 5xx.
         """
-        try:
-            return api_call()
-        except ApiException as e:
-            if e.status == 401:
-                logger.warning(
-                    "Received 401 Unauthorized, re-authenticating and retrying..."
-                )
-                self._reauthenticate()
+        attempt, reauthenticated = 1, False
+        while True:
+            try:
                 return api_call()
-            if e.status in TRANSIENT_API_STATUSES:
+            except ApiException as e:
+                if e.status == 401 and not reauthenticated:
+                    logger.warning(
+                        "Received 401 Unauthorized, re-authenticating and retrying..."
+                    )
+                    self._reauthenticate()
+                    reauthenticated = True
+                    continue
+                if e.status == 429 and attempt < TMI_RATE_LIMIT_MAX_ATTEMPTS:
+                    wait = tmi_retry_wait(
+                        getattr(e, "headers", None), attempt, random.random()
+                    )
+                elif (
+                    e.status in TRANSIENT_API_STATUSES
+                    and e.status != 429
+                    and attempt < 2
+                ):
+                    wait = DEFAULT_RETRY_DELAY
+                else:
+                    raise
                 logger.warning(
                     "TMI API call failed with transient error (HTTP %d: %s). "
-                    "Retrying in %.0f seconds...",
+                    "Retrying in %.1f seconds...",
                     e.status,
                     e.reason,
-                    DEFAULT_RETRY_DELAY,
+                    wait,
                 )
-                time.sleep(DEFAULT_RETRY_DELAY)
-                logger.info("Retrying TMI API call...")
-                return api_call()
-            raise
+                time.sleep(wait)
+                attempt += 1
 
     def get_threat_model(self, threat_model_id: str) -> ThreatModel:
         """
