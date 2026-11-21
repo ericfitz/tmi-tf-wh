@@ -16,6 +16,7 @@ from tmi_tf.invocation import (
     all_reported,
     close_invocation,
     compute_deadline,
+    invocation_summary,
     lock_for,
     mark_child,
     open_invocation,
@@ -233,7 +234,16 @@ class WorkerPool:
                     environment=job.environment,
                     deadline=deadline,
                 )
-                await self._finish_child(job, "success" if result.success else "failed")
+                outcome = (
+                    "failed"
+                    if not result.success
+                    else "gaps"
+                    if result.gaps
+                    else "success"
+                )
+                await self._finish_child(
+                    job, outcome, "; ".join(result.gaps) if outcome == "gaps" else ""
+                )
             else:
                 await self._run_parent(job, tmi_client, callback)
             # Delete message on completion
@@ -454,28 +464,38 @@ class WorkerPool:
             logger.error(f"Abort bookkeeping failed for {invocation_id}: {e}")
         return len(victims)
 
-    async def _finish_child(self, job: Job, outcome: str) -> None:
+    async def _finish_child(self, job: Job, outcome: str, gaps: str = "") -> None:
         """Mark a child done; the last sibling closes the invocation."""
         siblings = job.siblings or [job.job_id]
         try:
             tmi_client = TMIClient.create_authenticated(self.config)
             async with lock_for(job.threat_model_id):
-                state = await asyncio.to_thread(
-                    mark_child, tmi_client, job.threat_model_id, job.job_id, outcome
-                )
+                # A fifth argument only for `gaps`; other outcomes keep the
+                # four-argument call.
+                if outcome == "gaps":
+                    state = await asyncio.to_thread(
+                        mark_child,
+                        tmi_client,
+                        job.threat_model_id,
+                        job.job_id,
+                        outcome,
+                        gaps,
+                    )
+                else:
+                    state = await asyncio.to_thread(
+                        mark_child,
+                        tmi_client,
+                        job.threat_model_id,
+                        job.job_id,
+                        outcome,
+                    )
                 if (
                     not state.open
                     or not job.job_id.startswith(f"{state.invocation_id}:")
                     or not all_reported(state, siblings)
                 ):
                     return
-                failed = sorted(
-                    j for j in siblings if outcome_of(state, j) != "success"
-                )
-                ok = len(siblings) - len(failed)
-                summary = f"{ok} succeeded, {len(failed)} failed"
-                if failed:
-                    summary += f" ({', '.join(failed)})"
+                status, summary = invocation_summary(state, siblings)
                 await asyncio.to_thread(
                     close_invocation,
                     tmi_client,
@@ -487,9 +507,7 @@ class WorkerPool:
                 wd.cancel()
             if job.callback_url and self.config.webhook_secret:
                 cb = AddonCallback(job.callback_url, self.config.webhook_secret)
-                await asyncio.to_thread(
-                    cb.send_status, "completed" if not failed else "failed", summary
-                )
+                await asyncio.to_thread(cb.send_status, status, summary)
         except Exception as e:
             logger.error(f"Completion bookkeeping failed for {job.job_id}: {e}")
 
@@ -539,14 +557,7 @@ class WorkerPool:
                             )
                         except Exception as e:
                             logger.warning(f"Watchdog could not mark {j} failed: {e}")
-                failed = sorted(
-                    j for j in siblings if outcome_of(state, j) != "success"
-                )
-                summary = (
-                    f"{len(siblings) - len(failed)} succeeded, {len(failed)} failed"
-                )
-                if failed:
-                    summary += f" ({', '.join(failed)})"
+                status, summary = invocation_summary(state, siblings)
                 await asyncio.to_thread(
                     close_invocation,
                     tmi_client,
@@ -555,9 +566,7 @@ class WorkerPool:
                 )
             if callback_url and self.config.webhook_secret:
                 cb = AddonCallback(callback_url, self.config.webhook_secret)
-                await asyncio.to_thread(
-                    cb.send_status, "failed" if failed else "completed", summary
-                )
+                await asyncio.to_thread(cb.send_status, status, summary)
         except Exception as e:
             logger.error(f"Watchdog failed for {threat_model_id}: {e}")
 

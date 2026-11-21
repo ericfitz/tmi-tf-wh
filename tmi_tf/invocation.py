@@ -44,8 +44,10 @@ KEY_INVOCATION = "tf_invocation"
 KEY_OPEN = "tf_open"
 KEY_DEADLINE = "tf_deadline"
 CHILD_PREFIX = "tf_child_"
+GAPS_PREFIX = "tf_gaps_"
+GAP_TEXT_MAX = 300
 DEADLINE_SLACK_SECONDS = 300
-OUTCOMES = ("success", "failed", "aborted")
+OUTCOMES = ("success", "gaps", "failed", "aborted")
 
 # TMI 500s on bulk metadata keys containing ":" or "." (#71, probed 2026-09-18).
 _KEY_BAD_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
@@ -58,6 +60,7 @@ class InvocationState:
     open: bool
     deadline: datetime | None
     children: dict[str, str] = field(default_factory=dict)
+    gaps: dict[str, str] = field(default_factory=dict)
 
 
 def lock_for(threat_model_id: str) -> asyncio.Lock:
@@ -100,7 +103,7 @@ def open_invocation(
     # (parent job ids are per-delivery, so every invocation would otherwise add
     # ~N new keys and eventually hit TMI's metadata cap).
     for key in tmi.get_note_metadata(threat_model_id, note_id):
-        if key.startswith(CHILD_PREFIX):
+        if key.startswith((CHILD_PREFIX, GAPS_PREFIX)):
             tmi.delete_note_metadata(threat_model_id, note_id, key)
     tmi.upsert_note_metadata(
         threat_model_id,
@@ -139,23 +142,68 @@ def read_state(tmi: TMILike, threat_model_id: str) -> InvocationState:
             for k, v in meta.items()
             if k.startswith(CHILD_PREFIX) and v in OUTCOMES
         },
+        gaps={
+            k[len(GAPS_PREFIX) :]: v
+            for k, v in meta.items()
+            if k.startswith(GAPS_PREFIX)
+        },
     )
 
 
 def mark_child(
-    tmi: TMILike, threat_model_id: str, job_id: str, outcome: str
+    tmi: TMILike, threat_model_id: str, job_id: str, outcome: str, gaps: str = ""
 ) -> InvocationState:
-    assert outcome in OUTCOMES, outcome
+    if outcome not in OUTCOMES:
+        raise ValueError(f"unknown child outcome: {outcome!r}")
+    if (outcome == "gaps") != bool(gaps):
+        raise ValueError(
+            f"gap text must be given exactly when the outcome is 'gaps' (outcome={outcome!r})"
+        )
     note_id = _note_id(tmi, threat_model_id)
     if note_id is None:
         logger.warning("No status note for %s; cannot mark %s", threat_model_id, job_id)
         return InvocationState(None, False, None)
     tmi.upsert_note_metadata(threat_model_id, note_id, {child_key(job_id): outcome})
+    if outcome == "gaps":
+        # The outcome decides completed versus failed, so it is stored first and
+        # must not depend on TMI accepting the free text.
+        gaps_key = GAPS_PREFIX + child_key(job_id)[len(CHILD_PREFIX) :]
+        try:
+            tmi.upsert_note_metadata(
+                threat_model_id, note_id, {gaps_key: gaps[:GAP_TEXT_MAX]}
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not store gap text for %s: %s", job_id, type(e).__name__
+            )
     return read_state(tmi, threat_model_id)
 
 
 def outcome_of(state: InvocationState, job_id: str) -> str | None:
     return state.children.get(child_key(job_id)[len(CHILD_PREFIX) :])
+
+
+def gaps_of(state: InvocationState, job_id: str) -> str | None:
+    return state.gaps.get(child_key(job_id)[len(CHILD_PREFIX) :])
+
+
+def invocation_summary(state: InvocationState, siblings: list[str]) -> tuple[str, str]:
+    """Callback status (`completed` or `failed`) and message for a finished invocation."""
+    failed = sorted(
+        j for j in siblings if outcome_of(state, j) not in ("success", "gaps")
+    )
+    base = f"{len(siblings) - len(failed)} succeeded, {len(failed)} failed"
+    if failed:
+        base += f" ({', '.join(failed)})"
+    gapped = [j for j in siblings if outcome_of(state, j) == "gaps"]
+    if not gapped:
+        return ("failed" if failed else "completed", base)
+    details = " | ".join(
+        f"{j}: {gaps_of(state, j) or 'gaps not recorded'}" for j in gapped
+    )
+    if failed:
+        return ("failed", f"{base}; gaps: {details}")
+    return ("completed", f"completed with gaps: {details} ({base})")
 
 
 def all_reported(state: InvocationState, siblings: list[str]) -> bool:

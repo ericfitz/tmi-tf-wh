@@ -1,7 +1,10 @@
 """Tests for invocation state kept as metadata on the parent status note."""
 
 from datetime import UTC, datetime, timedelta
+from itertools import product
 from unittest.mock import MagicMock
+
+import pytest
 
 from tmi_tf import invocation as inv
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME
@@ -12,6 +15,8 @@ class FakeTMI:
 
     def __init__(self):
         self.metadata: dict[str, str] = {}
+        self.upserts: list[dict[str, str]] = []
+        self.reject_prefix: str | None = None  # upserts with such a key raise
         self.lines: list[str] = []
         self.note: MagicMock | None = MagicMock(id="note-1", name=STATUS_NOTE_NAME)
 
@@ -27,6 +32,11 @@ class FakeTMI:
 
     def upsert_note_metadata(self, tm, note_id, metadata):
         assert note_id == "note-1"
+        if self.reject_prefix and any(
+            k.startswith(self.reject_prefix) for k in metadata
+        ):
+            raise RuntimeError("TMI rejected the value")
+        self.upserts.append(dict(metadata))
         self.metadata.update(metadata)
 
     def delete_note_metadata(self, tm, note_id, key):
@@ -137,3 +147,148 @@ def test_debouncer_forget_allows_immediate_reaccept():
 def test_lock_for_is_per_threat_model():
     assert inv.lock_for("tm1") is inv.lock_for("tm1")
     assert inv.lock_for("tm1") is not inv.lock_for("tm2")
+
+
+def st(children, gaps=None):
+    return inv.InvocationState(
+        "p1", True, NOW, dict(_keyed(children)), dict(_keyed(gaps or {}))
+    )
+
+
+def _keyed(d):
+    return {inv.child_key(j)[len(inv.CHILD_PREFIX) :]: v for j, v in d.items()}
+
+
+def test_mark_child_gaps_stores_outcome_first_then_text():
+    tmi = FakeTMI()
+    state = inv.mark_child(
+        tmi, "tm1", "p1:aws", "gaps", "DFD not generated (HTTP 429 rate_limit_error)"
+    )
+    assert inv.outcome_of(state, "p1:aws") == "gaps"
+    assert (
+        inv.gaps_of(state, "p1:aws") == "DFD not generated (HTTP 429 rate_limit_error)"
+    )
+    assert [set(u) for u in tmi.upserts] == [{"tf_child_p1_aws"}, {"tf_gaps_p1_aws"}]
+
+
+def test_outcome_survives_a_rejected_gap_text():
+    """TMI refusing the free text must not turn `completed with gaps` into `failed`."""
+    tmi = FakeTMI()
+    tmi.reject_prefix = "tf_gaps_"
+    state = inv.mark_child(tmi, "tm1", "p1:aws", "gaps", "some text")
+    assert inv.outcome_of(state, "p1:aws") == "gaps"
+    assert inv.gaps_of(state, "p1:aws") is None
+    assert inv.invocation_summary(state, ["p1:aws"]) == (
+        "completed",
+        "completed with gaps: p1:aws: gaps not recorded (1 succeeded, 0 failed)",
+    )
+
+
+def test_gap_text_is_cut_to_the_limit():
+    tmi = FakeTMI()
+    state = inv.mark_child(tmi, "tm1", "p1:aws", "gaps", "x" * 2000)
+    text = inv.gaps_of(state, "p1:aws")
+    assert text is not None
+    assert len(text) == inv.GAP_TEXT_MAX == 300
+
+
+@pytest.mark.parametrize(
+    ("outcome", "gaps"), [("gaps", ""), ("success", "text"), ("failed", "text")]
+)
+def test_gap_text_must_match_outcome(outcome, gaps):
+    tmi = FakeTMI()
+    with pytest.raises(ValueError):
+        inv.mark_child(tmi, "tm1", "p1:aws", outcome, gaps)
+    assert tmi.upserts == []
+
+
+def test_unknown_outcome_is_rejected():
+    tmi = FakeTMI()
+    with pytest.raises(ValueError):
+        inv.mark_child(tmi, "tm1", "p1:aws", "partial")
+    assert tmi.upserts == []
+
+
+def test_read_state_ignores_unknown_stored_outcome():
+    tmi = FakeTMI()
+    tmi.metadata = {"tf_child_p1_aws": "partial", "tf_child_p1_gcp": "gaps"}
+    assert inv.read_state(tmi, "tm1").children == {"p1_gcp": "gaps"}
+
+
+def test_open_invocation_clears_old_gap_keys():
+    tmi = FakeTMI()
+    tmi.metadata = {
+        "tf_gaps_p1_aws": "old text",
+        "tf_child_p1_aws": "gaps",
+        "tf_other": "keep",
+    }
+    inv.open_invocation(tmi, "tm1", "inv2", ["a"], NOW)
+    assert not any(k.startswith(("tf_gaps_", "tf_child_")) for k in tmi.metadata)
+    assert tmi.metadata["tf_other"] == "keep"
+
+
+@pytest.mark.parametrize(
+    ("children", "gaps", "expected"),
+    [
+        (
+            {"p1:a": "success", "p1:b": "success"},
+            {},
+            ("completed", "2 succeeded, 0 failed"),
+        ),
+        (
+            {"p1:a": "success", "p1:b": "failed"},
+            {},
+            ("failed", "1 succeeded, 1 failed (p1:b)"),
+        ),
+        ({"p1:a": "success"}, {}, ("failed", "1 succeeded, 1 failed (p1:b)")),
+        (
+            {"p1:a": "aborted", "p1:b": "success"},
+            {},
+            ("failed", "1 succeeded, 1 failed (p1:a)"),
+        ),
+        (
+            {"p1:a": "gaps", "p1:b": "success"},
+            {"p1:a": "25 of 28 threats not analyzed (HTTP 429 rate_limit_error)"},
+            (
+                "completed",
+                (
+                    "completed with gaps: p1:a: 25 of 28 threats not analyzed "
+                    "(HTTP 429 rate_limit_error) (2 succeeded, 0 failed)"
+                ),
+            ),
+        ),
+        (
+            {"p1:a": "gaps", "p1:b": "gaps"},
+            {"p1:a": "A", "p1:b": "B"},
+            (
+                "completed",
+                "completed with gaps: p1:a: A | p1:b: B (2 succeeded, 0 failed)",
+            ),
+        ),
+        (
+            {"p1:a": "gaps", "p1:b": "failed"},
+            {"p1:a": "A"},
+            ("failed", "1 succeeded, 1 failed (p1:b); gaps: p1:a: A"),
+        ),
+        (
+            {"p1:a": "gaps", "p1:b": "success"},
+            {},
+            (
+                "completed",
+                "completed with gaps: p1:a: gaps not recorded (2 succeeded, 0 failed)",
+            ),
+        ),
+    ],
+)
+def test_invocation_summary(children, gaps, expected):
+    assert inv.invocation_summary(st(children, gaps), ["p1:a", "p1:b"]) == expected
+
+
+def test_invocation_summary_status_is_only_completed_or_failed():
+    """TMI's callback status enums accept nothing else; `gaps` is note-metadata only."""
+    outcomes = [None, *inv.OUTCOMES]
+    for a, b in product(outcomes, outcomes):
+        children = {j: o for j, o in (("p1:a", a), ("p1:b", b)) if o is not None}
+        gaps = {j: "t" for j, o in children.items() if o == "gaps"}
+        status, _ = inv.invocation_summary(st(children, gaps), ["p1:a", "p1:b"])
+        assert status in ("completed", "failed")

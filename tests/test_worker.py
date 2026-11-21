@@ -288,10 +288,12 @@ class TestFanout:
 
 
 class TestCompletion:
-    def _run_child(self, pool, job, result_success=True, raise_exc=None):
+    def _run_child(self, pool, job, result_success=True, raise_exc=None, gaps=None):
         tmi = MagicMock()
         result = AnalysisResult(
-            success=result_success, errors=["boom"] if not result_success else []
+            success=result_success,
+            errors=["boom"] if not result_success else [],
+            gaps=gaps or [],
         )
         with (
             patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
@@ -353,6 +355,43 @@ class TestCompletion:
         cb.send_status.assert_called_once_with(
             "failed", "1 succeeded, 1 failed (p1:aws)"
         )
+
+    def test_child_with_gaps_is_marked_gaps_and_callback_says_completed_with_gaps(
+        self,
+    ):
+        pool, _queue = _pool()
+        gaps = [
+            "25 of 28 threats not analyzed (HTTP 429 rate_limit_error)",
+            "DFD not generated (HTTP 429 rate_limit_error)",
+        ]
+        text = "; ".join(gaps)
+        state = InvocationState("p1", True, None, {"p1_aws": "gaps"}, {"p1_aws": text})
+        with (
+            patch("tmi_tf.worker.mark_child", return_value=state) as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+        ):
+            cb = self._run_child(pool, _child("p1:aws", ["p1:aws"]), gaps=gaps)
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "gaps", text)
+        cb.send_status.assert_called_once_with(
+            "completed",
+            "completed with gaps: p1:aws: 25 of 28 threats not analyzed "
+            "(HTTP 429 rate_limit_error); DFD not generated (HTTP 429 rate_limit_error) "
+            "(1 succeeded, 0 failed)",
+        )
+        close.assert_called_once()
+        assert close.call_args.args[2].startswith(
+            "Invocation complete: completed with gaps: "
+        )
+
+    def test_clean_child_still_calls_mark_child_with_four_arguments(self):
+        pool, _queue = _pool()
+        state = InvocationState("p1", True, None, {"p1_aws": "success"})
+        with (
+            patch("tmi_tf.worker.mark_child", return_value=state) as mark,
+            patch("tmi_tf.worker.close_invocation"),
+        ):
+            self._run_child(pool, _child("p1:aws", ["p1:aws"]))
+        mark.assert_called_once_with(ANY, "tm1", "p1:aws", "success")
 
     def test_late_mark_after_close_sends_nothing(self):
         pool, _queue = _pool()
@@ -545,6 +584,47 @@ class TestWatchdog:
         )
         cb_cls.return_value.send_status.assert_called_once_with(
             "completed", "2 succeeded, 0 failed"
+        )
+
+    def test_watchdog_reports_gaps_from_stored_state(self):
+        pool, _ = _pool()
+        state = InvocationState(
+            "p1",
+            True,
+            None,
+            {"p1_aws": "gaps", "p1_gcp": "success"},
+            {"p1_aws": "A"},
+        )
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated", return_value=MagicMock()
+            ),
+            patch("tmi_tf.worker.read_state", return_value=state),
+            patch("tmi_tf.worker.mark_child") as mark,
+            patch("tmi_tf.worker.close_invocation") as close,
+            patch("tmi_tf.worker.AddonCallback") as cb_cls,
+        ):
+
+            async def go():
+                # deadline already passed: no sleep inside the watchdog
+                pool._arm_watchdog(
+                    "tm1",
+                    "p1",
+                    ["p1:aws", "p1:gcp"],
+                    datetime.now(UTC) - timedelta(seconds=1),
+                    "https://cb",
+                )
+                await asyncio.wait_for(pool._watchdogs["tm1"], 5)
+
+            asyncio.run(go())
+        mark.assert_not_called()
+        close.assert_called_once_with(
+            ANY,
+            "tm1",
+            "Invocation timed out: completed with gaps: p1:aws: A (2 succeeded, 0 failed)",
+        )
+        cb_cls.return_value.send_status.assert_called_once_with(
+            "completed", "completed with gaps: p1:aws: A (2 succeeded, 0 failed)"
         )
 
     def test_watchdog_does_nothing_if_already_closed(self):
