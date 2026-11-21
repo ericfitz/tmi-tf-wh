@@ -322,8 +322,11 @@ budget, a slow DFD call could pass `JOB_TIMEOUT`: the worker would report
   `DFD_MIN_SECONDS` = 60 s of the DFD budget remains, else
   `min(1200, budget.remaining())`.
 - `None` skips the DFD: no call is made and the failure reason is `deadline reached`.
-- Otherwise the value is the DFD call's `timeout`. A timed-out call is not retried,
-  because no wait fits in what is left of the budget.
+- Otherwise the value is the DFD call's `timeout`. Per the section 12 question 6
+  amendment, `_dfd_timeout` is evaluated per attempt through `timeout_fn`, not once: an
+  attempt for which it returns `None` raises `DeadlineReached` and the DFD fails with the
+  gap `deadline reached`. Residual: on a streamed call the value is an httpx per-read
+  timeout, so a stream that keeps producing chunks is not wall-clock bounded.
 
 ### 6.4 Run-level gaps
 
@@ -395,8 +398,10 @@ carries "completed with gaps:", survives.
   an int or digit string in 100..599, else `None`.
 - `error_hint(e)`:
   - `LLMOutputError` -> `unparseable response`
-  - a class named `APIConnectionError` in the MRO -> `connection_error` (LiteLLM's 500
-    there is synthetic; no HTTP response was received)
+  - a class named `APIConnectionError` in the MRO, unless `APITimeoutError` is also in the
+    MRO -> `connection_error` (LiteLLM's 500 there is synthetic; no HTTP response was
+    received). A timeout (`litellm.Timeout`) carries a status and reads `HTTP 408 timeout`
+    (controller ruling F1).
   - known status -> `HTTP {status} {label}` with `label` from a fixed map
     (400 invalid_request_error, 401 authentication_error, 403 permission_error,
     404 not_found_error, 408 timeout, 413 request_too_large, 429 rate_limit_error,
