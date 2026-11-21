@@ -761,3 +761,56 @@ class TestRejection:
         assert ports(edges[0]) == (None, "left")
         assert ports(edges[1]) == ("right", None)
         assert ports(edges[2]) == ("right", "left")
+
+
+class TestMalformedFlows:
+    @staticmethod
+    def edges(flows, caplog=None):
+        comps = [
+            make_component("c1", "A", "compute"),
+            make_component("c2", "B", "compute"),
+        ]
+        return get_edge_cells(DFDBuilder(comps, flows).build_cells())
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"id": "x", "name": "n", "target_id": "c2"},
+            {"id": "x", "name": "n", "source_id": "c1"},
+            {"id": "x", "name": "n", "source_id": None, "target_id": "c2"},
+            {"id": "x", "name": "n", "source_id": "c1", "target_id": 7},
+            {"id": "x", "name": "n", "source_id": ["c1"], "target_id": "c2"},
+            "not a dict",
+        ],
+    )
+    def test_flow_without_str_endpoints_is_skipped(self, bad, caplog):
+        good = make_flow("ok", "c1", "c2")
+        with caplog.at_level(logging.WARNING):
+            edges = self.edges([bad, good])
+        assert len(edges) == 1
+        assert any("Skipping flow" in r.getMessage() for r in caplog.records)
+
+    def test_missing_name_uses_empty_label(self):
+        flow = {"id": "f", "source_id": "c1", "target_id": "c2"}
+        (edge,) = self.edges([flow])
+        assert edge["labels"][0]["attrs"]["text"]["text"] == ""
+
+    def test_non_str_name_uses_empty_label(self):
+        flow = {"id": "f", "name": 5, "source_id": "c1", "target_id": "c2"}
+        (edge,) = self.edges([flow])
+        assert edge["labels"][0]["attrs"]["text"]["text"] == ""
+
+    @pytest.mark.parametrize("value", ["yes", 1, None, "true"])
+    def test_non_bool_bidirectional_is_false(self, value, caplog):
+        flow = make_flow("f", "c1", "c2")
+        flow["bidirectional"] = value
+        with caplog.at_level(logging.WARNING):
+            edges = self.edges([flow])
+        assert len(edges) == 1
+        assert any("bidirectional" in r.getMessage() for r in caplog.records)
+
+    def test_caller_flows_are_not_mutated(self):
+        flow = make_flow("f", "c1", "c2")
+        flow["bidirectional"] = "yes"
+        self.edges([flow])
+        assert flow["bidirectional"] == "yes"

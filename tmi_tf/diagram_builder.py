@@ -87,6 +87,7 @@ class DFDBuilder:
         """
         self.components = components
         self.flows = flows
+        self._input_flows = flows
         self.cells: list[dict[str, Any]] = []
         self.component_cells: dict[str, dict[str, Any]] = {}  # id -> cell mapping
         self._components: list[dict[str, Any]] = []  # accepted, input order
@@ -122,6 +123,7 @@ class DFDBuilder:
         self.component_cells = {}
         self._layout = None
         self._normalize_components()
+        self._normalize_flows()
         if not self._components:
             return self.cells
 
@@ -297,6 +299,36 @@ class DFDBuilder:
                 cell["parent"] = parent_cell["id"]
 
         return cell
+
+    def _normalize_flows(self) -> None:
+        """Replace `self.flows` with a validated copy; the caller's dicts are not changed.
+
+        A flow that is not a dict, or whose source_id/target_id is missing or not a
+        str, is skipped with a warning. A non-str name becomes ""; a non-bool
+        `bidirectional` becomes False.
+        """
+        clean: list[dict[str, Any]] = []
+        for flow in self._input_flows:
+            if not isinstance(flow, dict):
+                logger.warning("Skipping flow %r: not an object", flow)
+                continue
+            fid = flow.get("id", "unknown")
+            src, tgt = flow.get("source_id"), flow.get("target_id")
+            if not isinstance(src, str) or not isinstance(tgt, str):
+                logger.warning(
+                    "Skipping flow %s: source_id and target_id must be strings", fid
+                )
+                continue
+            flow = dict(flow)
+            if not isinstance(flow.get("name"), str):
+                flow["name"] = ""
+            if not isinstance(flow.get("bidirectional", False), bool):
+                logger.warning(
+                    "Flow %s: bidirectional is not a bool; treating as False", fid
+                )
+                flow["bidirectional"] = False
+            clean.append(flow)
+        self.flows = clean
 
     def _build_node_metadata(self, component: dict[str, Any]) -> list[dict[str, str]]:
         """
