@@ -20,7 +20,7 @@ from typing import Any
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.cvss_scorer import score_cvss4_vector
-from tmi_tf.error_hints import error_hint
+from tmi_tf.error_hints import LLMOutputError, error_hint, step_row
 from tmi_tf.json_extract import extract_json_array, extract_json_object
 from tmi_tf.metadata_scan import (
     InjectionHit,
@@ -545,6 +545,7 @@ class LLMAnalyzer:
         start_time = time.time()
         script_findings: list[dict[str, Any]] = []
         script_review_error = ""
+        step = "Prescan"
 
         try:
             # Get and format Terraform contents
@@ -584,6 +585,7 @@ class LLMAnalyzer:
 
             # Phase 1: Inventory Extraction (static analysis + semantic LLM,
             # or the full-LLM prompt when static analysis yields nothing)
+            step = "Phase 1 (Inventory)"
             if status_callback:
                 status_callback("Phase 1 (Inventory) started")
             logger.info("Phase 1: Extracting inventory for %s", terraform_repo.name)
@@ -595,7 +597,7 @@ class LLMAnalyzer:
             total_cost += cost
 
             if not inventory:
-                raise ValueError(
+                raise LLMOutputError(
                     "Phase 1 (inventory) returned no usable JSON after 2 attempts "
                     "(truncated or malformed output). "
                     "Check logs for finish_reason, token counts, and response preview."
@@ -607,9 +609,10 @@ class LLMAnalyzer:
                 len(inventory.get("services", [])),
             )
             if status_callback:
-                status_callback("Phase 1 (Inventory) complete")
+                status_callback(step_row(step))
 
             # Phase 2: Infrastructure Analysis
+            step = "Phase 2 (Infrastructure)"
             if status_callback:
                 status_callback("Phase 2 (Infrastructure) started")
             logger.info("Phase 2: Analyzing infrastructure for %s", terraform_repo.name)
@@ -631,7 +634,7 @@ class LLMAnalyzer:
             total_cost += cost
 
             if not infrastructure:
-                raise ValueError("Phase 2 (infrastructure) returned empty result")
+                raise LLMOutputError("Phase 2 (infrastructure) returned empty result")
 
             logger.info(
                 "Phase 2 complete: %d relationships, %d data flows",
@@ -639,9 +642,10 @@ class LLMAnalyzer:
                 len(infrastructure.get("data_flows", [])),
             )
             if status_callback:
-                status_callback("Phase 2 (Infrastructure) complete")
+                status_callback(step_row(step))
 
             # Phase 3a: Threat Identification
+            step = "Phase 3a (Threat Identification)"
             if status_callback:
                 status_callback("Phase 3a (Threat Identification) started")
             logger.info("Phase 3a: Identifying threats for %s", terraform_repo.name)
@@ -672,10 +676,11 @@ class LLMAnalyzer:
             logger.info("Phase 3a complete: identified %d threats", len(raw_threats))
             if status_callback:
                 status_callback(
-                    f"Phase 3a complete: {len(raw_threats)} threats identified"
+                    step_row(step, detail=f"{len(raw_threats)} threats identified")
                 )
 
             # Script review (isolated call) + static/injection findings -> raw threats
+            step = "Script review"
             if status_callback:
                 status_callback("Script review started")
             (
@@ -702,6 +707,16 @@ class LLMAnalyzer:
             logger.info(
                 "Script/metadata findings: %d added to phase 3b", len(extra_threats)
             )
+            if status_callback:
+                status_callback(
+                    step_row(
+                        step,
+                        error=script_review_error or None,
+                        detail=""
+                        if script_review_error
+                        else f"{len(extra_threats)} findings added",
+                    )
+                )
 
             jev_summary = ""
             if self.jev_shadow is not None:
@@ -720,6 +735,7 @@ class LLMAnalyzer:
                     logger.warning("jev_shadow: finish failed: %s", type(e).__name__)
 
             # Phase 3b: Per-Threat Analysis (sequential, one LLM call per threat)
+            step = "Phase 3b (Per-Threat Analysis)"
             if status_callback:
                 status_callback("Phase 3b (Per-Threat Analysis) started")
             security_findings: list[dict[str, Any]] = []
@@ -737,6 +753,14 @@ class LLMAnalyzer:
                         "Phase 3b: job deadline reached; skipping %d threat(s)",
                         skipped,
                     )
+                    if status_callback:
+                        status_callback(
+                            step_row(
+                                f"Phase 3b: threats {i}-{len(raw_threats)} "
+                                f"of {len(raw_threats)}",
+                                error="skipped, deadline reached",
+                            )
+                        )
                     break
                 threat_name = raw_threat.get("name", "Unnamed Threat")
                 logger.info(
@@ -745,10 +769,12 @@ class LLMAnalyzer:
                     len(raw_threats),
                     threat_name,
                 )
-                if status_callback:
-                    status_callback(
-                        f"Phase 3b: Analyzing threat {i}/{len(raw_threats)}"
-                    )
+                # The row is written once, in the finally below, from this
+                # outcome, so a callback error cannot turn a kept finding into
+                # a counted failure. outcome_set stays False if a BaseException
+                # interrupts the threat: no row is written for it.
+                outcome_set = False
+                outcome_error: str | None = None
 
                 try:
                     affected = ", ".join(raw_threat.get("affected_components", []))
@@ -785,6 +811,7 @@ class LLMAnalyzer:
                         )
                         failed += 1
                         note_hint("unparseable response")
+                        outcome_set, outcome_error = True, "unparseable response"
                         continue
 
                     # One corrective turn if any CWE is outside the allowlist
@@ -883,6 +910,7 @@ class LLMAnalyzer:
                         },
                     }
                     security_findings.append(finding)
+                    outcome_set, outcome_error = True, None
 
                 except LLMRefusalError as e:
                     refused += 1
@@ -895,6 +923,7 @@ class LLMAnalyzer:
                     logger.warning(
                         "Phase 3b: model refused to analyze threat '%s'", threat_name
                     )
+                    outcome_set, outcome_error = True, "refused (content_filter)"
                     continue
                 except Exception as e:
                     logger.error(
@@ -902,7 +931,23 @@ class LLMAnalyzer:
                     )
                     failed += 1
                     note_hint(error_hint(e))
+                    outcome_set, outcome_error = True, error_hint(e)
                     continue
+                finally:
+                    if outcome_set and status_callback:
+                        try:
+                            status_callback(
+                                step_row(
+                                    f"Phase 3b: threat {i}/{len(raw_threats)}",
+                                    error=outcome_error,
+                                )
+                            )
+                        except Exception as cb_err:
+                            # Never log str(cb_err); BaseException (cancel) passes.
+                            logger.warning(
+                                "Phase 3b: status row failed: %s",
+                                type(cb_err).__name__,
+                            )
 
             logger.info(
                 "Phase 3b complete: %d threats analyzed out of %d identified",
@@ -917,8 +962,24 @@ class LLMAnalyzer:
             refusals = "; ".join(refusal_parts)
             if refusals and status_callback:
                 status_callback(f"Model refusals (content_filter): {refusals}")
+            gaps = ThreatGaps(
+                identified=len(raw_threats),
+                failed=failed,
+                refused=refused,
+                skipped=skipped,
+                hints=tuple(hints),
+            )
             if status_callback:
-                status_callback("Phase 3 (Security) complete")
+                gap_text = gaps.summary()
+                status_callback(
+                    step_row(step, error=gap_text)
+                    if gap_text
+                    else step_row(
+                        step,
+                        detail=f"{len(security_findings)} of {len(raw_threats)} "
+                        "threats analyzed",
+                    )
+                )
 
             elapsed_time = time.time() - start_time
 
@@ -953,18 +1014,22 @@ class LLMAnalyzer:
                 script_review_error=script_review_error,
                 jev_summary=jev_summary,
                 refusals=refusals,
-                threat_gaps=ThreatGaps(
-                    identified=len(raw_threats),
-                    failed=failed,
-                    refused=refused,
-                    skipped=skipped,
-                    hints=tuple(hints),
-                ),
+                threat_gaps=gaps,
             )
 
         except Exception as e:
             logger.error("Failed to analyze %s: %s", terraform_repo.name, e)
             elapsed_time = time.time() - start_time
+            if status_callback:
+                try:
+                    status_callback(step_row(step, error=e))
+                except Exception as cb_err:
+                    # Best-effort; never log str(cb_err).
+                    logger.warning(
+                        "Failure row for %s not written: %s",
+                        step,
+                        type(cb_err).__name__,
+                    )
             return TerraformAnalysis(
                 repo_name=terraform_repo.name,
                 repo_url=terraform_repo.url,

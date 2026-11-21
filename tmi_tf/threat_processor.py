@@ -6,6 +6,7 @@ from typing import Any
 
 from tmi_tf.config import prompts_dir
 from tmi_tf.cwe_699 import CWE_699_IDS
+from tmi_tf.error_hints import error_hint
 from tmi_tf.json_extract import extract_json_array
 from tmi_tf.providers import LLMProvider
 from tmi_tf.retry import retry_transient_llm_call
@@ -121,6 +122,8 @@ class ThreatProcessor:
             llm_provider: LLM provider instance
         """
         self.llm_provider = llm_provider
+        # Distinct hints for threats create_threats_in_tmi could not create.
+        self.create_error_hints: list[str] = []
         self._load_prompts()
 
         # Token and cost tracking for threat extraction
@@ -288,6 +291,7 @@ class ThreatProcessor:
             f"Creating {len(threats)} threats in threat model {threat_model_id}"
         )
 
+        self.create_error_hints = []
         created_threats = []
         for threat in threats:
             try:
@@ -321,6 +325,9 @@ class ThreatProcessor:
                 logger.info(f"Created threat: {threat.name}")
             except Exception as e:
                 logger.error(f"Failed to create threat '{threat.name}': {e}")
+                hint = error_hint(e)
+                if hint not in self.create_error_hints:
+                    self.create_error_hints.append(hint)
                 # Continue with next threat
                 continue
 

@@ -6,6 +6,7 @@ both the CLI command and the webhook worker.
 
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ from tmi_tf.artifact_metadata import (
 from tmi_tf.config import Config
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
 from tmi_tf.diagram_builder import DFDBuilder
+from tmi_tf.error_hints import error_hint, step_row
 from tmi_tf.github_client import GitHubClient
 from tmi_tf.jev_shadow import jev_shadow_from_env
 from tmi_tf.llm_analyzer import LLMAnalyzer, LLMRefusalError, TerraformAnalysis
@@ -47,6 +49,23 @@ DFD_MAX_TIMEOUT = 1200.0
 
 class _DfdSkipped(Exception):
     """Internal: the DFD window is too short; no call and no diagram."""
+
+
+def threats_not_created_text(
+    hints: Sequence[str],
+    *,
+    missing: int | None = None,
+    total: int | None = None,
+    phrase: str = "threats not created",
+) -> str:
+    """Text for threats that could not be created in TMI.
+
+    With counts: ``"{missing} of {total} {phrase} ({hints})"``; without:
+    ``"{phrase} ({hints})"``. The status row uses the default phrase; the run
+    gap text passes ``"threats not created in TMI"``.
+    """
+    head = phrase if missing is None else f"{missing} of {total} {phrase}"
+    return f"{head} ({', '.join(hints) or 'unknown error'})"
 
 
 def _retry_budgets(
@@ -285,6 +304,7 @@ def run_analysis(
         AnalysisResult with success flag, analyses, and generated content.
     """
     errors: list[str] = []
+    step = "Initialization"
 
     try:
         analysis_budget, dfd_budget = _retry_budgets(deadline, time.monotonic())
@@ -352,7 +372,7 @@ def run_analysis(
                 ) as tf_repo:
                     if tf_repo:
                         tmi_client.update_status_note(
-                            threat_model_id, f"Clone complete: {repo_name}"
+                            threat_model_id, step_row(f"Clone {repo_name}")
                         )
 
                         # Detect Terraform environments
@@ -456,11 +476,26 @@ def run_analysis(
                         logger.warning(
                             f"Skipping {repo.name} - no Terraform files found"
                         )
+                        tmi_client.update_status_note(
+                            threat_model_id,
+                            step_row(
+                                f"Clone {repo_name}", error="no Terraform files found"
+                            ),
+                        )
 
             except Exception as e:
                 error_msg = f"Failed to analyze {repo.name}: {e}"
                 logger.error(error_msg)
                 errors.append(error_msg)
+                try:
+                    tmi_client.update_status_note(
+                        threat_model_id, step_row(f"Repository {repo.name}", error=e)
+                    )
+                except Exception as note_err:
+                    logger.warning(
+                        "Repository failure row not written: %s",
+                        type(note_err).__name__,
+                    )
                 continue
 
         if not analyses:
@@ -493,6 +528,7 @@ def run_analysis(
             diagram_name = f"Infrastructure Data Flow Diagram ({model_label}, {ts})"
 
         # Generate reports
+        step = "Inventory report"
         tmi_client.update_status_note(threat_model_id, "Generating inventory report")
         logger.info("\n[6/9] Generating inventory report...")
         inventory_content = markdown_gen.generate_inventory_report(
@@ -502,6 +538,7 @@ def run_analysis(
             environment_name=selected_env_name,
         )
 
+        step = "Analysis report"
         tmi_client.update_status_note(threat_model_id, "Generating analysis report")
         logger.info("\n[7/9] Generating analysis report...")
         analysis_content = markdown_gen.generate_analysis_report(
@@ -519,6 +556,7 @@ def run_analysis(
         repo_word = "repository" if len(repo_short_names) == 1 else "repositories"
         repo_list = ", ".join(repo_short_names)
 
+        step = "Inventory report"
         inv_note = tmi_client.create_or_update_note(
             threat_model_id=threat_model_id,
             name=inventory_note_name,
@@ -541,7 +579,9 @@ def run_analysis(
             )
         except Exception as e:
             logger.warning(f"Failed to set inventory note metadata: {e}")
+        tmi_client.update_status_note(threat_model_id, step_row(step))
 
+        step = "Analysis report"
         analysis_note = tmi_client.create_or_update_note(
             threat_model_id=threat_model_id,
             name=analysis_note_name,
@@ -558,19 +598,23 @@ def run_analysis(
             )
         except Exception as e:
             logger.warning(f"Failed to set analysis note metadata: {e}")
+        tmi_client.update_status_note(threat_model_id, step_row(step))
 
         # Generate and create data flow diagram
+        # dfd_error is "" only when the DFD was created or skip_diagram is set.
+        dfd_error = ""
+        dfd_cells = 0
+        step = "DFD diagram"
         if not skip_diagram:
-            tmi_client.update_status_note(threat_model_id, "Generating DFD diagram")
             logger.info("\n[8/9] Generating data flow diagram...")
             dfd_timeout = _dfd_timeout(dfd_budget)
-            dfd_skipped_for_deadline = dfd_timeout is None  # noqa: F841 (Task 6)
             try:
                 if dfd_timeout is None:
                     logger.warning(
                         "Skipping DFD generation: not enough time before the job deadline"
                     )
                     raise _DfdSkipped
+                tmi_client.update_status_note(threat_model_id, "Generating DFD diagram")
                 dfd_generator = DFDLLMGenerator(
                     llm_provider,
                     retry_budget=dfd_budget,
@@ -624,6 +668,7 @@ def run_analysis(
                         services=combined_inventory.get("services"),
                     )
                     cells = builder.build_cells()
+                    dfd_cells = len(cells)
 
                     diagram = tmi_client.create_or_update_diagram(
                         threat_model_id=threat_model_id,
@@ -655,10 +700,12 @@ def run_analysis(
                         logger.warning(f"Failed to set diagram metadata: {e}")
                 else:
                     logger.warning("Failed to generate structured data for diagram")
+                    dfd_error = dfd_generator.last_error or "unknown error"
 
             except _DfdSkipped:
-                pass
+                dfd_error = "deadline reached"
             except LLMRefusalError as e:
+                dfd_error = "refused (content_filter)"
                 # The analysis note is already written; rewrite it so its
                 # job info lists the refusal (#89).
                 logger.error(f"Diagram not generated: {e}")
@@ -687,11 +734,24 @@ def run_analysis(
             except Exception as e:
                 logger.error(f"Failed to generate diagram: {e}")
                 logger.info("Continuing without diagram...")
+                dfd_error = error_hint(e)
+
+            tmi_client.update_status_note(
+                threat_model_id,
+                step_row(step, error=dfd_error)
+                if dfd_error
+                else step_row(step, detail=f"{dfd_cells} cells"),
+            )
 
         else:
             logger.info("\n[8/9] Skipping diagram generation (skip_diagram)")
 
         # Create threats from security issues
+        # threats_not_created is "" or the gap text of spec section 6.4.
+        threats_not_created = ""
+        step = "Threat creation"
+        creation_error = ""
+        created_count = 0
         if not skip_threats:
             tmi_client.update_status_note(threat_model_id, "Creating threats")
             logger.info(
@@ -748,16 +808,35 @@ def run_analysis(
                     logger.info(
                         f"Successfully created {len(created_threats)} threats in TMI"
                     )
+                    missing = len(all_threats) - len(created_threats)
+                    if missing:
+                        threats_not_created = threats_not_created_text(
+                            threat_processor.create_error_hints,
+                            missing=missing,
+                            total=len(all_threats),
+                        )
+                    created_count = len(created_threats)
                 else:
                     logger.info("No threats extracted from analyses")
 
             except Exception as e:
                 logger.error(f"Failed to create threats: {e}")
                 logger.info("Continuing without threat creation...")
+                creation_error = error_hint(e)
+                threats_not_created = threats_not_created_text([creation_error])
+
+            if creation_error:
+                row = step_row(step, error=creation_error)
+            elif threats_not_created:
+                row = step_row(step, error=threats_not_created)
+            else:
+                row = step_row(step, detail=f"{created_count} created")
+            tmi_client.update_status_note(threat_model_id, row)
 
         else:
             logger.info("\n[9/9] Skipping threat creation (skip_threats)")
 
+        step = "Finalization"
         all_failed = not any(a.success for a in analyses)
         if all_failed:
             # #53: every LLM analysis failed (e.g. phase 1 unparseable twice);
@@ -784,4 +863,8 @@ def run_analysis(
         error_msg = f"Fatal error: {e}"
         logger.exception(error_msg)
         errors.append(error_msg)
+        try:
+            tmi_client.update_status_note(threat_model_id, step_row(step, error=e))
+        except Exception as note_err:
+            logger.warning("Fatal failure row not written: %s", type(note_err).__name__)
         return AnalysisResult(success=False, errors=errors)

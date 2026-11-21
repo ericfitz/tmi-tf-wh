@@ -4,6 +4,7 @@
 import json
 from unittest.mock import MagicMock
 
+import litellm  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 import pytest
 from llm_errors import FakeClock, rate_limit_error
 
@@ -772,3 +773,190 @@ class TestTimeoutFn:
         provider.complete.side_effect = [self._ok()]
         call_llm_checked(provider, "s", "u", "x", timeout=77.0)
         assert provider.complete.call_args.args[3] == 77.0
+
+
+class TestStatusRows:
+    def _run(self, effects, **kwargs):
+        provider = _make_provider()
+        provider.complete.side_effect = effects
+        rows: list[str] = []
+        analyzer = LLMAnalyzer(provider, **kwargs)
+        result = analyzer.analyze_repository(
+            _make_tf_repo(), status_callback=rows.append
+        )
+        return result, rows
+
+    def _head(self, threats):
+        return [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+            _make_llm_response(json.dumps(threats)),
+        ]
+
+    def test_happy_path_rows(self):
+        result, rows = self._run(
+            [*self._head(THREE[:1]), _make_llm_response(json.dumps(THREAT_ANALYSIS))]
+        )
+        assert result.success is True
+        assert rows == [
+            "Phase 1 (Inventory) started",
+            "Phase 1 (Inventory): succeeded",
+            "Phase 2 (Infrastructure) started",
+            "Phase 2 (Infrastructure): succeeded",
+            "Phase 3a (Threat Identification) started",
+            "Phase 3a (Threat Identification): succeeded (1 threats identified)",
+            "Script review started",
+            "Script review: succeeded (0 findings added)",
+            "Phase 3b (Per-Threat Analysis) started",
+            "Phase 3b: threat 1/1: succeeded",
+            "Phase 3b (Per-Threat Analysis): succeeded (1 of 1 threats analyzed)",
+        ]
+
+    def test_phase_failure_row_names_the_phase_and_the_http_status(self):
+        err = litellm.AuthenticationError(
+            message="x", llm_provider="anthropic", model="m"
+        )
+        result, rows = self._run(
+            [_make_llm_response(json.dumps(INVENTORY)), err, err, err]
+        )
+        assert rows[-1] == (
+            "Phase 2 (Infrastructure): failed: HTTP 401 authentication_error"
+        )
+        assert result.success is False
+
+    def test_unusable_phase_1_output_row(self):
+        result, rows = self._run(
+            [_make_llm_response("not json"), _make_llm_response("not json")]
+        )
+        assert rows[-1] == "Phase 1 (Inventory): failed: unparseable response"
+        assert result.success is False
+
+    def test_unusable_phase_2_output_row(self):
+        result, rows = self._run(
+            [
+                _make_llm_response(json.dumps(INVENTORY)),
+                _make_llm_response("not json"),
+                _make_llm_response("not json"),
+            ]
+        )
+        assert rows[-1] == "Phase 2 (Infrastructure): failed: unparseable response"
+        assert result.success is False
+
+    def test_per_threat_and_deadline_rows(self, monkeypatch):
+        clock = FakeClock()
+        monkeypatch.setattr("tmi_tf.retry.time.sleep", clock.sleep)
+        monkeypatch.setattr("tmi_tf.retry.random.random", lambda: 0.0)
+        limited = rate_limit_error({"retry-after": "40"})
+        result, rows = self._run(
+            [
+                *self._head(THREE),
+                _make_llm_response(json.dumps(THREAT_ANALYSIS)),
+                limited,
+                limited,
+                limited,
+            ],
+            retry_budget=RetryBudget(100.0, clock),
+        )
+        assert result.success is True
+        assert "Phase 3b: threat 1/3: succeeded" in rows
+        assert "Phase 3b: threat 2/3: failed: HTTP 429 rate_limit_error" in rows
+        assert "Phase 3b: threats 3-3 of 3: failed: skipped, deadline reached" in rows
+        assert rows[-1] == (
+            "Phase 3b (Per-Threat Analysis): failed: 2 of 3 threats not analyzed "
+            "(HTTP 429 rate_limit_error, deadline reached)"
+        )
+        assert not any(r.startswith("Phase 3b: Analyzing") for r in rows)
+
+    def test_refused_and_unparseable_threat_rows(self):
+        refused = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=0,
+            cost=0.01,
+            finish_reason="content_filter",
+        )
+        _, rows = self._run(
+            [
+                *self._head(THREE[:2]),
+                refused,
+                _make_llm_response("not json"),
+            ]
+        )
+        assert "Phase 3b: threat 1/2: failed: refused (content_filter)" in rows
+        assert "Phase 3b: threat 2/2: failed: unparseable response" in rows
+        assert "Model refusals (content_filter): phase 3b: 1 threat(s)" in rows
+
+    def test_script_review_failure_row(self, monkeypatch):
+        monkeypatch.setattr(
+            LLMAnalyzer,
+            "_review_scripts",
+            lambda self, name, blobs, hits: ([], 0, 0, 0.0, "boom", []),
+        )
+        _, rows = self._run(
+            [*self._head(THREE[:1]), _make_llm_response(json.dumps(THREAT_ANALYSIS))]
+        )
+        assert "Script review: failed: boom" in rows
+
+    def test_no_row_contains_exception_text(self):
+        err = litellm.AuthenticationError(
+            message="sk-secret-body", llm_provider="anthropic", model="m"
+        )
+        _, rows = self._run([_make_llm_response(json.dumps(INVENTORY)), err, err, err])
+        assert rows
+        assert not any("sk-secret-body" in r for r in rows)
+
+    def test_callback_failure_on_a_success_row_keeps_the_finding(self):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            *self._head(THREE[:2]),
+            _make_llm_response(json.dumps(THREAT_ANALYSIS)),
+            _make_llm_response(json.dumps(THREAT_ANALYSIS)),
+        ]
+
+        def cb(row: str) -> None:
+            if row.startswith("Phase 3b: threat") and row.endswith("succeeded"):
+                raise RuntimeError("note write failed")
+
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_tf_repo(), status_callback=cb
+        )
+        gaps = result.threat_gaps
+        assert result.success is True
+        assert len(result.security_findings) == 2
+        assert gaps == ThreatGaps(identified=2)
+        assert gaps.identified == len(result.security_findings) + gaps.not_analyzed
+
+    def test_callback_base_exception_still_propagates(self):
+        class Abort(BaseException):
+            pass
+
+        provider = _make_provider()
+        provider.complete.side_effect = self._head(THREE[:1]) + [
+            _make_llm_response(json.dumps(THREAT_ANALYSIS))
+        ]
+
+        def cb(row: str) -> None:
+            if row.startswith("Phase 3b: threat"):
+                raise Abort
+
+        with pytest.raises(Abort):
+            LLMAnalyzer(provider).analyze_repository(
+                _make_tf_repo(), status_callback=cb
+            )
+
+    def test_failure_row_callback_error_does_not_mask_the_failure(self):
+        provider = _make_provider()
+        provider.complete.side_effect = [
+            _make_llm_response("not json"),
+            _make_llm_response("not json"),
+        ]
+
+        def cb(row: str) -> None:
+            if "failed" in row:
+                raise RuntimeError("note write failed")
+
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_tf_repo(), status_callback=cb
+        )
+        assert result.success is False
+        assert "Phase 1" in result.error_message

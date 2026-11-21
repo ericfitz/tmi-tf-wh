@@ -15,8 +15,10 @@ from tmi_tf.analyzer import (
     _retry_budgets,
     resolve_fanout_targets,
     run_analysis,
+    threats_not_created_text,
 )
 from tmi_tf.config import Config
+from tmi_tf.llm_analyzer import ThreatGaps
 from tmi_tf.llm_profiles import LLMProfile
 from tmi_tf.retry import RetryBudget
 
@@ -448,3 +450,307 @@ class TestRunAnalysisDeadline:
         (tmp_path / "second").mkdir()
         _, llm, _ = self._run(tmp_path / "second", None)
         assert llm.call_args.kwargs["retry_budget"] is None
+
+
+class _Http503(Exception):
+    status_code = 503
+
+
+class TestStepRows:
+    def _run(self, tmp_path, *, skip_threats=True, deadline=None, setup=None):
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+        analysis = MagicMock(success=True, refusals="", threat_gaps=ThreatGaps())
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        analysis.inventory = {"components": [], "services": []}
+        analysis.infrastructure = {}
+        analysis.security_findings = []
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        kwargs = {} if deadline is None else {"deadline": deadline}
+        with (
+            clone,
+            gh,
+            prov,
+            llm_cls as llm,
+            md as md_cls,
+            val,
+            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
+            patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
+            patch("tmi_tf.analyzer.DFDBuilder") as builder_cls,
+            patch("tmi_tf.analyzer.ThreatProcessor") as tp_cls,
+        ):
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            dfd_cls.return_value.generate_structured_components.return_value = None
+            dfd_cls.return_value.last_error = ""
+            builder_cls.return_value.build_cells.return_value = [{}] * 12
+            if setup:
+                setup(llm=llm, md=md_cls, dfd=dfd_cls, tp=tp_cls, analysis=analysis)
+            result = run_analysis(
+                Config(), "tm1", tmi, PROFILE, skip_threats=skip_threats, **kwargs
+            )
+        notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
+        return result, notes, tmi, dfd_cls
+
+    def test_dfd_failure_row_carries_the_generator_reason(self, tmp_path):
+        def setup(dfd, **_):
+            dfd.return_value.last_error = "HTTP 429 rate_limit_error"
+
+        _, notes, _, _ = self._run(tmp_path, setup=setup)
+        assert "DFD diagram: failed: HTTP 429 rate_limit_error" in notes
+
+    def test_dfd_failure_without_a_reason_says_unknown(self, tmp_path):
+        def setup(dfd, **_):
+            dfd.return_value.last_error = ""
+
+        _, notes, _, _ = self._run(tmp_path, setup=setup)
+        assert "DFD diagram: failed: unknown error" in notes
+
+    def test_dfd_exception_row_uses_the_hint_not_the_message(self, tmp_path):
+        def setup(dfd, **_):
+            dfd.return_value.generate_structured_components.side_effect = _Http503(
+                "secret-body"
+            )
+
+        _, notes, _, _ = self._run(tmp_path, setup=setup)
+        assert "DFD diagram: failed: HTTP 503 service_unavailable" in notes
+        assert not any("secret-body" in n for n in notes)
+
+    def test_dfd_refusal_keeps_its_row_and_gets_an_outcome_row(self, tmp_path):
+        from tmi_tf.llm_analyzer import LLMRefusalError
+        from tmi_tf.providers import LLMResponse
+
+        refused = LLMResponse(
+            text=None,
+            input_tokens=1,
+            output_tokens=0,
+            cost=0.0,
+            finish_reason="content_filter",
+        )
+
+        def setup(dfd, **_):
+            dfd.return_value.generate_structured_components.side_effect = (
+                LLMRefusalError("DFD generation: model refused", refused)
+            )
+
+        _, notes, _, _ = self._run(tmp_path, setup=setup)
+        assert "Model refusals (content_filter): DFD generation" in notes
+        assert "DFD diagram: failed: refused (content_filter)" in notes
+
+    def test_dfd_skipped_at_the_deadline_row(self, tmp_path):
+        _, notes, tmi, dfd_cls = self._run(tmp_path, deadline=time.monotonic() + 1)
+        assert "DFD diagram: failed: deadline reached" in notes
+        assert "Generating DFD diagram" not in notes
+        dfd_cls.return_value.generate_structured_components.assert_not_called()
+        tmi.create_or_update_diagram.assert_not_called()
+
+    def test_dfd_success_row(self, tmp_path):
+        def setup(dfd, **_):
+            dfd.return_value.generate_structured_components.return_value = {
+                "components": [],
+                "flows": [],
+            }
+
+        _, notes, _, _ = self._run(tmp_path, setup=setup)
+        assert "DFD diagram: succeeded (12 cells)" in notes
+        assert not any(n.startswith("DFD diagram: failed") for n in notes)
+
+    def test_no_dfd_row_when_skip_diagram(self, tmp_path):
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+        analysis = MagicMock(success=True, refusals="", threat_gaps=ThreatGaps())
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        with clone, gh, prov, llm_cls as llm, md, val:
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            run_analysis(
+                Config(), "tm1", tmi, PROFILE, skip_diagram=True, skip_threats=True
+            )
+        notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
+        assert not any(n.startswith("DFD diagram") for n in notes)
+
+    def test_report_and_clone_rows(self, tmp_path):
+        _, notes, _, _ = self._run(tmp_path)
+        for row in (
+            "Clone o_r: succeeded",
+            "Inventory report: succeeded",
+            "Analysis report: succeeded",
+        ):
+            assert row in notes
+        assert "Clone complete: o_r" not in notes
+
+    def test_no_terraform_files_row(self, tmp_path):
+        tmi = _tmi_with_repo()
+
+        @contextmanager
+        def _no_repo(self, repo_url, repo_name, base_temp_dir=None):
+            yield None
+
+        with (
+            patch(
+                "tmi_tf.analyzer.RepositoryAnalyzer.clone_repository_sparse", _no_repo
+            ),
+            patch("tmi_tf.analyzer.GitHubClient.is_github_url", return_value=True),
+            patch("tmi_tf.analyzer.get_llm_provider"),
+            patch("tmi_tf.analyzer.LLMAnalyzer"),
+        ):
+            run_analysis(Config(), "tm1", tmi, PROFILE)
+        notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
+        assert "Clone o_r: failed: no Terraform files found" in notes
+
+    def test_repository_failure_row(self, tmp_path):
+        tmi = _tmi_with_repo()
+
+        @contextmanager
+        def _boom(self, repo_url, repo_name, base_temp_dir=None):
+            raise _Http503("secret-body")
+            yield  # pragma: no cover
+
+        with (
+            patch("tmi_tf.analyzer.RepositoryAnalyzer.clone_repository_sparse", _boom),
+            patch("tmi_tf.analyzer.GitHubClient.is_github_url", return_value=True),
+            patch("tmi_tf.analyzer.get_llm_provider"),
+            patch("tmi_tf.analyzer.LLMAnalyzer"),
+        ):
+            run_analysis(Config(), "tm1", tmi, PROFILE)
+        notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
+        assert "Repository r: failed: HTTP 503 service_unavailable" in notes
+        assert not any("secret-body" in n for n in notes)
+
+    def test_fatal_error_row_names_the_step(self, tmp_path):
+        def setup(md, **_):
+            md.return_value.generate_inventory_report.side_effect = _Http503("x")
+
+        result, notes, _, _ = self._run(tmp_path, setup=setup)
+        assert "Inventory report: failed: HTTP 503 service_unavailable" in notes
+        assert result.success is False
+
+    def test_failed_inventory_note_write_is_labeled_inventory_report(self, tmp_path):
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+        tmi.create_or_update_note.side_effect = _Http503("x")
+        analysis = MagicMock(success=True, refusals="", threat_gaps=ThreatGaps())
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        with (
+            clone,
+            gh,
+            prov,
+            llm_cls as llm,
+            md,
+            val,
+            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
+        ):
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            result = run_analysis(Config(), "tm1", tmi, PROFILE)
+        notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
+        assert "Inventory report: failed: HTTP 503 service_unavailable" in notes
+        assert "Analysis report: succeeded" not in notes
+        assert result.success is False
+
+    def test_fatal_row_write_failure_does_not_mask_the_result(self, tmp_path):
+        def setup(md, **_):
+            md.return_value.generate_inventory_report.side_effect = _Http503("x")
+
+        tree = _tree(tmp_path, ["a"])
+        tmi = _tmi_with_repo()
+
+        def flaky(_tm, msg):
+            if "failed" in msg:
+                raise RuntimeError("note write failed")
+
+        tmi.update_status_note.side_effect = flaky
+        analysis = MagicMock(success=True, refusals="", threat_gaps=ThreatGaps())
+        analysis.repo_name = "r"
+        analysis.repo_url = "https://github.com/o/r"
+        clone, gh, prov, llm_cls, md, val = (
+            TestRunAnalysisEnvironmentSelection()._patches(tree)
+        )
+        with clone, gh, prov, llm_cls as llm, md as md_cls, val:
+            llm.return_value.analyze_repository = MagicMock(return_value=analysis)
+            setup(md=md_cls)
+            result = run_analysis(Config(), "tm1", tmi, PROFILE)
+        assert result.success is False
+        assert any("Fatal error" in e for e in result.errors)
+
+    def _threat_setup(self, hints):
+        def setup(tp, analysis, **_):
+            analysis.security_findings = [{"name": "x"}]
+            analysis.security_input_tokens = 0
+            analysis.security_output_tokens = 0
+            analysis.security_cost = 0.0
+            inst = tp.return_value
+            inst.threats_from_findings.return_value = [MagicMock()] * 3
+            inst.create_threats_in_tmi.return_value = [{}, {}]
+            inst.create_error_hints = hints
+
+        return setup
+
+    def test_threat_creation_rows(self, tmp_path):
+        _, notes, _, _ = self._run(
+            tmp_path,
+            skip_threats=False,
+            setup=self._threat_setup(["HTTP 500 internal_server_error"]),
+        )
+        assert (
+            "Threat creation: failed: 1 of 3 threats not created "
+            "(HTTP 500 internal_server_error)" in notes
+        )
+
+    def test_threat_creation_success_row(self, tmp_path):
+        def setup(tp, analysis, **kw):
+            self._threat_setup([])(tp=tp, analysis=analysis)
+            tp.return_value.create_threats_in_tmi.return_value = [{}] * 3
+
+        _, notes, _, _ = self._run(tmp_path, skip_threats=False, setup=setup)
+        assert "Threat creation: succeeded (3 created)" in notes
+
+    def test_threat_creation_with_nothing_extracted_row(self, tmp_path):
+        _, notes, _, _ = self._run(tmp_path, skip_threats=False)
+        assert "Threat creation: succeeded (0 created)" in notes
+
+    def test_threat_creation_unknown_error_text(self, tmp_path):
+        _, notes, _, _ = self._run(
+            tmp_path, skip_threats=False, setup=self._threat_setup([])
+        )
+        assert (
+            "Threat creation: failed: 1 of 3 threats not created (unknown error)"
+            in notes
+        )
+
+    def test_threat_creation_exception_row(self, tmp_path):
+        def setup(tp, analysis, **_):
+            analysis.security_findings = [{"name": "x"}]
+            tp.return_value.threats_from_findings.side_effect = _Http503("secret-body")
+
+        _, notes, _, _ = self._run(tmp_path, skip_threats=False, setup=setup)
+        assert "Threat creation: failed: HTTP 503 service_unavailable" in notes
+        assert not any("secret-body" in n for n in notes)
+
+
+class TestThreatsNotCreatedText:
+    def test_counts_and_hints(self):
+        assert (
+            threats_not_created_text(["a", "b"], missing=1, total=3)
+            == "1 of 3 threats not created (a, b)"
+        )
+
+    def test_gap_phrase(self):
+        assert (
+            threats_not_created_text(
+                ["a"], missing=2, total=5, phrase="threats not created in TMI"
+            )
+            == "2 of 5 threats not created in TMI (a)"
+        )
+
+    def test_without_counts_and_without_hints(self):
+        assert threats_not_created_text(["a"]) == "threats not created (a)"
+        assert threats_not_created_text([]) == "threats not created (unknown error)"

@@ -143,3 +143,39 @@ class TestFindingSourceMetadata:
             {"key": "script-digest", "value": "abc"},
         ]
         assert second == base and base == [{"key": "llm-profile", "value": "p"}]
+
+
+def _threat(name: str) -> SecurityThreat:
+    return SecurityThreat(name, "d", "Tampering")
+
+
+class _Status500(Exception):
+    status = 500
+
+
+def test_create_threats_records_hints_for_failures():
+    tp = ThreatProcessor(MagicMock())
+    assert tp.create_error_hints == []
+    client = MagicMock()
+    client.create_threat.side_effect = [{"id": "1"}, _Status500("body"), {"id": "3"}]
+    created = tp.create_threats_in_tmi(
+        [_threat("a"), _threat("b"), _threat("c")], "tm", client
+    )
+    assert len(created) == 2
+    assert tp.create_error_hints == ["HTTP 500 internal_server_error"]
+
+
+def test_create_error_hints_are_distinct_in_first_seen_order_and_reset():
+    tp = ThreatProcessor(MagicMock())
+    client = MagicMock()
+    client.create_threat.side_effect = [
+        _Status500("x"),
+        ValueError("y"),
+        _Status500("z"),
+    ]
+    tp.create_threats_in_tmi([_threat("a"), _threat("b"), _threat("c")], "tm", client)
+    assert tp.create_error_hints == ["HTTP 500 internal_server_error", "ValueError"]
+    client.create_threat.side_effect = None
+    client.create_threat.return_value = {"id": "1"}
+    tp.create_threats_in_tmi([_threat("a")], "tm", client)
+    assert tp.create_error_hints == []
