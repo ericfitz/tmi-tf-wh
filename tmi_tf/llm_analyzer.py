@@ -32,7 +32,12 @@ from tmi_tf.metadata_scan import (
 from tmi_tf.providers import LLMProvider, LLMResponse
 from tmi_tf.repo_analyzer import TerraformRepository
 from tmi_tf.retry import DeadlineReached, RetryBudget, retry_transient_llm_call
-from tmi_tf.script_review import build_review_input, merge_findings, parse_review
+from tmi_tf.script_review import (
+    build_review_input,
+    is_review_array,
+    merge_findings,
+    parse_review,
+)
 from tmi_tf.script_scan import (
     RuleHit,
     ScriptBlob,
@@ -553,6 +558,12 @@ class LLMAnalyzer:
             t_in += response.input_tokens
             t_out += response.output_tokens
             cost += response.cost
+            if response.finish_reason == "length" or not is_review_array(
+                response.text or ""
+            ):
+                logger.error("Script review: truncated or unparseable response")
+                errors.append("script review failed: unparseable response")
+                continue
             findings += parse_review(response.text or "", included, self.rules)
         if refused:
             logger.warning(
@@ -1326,15 +1337,21 @@ class LLMAnalyzer:
             system_prompt, user_prompt, phase_name, max_tokens, timeout
         )
 
-        if not response.text:
-            return [], response.input_tokens, response.output_tokens, response.cost
-
+        # Empty, truncated and unparseable answers are failures (as for phases 1
+        # and 2); only a valid JSON array, including [], is a result.
+        if not response.text or response.finish_reason == "length":
+            logger.error(
+                "Phase %s: empty or truncated response (finish_reason=%s)",
+                phase_name,
+                response.finish_reason,
+            )
+            raise LLMOutputError(f"Phase {phase_name}: empty or truncated response")
         parsed = extract_json_array(response.text)
         if parsed is None:
             logger.error(
                 "Phase %s: Failed to parse JSON array from response", phase_name
             )
-            return [], response.input_tokens, response.output_tokens, response.cost
+            raise LLMOutputError(f"Phase {phase_name}: no JSON array in response")
         return parsed, response.input_tokens, response.output_tokens, response.cost
 
     def _format_terraform_contents(self, tf_contents: dict[str, str]) -> str:

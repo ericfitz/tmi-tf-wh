@@ -115,6 +115,12 @@ def build_review_input(
     return "".join(parts), nonce, included, omitted
 
 
+def is_review_array(text: str) -> bool:
+    """True when the answer holds a JSON array (a valid empty one included);
+    False for prose, an object or a truncated answer."""
+    return extract_json_array(text) is not None
+
+
 def parse_review(
     text: str, sent_ids: list[str], rules: list[ScriptRule] | None = None
 ) -> list[dict[str, Any]]:

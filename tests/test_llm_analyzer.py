@@ -1178,3 +1178,60 @@ class TestCachePrefix:
         assert all(
             c.kwargs["cache_prefix"] == "P" for c in provider.complete.call_args_list
         )
+
+
+class TestUnparseableAnswersAreFailures:
+    """Final review Finding 1 (Option A): an empty, truncated or unparseable
+    3a or script-review answer is a failure, never a succeeded row."""
+
+    def _run(self, effects):
+        provider = _make_provider()
+        provider.complete.side_effect = effects
+        rows: list[str] = []
+        result = LLMAnalyzer(provider).analyze_repository(
+            _make_tf_repo(), status_callback=rows.append
+        )
+        return result, rows
+
+    def _two(self):
+        return [
+            _make_llm_response(json.dumps(INVENTORY)),
+            _make_llm_response(json.dumps(INFRASTRUCTURE)),
+        ]
+
+    def test_3a_unparseable_answer_fails(self):
+        result, rows = self._run(
+            [*self._two(), _make_llm_response("here are some threats, no array")]
+        )
+        assert result.success is False
+        assert "Phase 3a (Threat Identification): failed: unparseable response" in rows
+        assert not any("Phase 3a (Threat Identification): succeeded" in r for r in rows)
+        assert not any("here are some threats" in r for r in rows)
+
+    def test_3a_truncated_answer_fails(self):
+        truncated = LLMResponse(
+            text='[{"name": "T", "descr',
+            input_tokens=10,
+            output_tokens=64000,
+            cost=0.01,
+            finish_reason="length",
+        )
+        result, rows = self._run([*self._two(), truncated])
+        assert result.success is False
+        assert "Phase 3a (Threat Identification): failed: unparseable response" in rows
+        assert not any('"name"' in r for r in rows)
+
+    def test_3a_empty_answer_fails(self):
+        empty = LLMResponse(
+            text="", input_tokens=1, output_tokens=0, cost=0.0, finish_reason="stop"
+        )
+        result, rows = self._run([*self._two(), empty, empty, empty])
+        assert result.success is False
+        assert "Phase 3a (Threat Identification): failed: unparseable response" in rows
+
+    def test_3a_valid_empty_array_succeeds(self):
+        result, rows = self._run([*self._two(), _make_llm_response("[]")])
+        assert result.success is True
+        assert (
+            "Phase 3a (Threat Identification): succeeded (0 threats identified)" in rows
+        )

@@ -499,3 +499,67 @@ def test_refused_chunk_is_split_and_only_the_refused_script_flagged():
     ]
     assert [f["affected_components"] for f in refused] == [["aws_instance.web"]]
     assert "script review: 1 script(s)" in result.refusals
+
+
+def _review_row(result, review_text, tf=TF):
+    provider = MagicMock()
+    provider.model, provider.provider = "anthropic/m", "anthropic"
+    result_rows: list[str] = []
+    provider.complete.side_effect = [
+        _resp(
+            {
+                "components": [
+                    {"id": "aws_instance.web", "name": "Web", "purpose": "p"}
+                ],
+                "services": [],
+                "dependencies": [],
+            }
+        ),
+        _resp({"relationships": [], "data_flows": [], "trust_boundaries": []}),
+        _resp([]),
+        review_text,
+        *[
+            _resp({"threat_type": "Tampering", "severity": "High", "cwe_id": []})
+            for _ in range(10)
+        ],
+    ]
+    repo = MagicMock()
+    repo.name, repo.url = "r", "u"
+    repo.get_terraform_content.return_value = {"main.tf": tf}
+    repo.clone_path = None
+    analysis = LLMAnalyzer(provider).analyze_repository(
+        repo, status_callback=result_rows.append
+    )
+    return analysis, result_rows
+
+
+def _llm_text(text, finish_reason="stop"):
+    return LLMResponse(
+        text=text,
+        input_tokens=10,
+        output_tokens=5,
+        cost=0.001,
+        finish_reason=finish_reason,
+    )
+
+
+def test_review_garbage_is_a_failed_step():
+    garbage = "SECRET-MODEL-PROSE no array here"
+    analysis, rows = _review_row(None, _llm_text(garbage))
+    assert analysis.script_review_error == "script review failed: unparseable response"
+    assert "Script review: failed: script review failed: unparseable response" in rows
+    assert not any(r.startswith("Script review: succeeded") for r in rows)
+    assert not any("SECRET-MODEL-PROSE" in r for r in rows)
+    assert analysis.success  # static findings are kept
+
+
+def test_review_truncated_is_a_failed_step():
+    analysis, rows = _review_row(None, _llm_text('[{"script_id": "x', "length"))
+    assert analysis.script_review_error == "script review failed: unparseable response"
+    assert any(r.startswith("Script review: failed:") for r in rows)
+
+
+def test_review_valid_empty_array_is_a_success():
+    analysis, rows = _review_row(None, _llm_text("[]"))
+    assert analysis.script_review_error == ""
+    assert any(r.startswith("Script review: succeeded") for r in rows)
