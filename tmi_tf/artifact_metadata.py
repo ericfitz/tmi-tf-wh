@@ -7,6 +7,8 @@ for all artifacts created by tmi-tf (notes, diagrams, threats).
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from tmi_tf.cell_schema import clean_metadata
+
 # Version identifier for tmi-tf
 TMI_TF_VERSION = "0.1.0"
 
@@ -34,18 +36,21 @@ class ArtifactMetadata:
         Convert to list of metadata key-value dicts for TMI API.
 
         Returns:
-            List of dicts with 'key' and 'value' keys
+            List of dicts with 'key' and 'value' keys; an empty field (such as
+            an unset profile) is omitted, since TMI rejects empty values
         """
-        return [
-            {"key": "creation-agent", "value": self.creation_agent},
-            {"key": "creation-timestamp", "value": self.creation_timestamp},
-            {"key": "llm-provider", "value": self.llm_provider},
-            {"key": "llm-model", "value": self.llm_model},
-            {"key": "llm-profile", "value": self.llm_profile},
-            {"key": "input-tokens", "value": str(self.input_tokens)},
-            {"key": "output-tokens", "value": str(self.output_tokens)},
-            {"key": "cost-estimate-usd", "value": f"{self.cost_estimate_usd:.3f}"},
-        ]
+        return clean_metadata(
+            [
+                ("creation-agent", self.creation_agent),
+                ("creation-timestamp", self.creation_timestamp),
+                ("llm-provider", self.llm_provider),
+                ("llm-model", self.llm_model),
+                ("llm-profile", self.llm_profile),
+                ("input-tokens", str(self.input_tokens)),
+                ("output-tokens", str(self.output_tokens)),
+                ("cost-estimate-usd", f"{self.cost_estimate_usd:.3f}"),
+            ]
+        )
 
 
 def get_rfc3339_timestamp() -> str:

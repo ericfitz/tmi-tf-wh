@@ -9,6 +9,7 @@ import logging
 import uuid
 from typing import Any, ClassVar
 
+from tmi_tf.cell_schema import clean_metadata, validate_cells
 from tmi_tf.layout import compound, routes
 from tmi_tf.layout.compound import (
     Box,
@@ -112,6 +113,9 @@ class DFDBuilder:
 
         Returns:
             List of AntV X6 v2 format cell objects
+
+        Raises:
+            CellSchemaError: a cell does not conform to the TMI Node/Edge schema
         """
         logger.info(
             "Building DFD cells from %d components and %d flows",
@@ -137,6 +141,7 @@ class DFDBuilder:
         # Step 3: Create edge cells for flows
         self._create_edge_cells()
 
+        validate_cells(self.cells)
         logger.info("Generated %d total cells", len(self.cells))
         return self.cells
 
@@ -343,28 +348,19 @@ class DFDBuilder:
         Returns:
             List of metadata key-value dicts
         """
-        metadata = [
-            {"key": "component_id", "value": component["id"]},
-            {"key": "component_type", "value": component["type"]},
-            {"key": "component_subtype", "value": component.get("subtype", "")},
+        entries: list[tuple[str, object]] = [
+            ("component_id", component["id"]),
+            ("component_type", component["type"]),
+            ("component_subtype", component.get("subtype")),
+            ("description", component.get("description")),
+            # Service membership, if the component belongs to a service
+            ("service", self._service_lookup.get(component["id"])),
         ]
-
-        if component.get("description"):
-            metadata.append({"key": "description", "value": component["description"]})
-
-        # Tag with service membership if component belongs to a service
-        service_name = self._service_lookup.get(component["id"])
-        if service_name:
-            metadata.append({"key": "service", "value": service_name})
-
-        # Include LLM-generated metadata properties (region, cidr, etc.)
+        # LLM-generated metadata properties (region, cidr, etc.)
         llm_metadata = component.get("metadata")
         if isinstance(llm_metadata, dict):
-            for key, value in llm_metadata.items():
-                if value is not None:
-                    metadata.append({"key": key, "value": str(value)})
-
-        return metadata
+            entries.extend(llm_metadata.items())
+        return clean_metadata(entries)
 
     def _build_edge_metadata(self, flow: dict[str, Any]) -> list[dict[str, str]]:
         """
@@ -376,14 +372,9 @@ class DFDBuilder:
         Returns:
             List of metadata key-value dicts
         """
-        metadata = []
-        if flow.get("protocol"):
-            metadata.append({"key": "protocol", "value": flow["protocol"]})
-        if flow.get("port") is not None:
-            metadata.append({"key": "port", "value": str(flow["port"])})
-        if flow.get("data_type"):
-            metadata.append({"key": "data_type", "value": flow["data_type"]})
-        return metadata
+        return clean_metadata(
+            (key, flow.get(key)) for key in ("protocol", "port", "data_type")
+        )
 
     @staticmethod
     def _flow_labels(flow: dict[str, Any]) -> tuple[str, str | None]:
@@ -605,7 +596,7 @@ class DFDBuilder:
                 "line": {
                     "stroke": "#333333",
                     "strokeWidth": 2,
-                    "targetMarker": {"name": "block", "width": 12, "height": 8},
+                    "targetMarker": {"name": "classic", "size": 8},
                 }
             },
             "labels": [{"attrs": {"text": {"text": label_text}}}],

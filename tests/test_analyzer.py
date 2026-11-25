@@ -17,6 +17,7 @@ from tmi_tf.analyzer import (
     run_analysis,
     threats_not_created_text,
 )
+from tmi_tf.cell_schema import CellSchemaError
 from tmi_tf.config import Config
 from tmi_tf.llm_analyzer import ThreatGaps
 from tmi_tf.llm_profiles import LLMProfile
@@ -487,12 +488,38 @@ class TestStepRows:
             dfd_cls.return_value.last_error = ""
             builder_cls.return_value.build_cells.return_value = [{}] * 12
             if setup:
-                setup(llm=llm, md=md_cls, dfd=dfd_cls, tp=tp_cls, analysis=analysis)
+                setup(
+                    llm=llm,
+                    md=md_cls,
+                    dfd=dfd_cls,
+                    tp=tp_cls,
+                    analysis=analysis,
+                    builder=builder_cls,
+                )
             result = run_analysis(
                 Config(), "tm1", tmi, PROFILE, skip_threats=skip_threats, **kwargs
             )
         notes = [c.args[1] for c in tmi.update_status_note.call_args_list]
         return result, notes, tmi, dfd_cls
+
+    def test_dfd_schema_violation_writes_no_diagram(self, tmp_path):
+        """Non-conforming cells (#107) fail the DFD step before anything is
+        created in TMI, and the row names the error class, not cell text."""
+
+        def setup(dfd, builder, **_):
+            dfd.return_value.generate_structured_components.return_value = {
+                "components": [],
+                "flows": [],
+            }
+            builder.return_value.build_cells.side_effect = CellSchemaError(
+                ["cells[0].data._metadata[0].value: minLength"]
+            )
+
+        _, notes, tmi, _ = self._run(tmp_path, setup=setup)
+        tmi.create_or_update_diagram.assert_not_called()
+        tmi.create_diagram.assert_not_called()
+        assert "DFD diagram: failed: CellSchemaError" in notes
+        assert not any("minLength" in n for n in notes)
 
     def test_dfd_failure_row_carries_the_generator_reason(self, tmp_path):
         def setup(dfd, **_):

@@ -189,7 +189,7 @@ Each data flow should include:
 - **source_id** - Component ID where data originates
 - **target_id** - Component ID where data goes
 - **protocol** - Protocol used (HTTPS, HTTP, SSH, TLS, TCP, UDP, etc.)
-- **port** - Port number if applicable
+- **port** - Port number if applicable; omit the field when the port is unknown or does not apply (never an empty string)
 - **data_type** - Type of data being transferred (API requests, web traffic, database queries, etc.)
 - **description** - Longer description of the flow if needed (not displayed on the diagram)
 - **bidirectional** - Boolean indicating if this is a two-way communication

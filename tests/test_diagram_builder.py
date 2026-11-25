@@ -814,3 +814,77 @@ class TestMalformedFlows:
         flow["bidirectional"] = "yes"
         self.edges([flow])
         assert flow["bidirectional"] == "yes"
+
+
+class TestTmiMetadataConformance:
+    """Generated cells must satisfy TMI's Metadata schema (#107): TMI accepts
+    an empty value on create but rejects the same cells on a later PATCH."""
+
+    @staticmethod
+    def _metadata(cell: dict) -> dict[str, str]:
+        return {m["key"]: m["value"] for m in cell["data"]["_metadata"]}
+
+    def _edge_metadata(self, **flow_fields) -> dict[str, str]:
+        components = [
+            make_component("a", "A", "compute"),
+            make_component("b", "B", "storage"),
+        ]
+        flow = make_flow("f1", "a", "b", protocol="internal")
+        flow.update(flow_fields)
+        [edge] = get_edge_cells(DFDBuilder(components, [flow]).build_cells())
+        return self._metadata(edge)
+
+    @pytest.mark.parametrize("port", ["", "   ", None])
+    def test_unknown_port_is_omitted(self, port):
+        md = self._edge_metadata(port=port)
+        assert "port" not in md
+        assert md["protocol"] == "internal"
+
+    def test_known_port_is_kept(self):
+        assert self._edge_metadata(port=443)["port"] == "443"
+
+    def test_empty_data_type_is_omitted(self):
+        assert "data_type" not in self._edge_metadata(data_type="")
+
+    def _node_metadata(self, **component_fields) -> dict[str, str]:
+        component = make_component("a", "A", "compute")
+        component.update(component_fields)
+        cells = DFDBuilder([component], []).build_cells()
+        return self._metadata(get_cell(cells, "a"))
+
+    def test_empty_subtype_is_omitted(self):
+        md = self._node_metadata(subtype="")
+        assert "component_subtype" not in md
+        assert md["component_type"] == "compute"
+
+    def test_llm_metadata_is_cleaned(self):
+        md = self._node_metadata(
+            metadata={
+                "region": "us-east-1",
+                "cidr": "",
+                "bad key": "x",
+                "notes": "n" * 3000,
+                "count": 0,
+            }
+        )
+        assert md["region"] == "us-east-1"
+        assert md["count"] == "0"
+        assert "cidr" not in md
+        assert "bad key" not in md
+        assert len(md["notes"]) == 1024
+
+    def test_every_metadata_value_is_non_empty(self):
+        for name, (components, flows) in HAND_CASES.items():
+            for cell in DFDBuilder(components, flows).build_cells():
+                for entry in cell.get("data", {}).get("_metadata", []):
+                    assert entry["value"].strip(), (name, entry["key"])
+
+    def test_target_marker_uses_schema_keys(self):
+        components = [
+            make_component("a", "A", "compute"),
+            make_component("b", "B", "storage"),
+        ]
+        [edge] = get_edge_cells(
+            DFDBuilder(components, [make_flow("f1", "a", "b")]).build_cells()
+        )
+        assert edge["attrs"]["line"]["targetMarker"] == {"name": "classic", "size": 8}

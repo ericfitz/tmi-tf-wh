@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -2279,6 +2279,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "filelock" },
     { name = "gitpython" },
+    { name = "jsonschema" },
     { name = "litellm" },
     { name = "nh3" },
     { name = "oci" },
@@ -2316,6 +2317,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "filelock", specifier = ">=4.2.1" },
     { name = "gitpython", specifier = ">=3.2.1" },
+    { name = "jsonschema", specifier = ">=4.26" },
     { name = "litellm", specifier = ">=1.103.0" },
     { name = "nh3", specifier = ">=0.3.3" },
     { name = "oci", specifier = ">=2.168.2" },
