@@ -32,7 +32,9 @@ METADATA_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9_./:-]+$")
 METADATA_KEY_MAX = 256
 METADATA_VALUE_MAX = 1024
 METADATA_MAX_ITEMS = 100
+LABEL_TEXT_MAX = 256
 _ELLIPSIS = "…"
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 
 NODE_SHAPES = frozenset({"actor", "process", "store", "security-boundary", "text-box"})
 EDGE_SHAPES = frozenset({"flow"})
@@ -76,14 +78,29 @@ def clean_metadata(entries: Iterable[tuple[str, object]]) -> list[dict[str, str]
             continue
         if key in seen:
             continue
-        if len(text) > METADATA_VALUE_MAX:
-            text = text[: METADATA_VALUE_MAX - len(_ELLIPSIS)] + _ELLIPSIS
+        text = _truncate(text, METADATA_VALUE_MAX)
         seen.add(key)
         result.append({"key": key, "value": text})
         if len(result) == METADATA_MAX_ITEMS:
             logger.warning("Metadata capped at %d entries", METADATA_MAX_ITEMS)
             break
     return result
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - len(_ELLIPSIS)] + _ELLIPSIS
+
+
+def clean_text(value: object, limit: int = LABEL_TEXT_MAX) -> str:
+    """Make LLM-supplied label text fit TMI's label schema (`^[^\\x00-\\x1F]*$`,
+    at most 256 chars): None becomes "", control-character runs become one
+    space, the ends are stripped, and over-long text is truncated with an
+    ellipsis."""
+    if value is None:
+        return ""
+    return _truncate(_CONTROL.sub(" ", str(value)).strip(), limit)
 
 
 @cache

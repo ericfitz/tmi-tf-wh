@@ -6,6 +6,7 @@ import logging
 import pytest  # pyright: ignore[reportMissingImports] # ty:ignore[unresolved-import]
 from dfd_cases import HAND_CASES
 
+from tmi_tf.cell_schema import CellSchemaError
 from tmi_tf.diagram_builder import DFDBuilder
 from tmi_tf.layout import compound, routes
 from tmi_tf.layout.compound import EdgeRoute
@@ -888,3 +889,50 @@ class TestTmiMetadataConformance:
             DFDBuilder(components, [make_flow("f1", "a", "b")]).build_cells()
         )
         assert edge["attrs"]["line"]["targetMarker"] == {"name": "classic", "size": 8}
+
+    def test_hostile_label_text_is_normalized(self):
+        """Names and labels are LLM text: control characters and length must
+        fit TMI's label schema, or the whole DFD would now be rejected."""
+        nasty = "Ünï\tname\nline2 " * 30 + "\x07"
+        components = [
+            make_component("a", nasty, "compute"),
+            make_component("b", "B", "storage"),
+        ]
+        flows = [
+            make_flow("f1", "a", "b", name=nasty),
+            make_flow(
+                "f2",
+                "b",
+                "a",
+                bidirectional=True,
+                forward_label=nasty,
+                reverse_label="",
+            ),
+        ]
+        cells = DFDBuilder(components, flows).build_cells()
+        texts = [get_cell(cells, "a")["attrs"]["text"]["text"]] + [
+            label["attrs"]["text"]["text"]
+            for edge in get_edge_cells(cells)
+            for label in edge["labels"]
+        ]
+        for text in texts:
+            assert len(text) <= 256
+            assert not any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in text)
+        assert texts[0].startswith("Ünï name line2")
+        # An empty explicit label falls back to the flow name.
+        assert "flow" in texts
+
+    def test_build_cells_rejects_non_conforming_output(self, monkeypatch):
+        """build_cells is the gate: a builder regression that emits an empty
+        metadata value raises instead of reaching TMI."""
+        monkeypatch.setattr(
+            DFDBuilder,
+            "_build_edge_metadata",
+            lambda self, flow: [{"key": "port", "value": ""}],
+        )
+        components = [
+            make_component("a", "A", "compute"),
+            make_component("b", "B", "storage"),
+        ]
+        with pytest.raises(CellSchemaError):
+            DFDBuilder(components, [make_flow("f1", "a", "b")]).build_cells()

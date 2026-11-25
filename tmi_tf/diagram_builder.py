@@ -9,7 +9,7 @@ import logging
 import uuid
 from typing import Any, ClassVar
 
-from tmi_tf.cell_schema import clean_metadata, validate_cells
+from tmi_tf.cell_schema import clean_metadata, clean_text, validate_cells
 from tmi_tf.layout import compound, routes
 from tmi_tf.layout.compound import (
     Box,
@@ -174,6 +174,9 @@ class DFDBuilder:
             if cid in by_id:
                 logger.warning("Skipping component %r: duplicate id", cid)
                 continue
+            if "name" in component:
+                # Label text must fit TMI's label schema (#107).
+                component = dict(component, name=clean_text(component["name"]))
             accepted.append(component)
             by_id[cid] = component
 
@@ -327,6 +330,10 @@ class DFDBuilder:
             flow = dict(flow)
             if not isinstance(flow.get("name"), str):
                 flow["name"] = ""
+            # Label text must fit TMI's label schema (#107).
+            for key in ("name", "forward_label", "reverse_label"):
+                if key in flow:
+                    flow[key] = clean_text(flow[key])
             if not isinstance(flow.get("bidirectional", False), bool):
                 logger.warning(
                     "Flow %s: bidirectional is not a bool; treating as False", fid
@@ -381,8 +388,8 @@ class DFDBuilder:
         """Forward label and, for a bidirectional flow, the reverse label."""
         if flow.get("bidirectional", False):
             return (
-                flow.get("forward_label", flow["name"]),
-                flow.get("reverse_label", flow["name"]),
+                flow.get("forward_label") or flow["name"],
+                flow.get("reverse_label") or flow["name"],
             )
         return flow["name"], None
 

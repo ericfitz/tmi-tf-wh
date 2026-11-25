@@ -12,6 +12,7 @@ from tmi_tf.cell_schema import (
     SCHEMA_PATH,
     CellSchemaError,
     clean_metadata,
+    clean_text,
     validate_cells,
 )
 
@@ -117,6 +118,33 @@ class TestCleanMetadata:
         assert len(out) == METADATA_MAX_ITEMS
 
 
+class TestCleanText:
+    def test_plain_text_untouched(self):
+        assert clean_text("Web Server") == "Web Server"
+
+    def test_none_is_empty(self):
+        assert clean_text(None) == ""
+
+    def test_non_string_is_stringified(self):
+        assert clean_text(443) == "443"
+
+    def test_control_runs_become_one_space(self):
+        assert clean_text("a\n\tb\x07c\x7f") == "a b c"
+
+    def test_ends_stripped(self):
+        assert clean_text("\n  x  \r\n") == "x"
+
+    def test_non_ascii_kept(self):
+        assert clean_text("Ünïcödé") == "Ünïcödé"
+
+    def test_truncated_with_ellipsis(self):
+        out = clean_text("y" * 300)
+        assert len(out) == 256 and out.endswith("…")
+
+    def test_at_limit_untouched(self):
+        assert clean_text("y" * 256) == "y" * 256
+
+
 class TestValidateCells:
     def test_conforming_cells_pass(self, cells):
         validate_cells(cells)
@@ -128,6 +156,10 @@ class TestValidateCells:
         """The prod bug: {"key": "port", "value": ""} on an edge."""
         cells[3]["data"]["_metadata"].append({"key": "port", "value": ""})
         assert _problems(cells) == ["cells[3].data._metadata[1].value: minLength"]
+
+    def test_control_character_label_rejected(self, cells):
+        cells[1]["attrs"] = {"text": {"text": "a\nb"}}
+        assert _problems(cells) == ["cells[1].attrs.text.text: pattern"]
 
     def test_bad_metadata_key_rejected(self, cells):
         cells[1]["data"]["_metadata"][0]["key"] = "bad key"
