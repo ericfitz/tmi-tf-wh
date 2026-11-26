@@ -90,6 +90,21 @@ class TestPhase3Decomposition:
         assert finding["score"] is not None
         assert len(finding["cvss"]) == 1
 
+    def test_phase3b_output_cap_leaves_room_for_thinking(self):
+        """Fable/Mythos always think, and thinking counts toward max_tokens;
+        a 4000 cap left 3 of 32 answers empty in production (#110)."""
+        analysis = {"threat_type": "Tampering", "severity": "High", "cwe_id": []}
+        provider = _make_provider()
+        provider.complete.side_effect = self._one_threat_responses(
+            _make_llm_response(json.dumps(analysis))
+        )
+
+        LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        _, _, max_tokens, timeout = provider.complete.call_args_list[3].args
+        assert max_tokens >= 16000
+        assert timeout >= 300.0
+
     def _one_threat_responses(self, *threat_analysis_responses):
         inventory = {"components": [{"id": "aws_s3_bucket.b"}], "services": []}
         infrastructure = {"relationships": [], "data_flows": [], "trust_boundaries": []}

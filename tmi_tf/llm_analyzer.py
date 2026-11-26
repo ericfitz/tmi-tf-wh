@@ -58,6 +58,13 @@ from tmi_tf.threat_processor import ALLOWED_CWE_IDS, disallowed_cwe_ids
 
 logger = logging.getLogger(__name__)
 
+# Phase 3b per-threat output cap. Reasoning models (Fable/Mythos 5.x) always
+# think, and thinking counts toward max_tokens: at 4000, 3 of 32 answers came
+# back empty (#110). Billing is per token used, so a higher cap costs nothing
+# extra; the timeout covers ~16k tokens at observed output speeds.
+PHASE3B_MAX_TOKENS = 16000
+PHASE3B_TIMEOUT = 300.0
+
 
 def format_terraform_contents(tf_contents: dict[str, str]) -> str:
     """One ``### File: path`` section with a fenced hcl block per file, sorted."""
@@ -868,8 +875,8 @@ class LLMAnalyzer:
                             system_prompt=self.threat_analysis_system,
                             user_prompt=threat_analysis_user,
                             phase_name=f"threat_analysis_{i}",
-                            max_tokens=4000,
-                            timeout=120.0,
+                            max_tokens=PHASE3B_MAX_TOKENS,
+                            timeout=PHASE3B_TIMEOUT,
                             cache_prefix=threat_prefix,
                         )
                     )
@@ -921,8 +928,8 @@ class LLMAnalyzer:
                                 system_prompt=self.threat_analysis_system,
                                 user_prompt=retry_user,
                                 phase_name=f"threat_analysis_{i}_cwe_retry",
-                                max_tokens=4000,
-                                timeout=120.0,
+                                max_tokens=PHASE3B_MAX_TOKENS,
+                                timeout=PHASE3B_TIMEOUT,
                                 cache_prefix=threat_prefix,
                             )
                         except LLMRefusalError as e:
