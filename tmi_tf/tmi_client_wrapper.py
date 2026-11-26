@@ -858,7 +858,7 @@ class TMIClient:
 
     def create_or_update_diagram(
         self, threat_model_id: str, name: str, cells: list[dict]
-    ) -> dict:
+    ) -> str:
         """
         Create a new diagram or update existing one with the same name.
 
@@ -868,19 +868,21 @@ class TMIClient:
             cells: List of cell objects in X6 format
 
         Returns:
-            Created or updated Diagram dict
+            The diagram's ID. Not read from the update response: the
+            generated models' to_dict() drops read-only fields such as id (#109).
         """
         existing_diagram = self.find_diagram_by_name(threat_model_id, name)
 
         if existing_diagram:
             logger.info(f"Diagram '{name}' already exists, updating...")
-            raw_id = existing_diagram.id
-            diagram_id = str(raw_id) if raw_id else ""
-            return self.update_diagram_cells(threat_model_id, diagram_id, cells)
+            if not existing_diagram.id:
+                raise ValueError(f"Existing diagram '{name}' has no id")
+            diagram_id = str(existing_diagram.id)
         else:
             logger.info(f"Creating new diagram '{name}'...")
-            diagram_id = self.create_diagram(threat_model_id, name)
-            return self.update_diagram_cells(threat_model_id, diagram_id, cells)
+            diagram_id = str(self.create_diagram(threat_model_id, name))
+        self.update_diagram_cells(threat_model_id, diagram_id, cells)
+        return diagram_id
 
     def create_threat(
         self,

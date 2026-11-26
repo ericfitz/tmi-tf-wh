@@ -700,13 +700,10 @@ def run_analysis(
                     cells = builder.build_cells()
                     dfd_cells = len(cells)
 
-                    diagram = tmi_client.create_or_update_diagram(
+                    diagram_id = tmi_client.create_or_update_diagram(
                         threat_model_id=threat_model_id,
                         name=diagram_name,
                         cells=cells,
-                    )
-                    diagram_id = (
-                        diagram["id"] if isinstance(diagram, dict) else diagram.id
                     )
                     logger.info(f"Diagram created/updated successfully: {diagram_id}")
                     logger.info(f"Diagram contains {len(cells)} cells")

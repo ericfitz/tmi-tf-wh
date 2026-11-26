@@ -220,3 +220,47 @@ def test_get_diagram_cells_without_cells_is_empty():
     client = _client()
     client.sub_resources_api.get_threat_model_diagram.return_value.to_json.return_value = '{"cells": null}'
     assert client.get_diagram_cells("tm1", "d1") == []
+
+
+DIAGRAM_ID = "0edc1891-0152-41bd-b751-43ed28803a3a"
+
+
+def _real_dfd_diagram():
+    """A generated DfdDiagram, whose to_dict() drops read-only fields (#109)."""
+    from tmi_client.models import DfdDiagram  # type: ignore[import-not-found]
+
+    return DfdDiagram.from_dict(
+        {
+            "id": DIAGRAM_ID,
+            "name": "d",
+            "type": "DFD-1.0.0",
+            "created_at": "2026-11-26T00:00:00Z",
+            "modified_at": "2026-11-26T00:00:00Z",
+            "cells": [],
+        }
+    )
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_create_or_update_diagram_returns_id_with_real_model(existing):
+    client = _client()
+    api = client.sub_resources_api
+    client.find_diagram_by_name = MagicMock(
+        return_value=MagicMock(id=DIAGRAM_ID) if existing else None
+    )
+    api.create_threat_model_diagram.return_value = _real_dfd_diagram()
+    api.patch_threat_model_diagram.return_value = _real_dfd_diagram()
+
+    diagram_id = client.create_or_update_diagram("tm1", "d", cells=[])
+
+    assert diagram_id == DIAGRAM_ID
+    assert isinstance(diagram_id, str)
+    assert api.patch_threat_model_diagram.call_args.kwargs["diagram_id"] == DIAGRAM_ID
+
+
+def test_create_or_update_diagram_rejects_existing_diagram_without_id():
+    client = _client()
+    client.find_diagram_by_name = MagicMock(return_value=MagicMock(id=None))
+    with pytest.raises(ValueError, match="no id"):
+        client.create_or_update_diagram("tm1", "d", cells=[])
+    client.sub_resources_api.patch_threat_model_diagram.assert_not_called()
