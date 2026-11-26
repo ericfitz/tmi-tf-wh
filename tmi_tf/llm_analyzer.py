@@ -877,6 +877,7 @@ class LLMAnalyzer:
                             phase_name=f"threat_analysis_{i}",
                             max_tokens=PHASE3B_MAX_TOKENS,
                             timeout=PHASE3B_TIMEOUT,
+                            attempts=2,
                             cache_prefix=threat_prefix,
                         )
                     )

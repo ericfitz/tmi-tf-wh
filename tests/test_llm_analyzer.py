@@ -105,6 +105,29 @@ class TestPhase3Decomposition:
         assert max_tokens >= 16000
         assert timeout >= 300.0
 
+    def test_truncated_answer_is_retried_once_and_kept(self):
+        """A 3b answer cut off at max_tokens with empty text (#110) gets one
+        retry; its tokens are counted and the second answer is kept."""
+        analysis = {"threat_type": "Tampering", "severity": "High", "cwe_id": []}
+        truncated = LLMResponse(
+            text=None,
+            input_tokens=100,
+            output_tokens=16000,
+            cost=0.01,
+            finish_reason="length",
+        )
+        provider = _make_provider()
+        provider.complete.side_effect = self._one_threat_responses(
+            truncated, _make_llm_response(json.dumps(analysis))
+        )
+
+        result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
+
+        assert provider.complete.call_count == 5
+        assert [f["name"] for f in result.security_findings] == ["Public S3 Bucket"]
+        assert result.threat_gaps.not_analyzed == 0
+        assert result.output_tokens == 4 * 50 + 16000
+
     def _one_threat_responses(self, *threat_analysis_responses):
         inventory = {"components": [{"id": "aws_s3_bucket.b"}], "services": []}
         infrastructure = {"relationships": [], "data_flows": [], "trust_boundaries": []}
@@ -250,6 +273,7 @@ class TestPhase3Decomposition:
             _make_llm_response(json.dumps(infrastructure)),
             _make_llm_response(json.dumps(raw_threats)),
             _make_llm_response("not valid json"),
+            _make_llm_response("not valid json"),  # the one retry (#110)
             _make_llm_response(json.dumps(threat_b_analysis)),
         ]
 
@@ -658,6 +682,7 @@ class TestPhase3bRateLimit:
             _make_llm_response(json.dumps(INFRASTRUCTURE)),
             _make_llm_response(json.dumps(two)),
             _make_llm_response("not json"),  # T1
+            _make_llm_response("not json"),  # T1 retry (#110)
             _make_llm_response(json.dumps(THREAT_ANALYSIS)),  # T2
         ]
         result = LLMAnalyzer(provider).analyze_repository(_make_tf_repo())
@@ -898,6 +923,7 @@ class TestStatusRows:
                 *self._head(THREE[:2]),
                 refused,
                 _make_llm_response("not json"),
+                _make_llm_response("not json"),  # retry (#110)
             ]
         )
         assert "Phase 3b: threat 1/2: failed: refused (content_filter)" in rows
