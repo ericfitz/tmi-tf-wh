@@ -16,6 +16,8 @@ uv run pytest tests/test_repo_analyzer.py::TestDetectEnvironments::test_finds_si
 
 Done gate: `uv run ruff check tmi_tf/ tests/ scripts/ && uv run ruff format --check tmi_tf/ tests/ scripts/ && uv run pyright && uv run pytest tests/`
 
+Workflow: no pull requests in this repo (Eric's decision). Work on a local branch, then merge it into `main` locally and push `main` once Eric approves.
+
 ## Deploy (AWS EKS)
 
 Cluster `tmi-eks` (us-east-1), namespace `tmi-tf`, `AWS_PROFILE=tmi`. Deploys are Eric's call.
