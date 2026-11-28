@@ -596,3 +596,39 @@ def test_review_valid_empty_array_is_a_success():
     analysis, rows = _review_row(None, _llm_text("[]"))
     assert analysis.script_review_error == ""
     assert any(r.startswith("Script review: succeeded") for r in rows)
+
+
+def test_review_retries_at_most_once():
+    cut = _llm_text('[{"script_id": "x', "length")
+    analysis, _, calls = _review_run([cut, cut, cut])
+    review_calls = [c for c in calls if "untrusted-script" in str(c.args[1])]
+    assert len(review_calls) == 2
+    assert analysis.script_review_error == "script review failed: unparseable response"
+
+
+def test_split_chunk_scripts_each_get_their_own_retry():
+    """A refused 2-script chunk is re-reviewed one script at a time; a
+    truncated per-script answer is retried once and the run has no error."""
+    tf = TF + (
+        'resource "aws_instance" "db" {\n  ami = "ami-2"\n'
+        "  user_data = <<-EOT\n    #!/bin/bash\n    echo hi\n  EOT\n}\n"
+    )
+    seen: list[str] = []
+    truncated_once: set[str] = set()
+
+    def on_review(u: str) -> LLMResponse:
+        web, db = "aws_instance.web:user_data" in u, "aws_instance.db:user_data" in u
+        if web and db:
+            seen.append("both")
+            return _refused()
+        sid = "web" if web else "db"
+        seen.append(sid)
+        if sid == "web" and sid not in truncated_once:
+            truncated_once.add(sid)
+            return _llm_text('[{"script_id": "x', "length")
+        return _llm_text("[]")
+
+    result = _run_with(_review_or_3b(on_review), tf=tf)
+    assert result.success, result.error_message
+    assert result.script_review_error == ""
+    assert seen == ["both", "web", "web", "db"]

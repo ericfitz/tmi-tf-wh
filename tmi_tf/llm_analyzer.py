@@ -577,7 +577,12 @@ class LLMAnalyzer:
             if response.finish_reason == "length" or not is_review_array(
                 response.text or ""
             ):
-                logger.error(
+                log = (
+                    logger.warning
+                    if tries[key] < SCRIPT_REVIEW_ATTEMPTS
+                    else logger.error
+                )
+                log(
                     "Script review: truncated or unparseable response "
                     "(finish_reason=%s, attempt %d/%d)",
                     response.finish_reason,
