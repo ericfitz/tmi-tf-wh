@@ -4,7 +4,8 @@
 # key itself. Fields and rules: docs/superpowers/specs/2026-09-22-llm-profiles-design.md
 # Name each profile after its model with '.' replaced by '_' (ADR 0004).
 # After adding or removing one, re-run scripts/addon-profile-param.py.
-# ANTHROPIC_CVP_API_KEY: filled from the cyber key; reaches Mythos 5.2 (ADR 0004).
+# ANTHROPIC_CVP_API_KEY: filled from the cyber key; used only for Mythos (ADR 0006).
+# ANTHROPIC_API_KEY: standard key, no Mythos access; every other Anthropic profile.
 # OPENAI_API_KEY: standard key, no cyber-model access.
 profiles:
   claude-mythos-5-2:
@@ -16,37 +17,37 @@ profiles:
     provider: anthropic
     model: claude-fable-5-2
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   claude-fable-5-1:
     provider: anthropic
     model: claude-fable-5-1
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   claude-fable-5:
     provider: anthropic
     model: claude-fable-5
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   claude-opus-4-8:
     provider: anthropic
     model: claude-opus-4-8
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   claude-opus-5-5:
     provider: anthropic
     model: claude-opus-5-5
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   claude-opus-5:
     provider: anthropic
     model: claude-opus-5
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   claude-sonnet-5:
     provider: anthropic
     model: claude-sonnet-5
     auth: api_key
-    api_key: ANTHROPIC_CVP_API_KEY
+    api_key: ANTHROPIC_API_KEY
   # gpt-6 models reject max_tokens on chat completions; responses works.
   gpt-6_2-astra:
     provider: openai

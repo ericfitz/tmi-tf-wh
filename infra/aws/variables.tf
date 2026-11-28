@@ -118,7 +118,7 @@ variable "tmi_client_secret" {
 }
 
 variable "llm_api_keys" {
-  description = "LLM API keys keyed by the env var name the profiles reference (e.g. ANTHROPIC_CVP_API_KEY)"
+  description = "LLM API keys keyed by the env var name the profiles reference (e.g. ANTHROPIC_API_KEY)"
   type        = map(string)
   sensitive   = true
   default     = {}

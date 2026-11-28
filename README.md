@@ -46,7 +46,8 @@ cp .env.example .env
 
 3. Edit `.env` and set your API keys:
 ```bash
-ANTHROPIC_CVP_API_KEY=your_anthropic_api_key_here  # names match api_key in llm-profiles.yaml
+ANTHROPIC_API_KEY=your_anthropic_api_key_here  # names match api_key in llm-profiles.yaml
+# ANTHROPIC_CVP_API_KEY=...  # cyber key, only for the Mythos profile
 GITHUB_TOKEN=your_github_token_here  # Optional
 ```
 
@@ -65,7 +66,7 @@ All configuration is managed through the `.env` file:
 | `TMI_OAUTH_IDP` | OAuth identity provider | `google` |
 | `LLM_PROFILE` | Default LLM profile (see [LLM profiles](#llm-profiles)) | *Required unless every run names one* |
 | `LLM_PROFILES_FILE` | Profiles file | `llm-profiles.yaml` in the project root |
-| *key vars* | API keys, under the names the profiles' `api_key` fields reference (e.g. `ANTHROPIC_CVP_API_KEY`) | Required for the profiles you use |
+| *key vars* | API keys, under the names the profiles' `api_key` fields reference (e.g. `ANTHROPIC_API_KEY`) | Required for the profiles you use |
 | `GITHUB_TOKEN` | GitHub personal access token | *Optional* |
 | `MAX_REPOS` | Maximum repositories to analyze | `3` |
 | `CLONE_TIMEOUT` | Git clone timeout in seconds | `300` |

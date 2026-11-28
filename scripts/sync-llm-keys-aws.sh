@@ -34,6 +34,7 @@ YES=false
 # Secret key : ~/.keys file : variable that file exports
 KEYS=(
     "ANTHROPIC_CVP_API_KEY:ANTHROPIC_API_KEY_CYBER:ANTHROPIC_API_KEY"
+    "ANTHROPIC_API_KEY:ANTHROPIC_API_KEY:ANTHROPIC_API_KEY"
     "OPENAI_API_KEY:OPENAI_API_KEY:OPENAI_API_KEY"
 )
 
@@ -78,7 +79,7 @@ for entry in "${KEYS[@]}"; do
         echo "${name}: ~/.keys/${file} does not export ${var}; stopping" >&2
         exit 1
     fi
-    pod_hash=$(pod_value "$name" | hash8)
+    pod_hash=$(pod_value "$name" 2>/dev/null | hash8)
     if [[ "$local_hash" == "$pod_hash" ]]; then
         echo "${name}: unchanged (${local_hash})"
     else
@@ -93,7 +94,8 @@ if [[ ${#CHANGED[@]} -eq 0 ]]; then
 fi
 [[ "$CHECK" == true ]] && exit 1
 
-# Rewrite only the changed lines. The value goes through the environment,
+# Rewrite only the changed lines; a key with no line yet is added at the top of
+# the llm_api_keys block. The value goes through the environment,
 # never argv, and is restricted to characters that need no HCL escaping.
 umask 077
 for entry in "${CHANGED[@]}"; do
@@ -105,6 +107,13 @@ if not re.fullmatch(r"[A-Za-z0-9_.\-]+", value):
     sys.exit(f"{name}: value has characters that would need HCL escaping; not written")
 text = open(path).read()
 new, n = re.subn(rf'^(\s*{name}\s*=\s*)"[^"\n]*"', lambda m: f'{m.group(1)}"{value}"', text, flags=re.M)
+if n == 0:
+    new, n = re.subn(r'^(\s*llm_api_keys\s*=\s*\{[ \t]*\n)', lambda m: f'{m.group(1)}  {name} = "{value}"\n', text, flags=re.M)
+    if n != 1:
+        sys.exit(f"{name}: no line and no single 'llm_api_keys = {{' block in {path}; not written")
+    open(path, "w").write(new)
+    print(f"{name}: tfvars line added")
+    sys.exit(0)
 if n != 1:
     sys.exit(f"{name}: expected 1 line in {path}, found {n}; not written")
 open(path, "w").write(new)

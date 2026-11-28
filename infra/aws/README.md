@@ -22,7 +22,8 @@ tmi_client_id     = "<from TMI, see below>"
 tmi_client_secret = "<from TMI, see below>"
 github_token      = ""
 llm_api_keys = {
-  ANTHROPIC_CVP_API_KEY = "<key>"  # names match api_key in llm-profiles.yaml
+  ANTHROPIC_API_KEY     = "<key>"  # names match api_key in llm-profiles.yaml
+  ANTHROPIC_CVP_API_KEY = "<cyber key>"  # Mythos profile only
 }
 EOF
 
