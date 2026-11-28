@@ -6,7 +6,9 @@ import sys
 import click  # pyright: ignore[reportMissingImports]  # ty:ignore[unresolved-import]
 
 from tmi_tf.analyzer import AnalysisResult, run_analysis
+from tmi_tf.artifact_metadata import new_run_id
 from tmi_tf.config import get_config
+from tmi_tf.invocation import begin_cli_run
 from tmi_tf.llm_profiles import (
     ProfileError,
     profile_status,
@@ -163,6 +165,14 @@ def analyze(
                             cli_environment = envs[choice - 1].name
                             break  # Only prompt once
 
+        # One run id for this CLI run; clear a previous addon invocation's ids
+        # from the shared status note (#115).
+        run_id = new_run_id()
+        try:
+            begin_cli_run(tmi_client, threat_model_id, run_id)
+        except Exception as e:
+            logger.warning("Status note run id not recorded: %s", type(e).__name__)
+
         # Delegate to the shared analysis pipeline
         result: AnalysisResult = run_analysis(
             config=config,
@@ -172,6 +182,7 @@ def analyze(
             environment=cli_environment,
             skip_diagram=skip_diagram or dry_run,
             skip_threats=skip_threats or dry_run,
+            run_id=run_id,
         )
 
         if not result.success:

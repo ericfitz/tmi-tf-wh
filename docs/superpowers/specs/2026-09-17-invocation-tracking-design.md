@@ -45,6 +45,9 @@ An invocation is one accepted trigger. Its id is the parent `job_id` (invocation
 | `tf_open` | `true` / `false` |
 | `tf_deadline` | ISO timestamp |
 | `tf_child_<job_id>` | `success` / `failed` / `aborted` |
+| `invocation_id` | invocation id, written when the parent starts (#115) |
+| `run_ids` | comma-separated run ids of the started jobs, whole ids, at most 1024 characters (#115) |
+| `tf_run_<hash>` | one job's run id; the key is a hash of job id and repository, since sibling jobs can share a job id (#115) |
 
 A new module `tmi_tf/invocation.py` owns this: `open_invocation`, `mark_child`, `read_state`, `close_invocation`, plus the per-threat-model `asyncio.Lock`. Worker and webhook call it; nothing else touches the keys.
 
@@ -96,6 +99,12 @@ Unit tests with the in-memory queue provider and a fake TMI client:
 - #55: all children succeed; one fails; one never reports (watchdog closes, failed); late mark after close sends no second callback; watchdog re-armed from a child message.
 - #52: second trigger inside the debounce window; trigger while invocation open; open but past deadline is accepted; TMI lookup failure is accepted.
 - #54: abort during a phase (no further LLM call, message deleted, temp dir gone, mark `aborted`, callback sent); abort of a queued child; polling sees `cancelled`.
+
+## Human decisions (Eric, #115)
+
+- One run id (a UUID) per job: each child job, i.e. each per-environment report, and each CLI run. It is not shared across an invocation's jobs.
+- The invocation status note carries the invocation id plus the list of its jobs' run ids, in metadata and in its text.
+- No model, provider, profile, token or cost metadata on any object; those stay in the report note text.
 
 ## Rollout
 

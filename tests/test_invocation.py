@@ -1,5 +1,6 @@
 """Tests for invocation state kept as metadata on the parent status note."""
 
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from itertools import product
@@ -403,9 +404,67 @@ def test_over_limit_text_stays_complete_and_states_the_metadata_bound():
 def test_corrupt_recorded_run_id_is_skipped_in_the_list_and_replaced():
     tmi = _opened()
     inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
-    tmi.metadata["tf_run_inv1_b"] = "garbage"
+    tmi.metadata[inv.run_key("inv1:b")] = "garbage"
     assert inv.record_run_id(tmi, "tm1", "inv1:c", RUN_2) == RUN_2
     assert tmi.metadata["run_ids"].split(",") == [RUN_1, RUN_2]
     # the corrupt job's own start replaces its bad value
     assert inv.record_run_id(tmi, "tm1", "inv1:b", RUN_2) == RUN_2
-    assert tmi.metadata["tf_run_inv1_b"] == RUN_2
+    assert tmi.metadata[inv.run_key("inv1:b")] == RUN_2
+
+
+def test_same_job_id_in_two_repos_is_recorded_as_two_jobs():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:all", RUN_1, "r1")
+    assert inv.record_run_id(tmi, "tm1", "inv1:all", RUN_2, "r2") == RUN_2
+    assert tmi.metadata["run_ids"].split(",") == sorted(
+        [RUN_1, RUN_2],
+        key=lambda r: inv.run_key("inv1:all", "r1" if r == RUN_1 else "r2"),
+    )
+    assert _text(tmi).count(RUN_1) == 1 and _text(tmi).count(RUN_2) == 1
+    # a redelivery of either one is still idempotent
+    assert inv.record_run_id(tmi, "tm1", "inv1:all", RUN_2, "r1") == RUN_1
+
+
+def test_run_key_is_collision_free_and_key_safe():
+    keys = {
+        inv.run_key(j, r)
+        for j in ("p1:a.b", "p1:a_b", "p1:a-b", "p1:a b")
+        for r in ("", "r1", "r2")
+    }
+    assert len(keys) == 12
+    for k in keys:
+        assert re.fullmatch(r"[a-zA-Z0-9_-]{1,256}", k)
+    assert inv.run_key("p1:" + "x" * 3000, "r") != inv.run_key("p1:" + "x" * 3001, "r")
+    assert len(inv.run_key("p1:" + "x" * 3000, "r")) <= 256
+
+
+def test_begin_invocation_clears_previous_ids_and_writes_its_own():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    inv.begin_invocation(tmi, "tm1", "inv2")
+    assert tmi.metadata["invocation_id"] == "inv2"
+    assert "run_ids" not in tmi.metadata
+    assert not any(k.startswith("tf_run_") for k in tmi.metadata)
+    assert "inv2" in tmi.lines[-1]
+
+
+def test_begin_cli_run_replaces_stale_addon_ids():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    inv.begin_cli_run(tmi, "tm1", RUN_2)
+    assert "invocation_id" not in tmi.metadata
+    assert tmi.metadata["run_ids"] == RUN_2
+    assert not any(k.startswith("tf_run_") for k in tmi.metadata)
+
+
+def test_begin_cli_run_rejects_a_bad_run_id():
+    with pytest.raises(ValueError):
+        inv.begin_cli_run(FakeTMI(), "tm1", "nope")
+
+
+def test_begin_cli_run_creates_the_note_text_when_there_is_none():
+    tmi = FakeTMI()
+    tmi.note = None
+    with pytest.raises(RuntimeError):  # FakeTMI cannot create a note
+        inv.begin_cli_run(tmi, "tm1", RUN_1)
+    assert RUN_1 in tmi.lines[-1]

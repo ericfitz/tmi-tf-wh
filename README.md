@@ -227,11 +227,19 @@ metadata: `tf_invocation` (invocation id), `tf_open` (`true` while children
 are outstanding), `tf_deadline` (ISO timestamp), and one `tf_child_<job_id>`
 key per child recording its outcome (`success`, `failed`, or `aborted`). The
 note's metadata also carries `invocation_id` (same value as `tf_invocation`),
-`tf_run_<job_id>` (the run id each child job generated when it started), and
+`tf_run_<hash>` (the run id each child job generated when it started; the key
+hashes the job id and repository, because sibling jobs can share a job id), and
 `run_ids`, the comma-separated list of those run ids (whole ids in job id
 order, at most 1024 characters; if that is exceeded, a note line says so and
 the note text, which gets one `Job <job_id> started: run id <uuid>` line per
-job, stays complete). A redelivered job start reuses its recorded run id.
+job, stays complete). `invocation_id` is written when the parent job starts,
+before targets are resolved, and the previous invocation's run ids are cleared
+then, so an invocation with no jobs shows no stale ids; a CLI run clears them
+too and records its own run id as `run_ids`. A redelivered job start reuses its
+recorded run id, and so does a job retried after an exception. During a rollout
+two pods can run briefly; `run_ids` and the note text are read-modify-write and
+can then lose an entry, while the `tf_run_*` keys survive. The per-job status
+note and the CLI status note carry `run_id` metadata and a `Run ID: <uuid>` row.
 Every object a job creates (inventory and analysis notes, the DFD diagram,
 each threat; never DFD cells) has a `run_id` metadata entry, and the analysis
 report shows `Run ID: <uuid>`; model, provider, profile, token, and cost

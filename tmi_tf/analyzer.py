@@ -342,6 +342,8 @@ def run_analysis(
             threat_model_id,
             f"Analysis started (profile {profile.name}, {llm_provider.model})",
         )
+        tmi_client.update_status_note(threat_model_id, f"Run ID: {run_id}")
+        tmi_client.set_status_note_run_id(threat_model_id, run_id)
 
         # Get threat model
         logger.info("\n[2/7] Fetching threat model...")

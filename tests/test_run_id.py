@@ -1,8 +1,10 @@
 """Run id on every object a job creates (#115)."""
 
 import uuid
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from test_analyzer import (
     PROFILE,
     TestRunAnalysisEnvironmentSelection,
@@ -20,9 +22,10 @@ from tmi_tf.threat_processor import SecurityThreat
 FORBIDDEN_FRAGMENTS = ("llm", "model", "provider", "profile", "token", "cost")
 
 
-def _run(tmp_path, **kwargs):
+def _run(tmp_path, real_builder=False, **kwargs):
     """One job through the real note/diagram/threat create paths."""
     tree = _tree(tmp_path, ["a"])
+    builder_cls: Any = DFDBuilder if real_builder else MagicMock()
     tmi = _tmi_with_repo()
     tmi.create_or_update_note.side_effect = lambda **kw: MagicMock(
         id=f"note-{kw['name'][:18]}"
@@ -47,7 +50,7 @@ def _run(tmp_path, **kwargs):
         md as md_cls,
         val,
         patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
-        patch("tmi_tf.analyzer.DFDBuilder") as builder_cls,
+        patch("tmi_tf.analyzer.DFDBuilder", builder_cls),
         patch(
             "tmi_tf.analyzer.ThreatProcessor.threats_from_findings",
             return_value=threats,
@@ -55,10 +58,22 @@ def _run(tmp_path, **kwargs):
     ):
         llm.return_value.analyze_repository = MagicMock(return_value=analysis)
         dfd_cls.return_value.generate_structured_components.return_value = {
-            "components": [],
-            "flows": [],
+            "components": [
+                {"id": "a", "name": "A", "type": "compute", "subtype": ""},
+                {"id": "b", "name": "B", "type": "storage", "subtype": ""},
+            ],
+            "flows": [
+                {
+                    "id": "f",
+                    "name": "q",
+                    "source_id": "a",
+                    "target_id": "b",
+                    "bidirectional": False,
+                }
+            ],
         }
-        builder_cls.return_value.build_cells.return_value = [{}] * 3
+        if not real_builder:
+            builder_cls.return_value.build_cells.return_value = [{}] * 3
         md_cls.return_value.generate_analysis_report.return_value = "report"
         run_analysis(Config(), "tm1", tmi, PROFILE, **kwargs)
     return tmi, md_cls
@@ -140,8 +155,6 @@ def test_report_is_generated_with_the_run_id_both_times(tmp_path):
 
 
 def test_invalid_run_id_is_rejected(tmp_path):
-    import pytest
-
     with pytest.raises(ValueError):
         _run(tmp_path, run_id="not-a-uuid")
 
@@ -153,19 +166,29 @@ def test_report_text_shows_the_run_id():
     report = MarkdownGenerator().generate_analysis_report(
         "TM", "tm-1", [_make_analysis()], run_id=rid
     )
-    assert f"Run ID: {rid}" in report
+    assert f"**Run ID**: {rid}" in report
 
 
-def test_dfd_cells_never_carry_the_run_id():
-    from test_diagram_builder import make_component, make_flow
-
-    cells = DFDBuilder(
-        components=[
-            make_component("a", "A", "compute"),
-            make_component("b", "B", "storage"),
-        ],
-        flows=[make_flow("f", "a", "b", protocol="HTTPS", port=443)],
-    ).build_cells()
+def test_dfd_cells_sent_to_tmi_never_carry_the_run_id(tmp_path):
+    rid = str(uuid.uuid4())
+    tmi, _ = _run(tmp_path, real_builder=True, run_id=rid)
+    cells = tmi.create_or_update_diagram.call_args.kwargs["cells"]
     assert len(cells) >= 3
+    assert any(c.get("shape") == "flow" for c in cells)
+    assert rid not in str(cells)
     for cell in cells:
-        assert "run_id" not in str(cell)
+        keys = [m["key"] for m in cell.get("data", {}).get("_metadata", [])]
+        assert "run_id" not in keys
+    # the diagram itself does carry it
+    diagram = [
+        md for k, md in _metadata_by_object(tmi).items() if k.startswith("diagram")
+    ]
+    assert [m["value"] for m in diagram[0] if m["key"] == "run_id"] == [rid]
+
+
+def test_status_note_gets_the_run_id_row_and_metadata(tmp_path):
+    rid = str(uuid.uuid4())
+    tmi, _ = _run(tmp_path, run_id=rid)
+    rows = [c.args[1] for c in tmi.update_status_note.call_args_list]
+    assert f"Run ID: {rid}" in rows
+    tmi.set_status_note_run_id.assert_called_once_with("tm1", rid)

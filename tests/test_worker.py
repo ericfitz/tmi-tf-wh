@@ -1184,7 +1184,7 @@ class TestRunId:
             ),
             patch(
                 "tmi_tf.worker.record_run_id",
-                side_effect=lambda tmi, tm, jid, rid: rec_return or rid,
+                side_effect=lambda tmi, tm, jid, rid, repo: rec_return or rid,
             ) as rec,
         ):
             asyncio.run(
@@ -1199,7 +1199,7 @@ class TestRunId:
         ra, rec = self._run_child("p1:aws-public")
         rid = ra.call_args.kwargs["run_id"]
         assert str(uuid.UUID(rid)) == rid
-        assert rec.call_args.args[2:] == ("p1:aws-public", rid)
+        assert rec.call_args.args[2:4] == ("p1:aws-public", rid)
 
     def test_sibling_children_get_different_ids(self):
         ra1, _ = self._run_child("p1:aws-public")
@@ -1261,5 +1261,94 @@ class TestRunId:
             )
         rid = ra.call_args.kwargs["run_id"]
         assert tmi.metadata["run_ids"] == rid
-        assert tmi.metadata["tf_run_p1_aws-public"] == rid
+        assert tmi.metadata[inv.run_key("p1:aws-public")] == rid
         assert sum(rid in ln for ln in tmi.lines) == 1
+
+    def test_two_repos_with_the_same_job_id_get_different_run_ids(self):
+        pool, _ = _pool()
+        tmi = FakeTMI()
+        inv.open_invocation(tmi, "tm1", "p1", ["p1:all", "p1:all"], datetime.now(UTC))
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
+            ) as ra,
+            patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+        ):
+            tmi.update_status_note = MagicMock()  # pyright: ignore[reportAttributeAccessIssue]
+            for repo in ("r1", "r2"):
+                asyncio.run(
+                    pool._run_job(
+                        _job(job_id="p1:all", environment="", repo_id=repo),
+                        receipt="rc",
+                    )
+                )
+        ids = [c.kwargs["run_id"] for c in ra.call_args_list]
+        assert len(set(ids)) == 2
+        assert set(tmi.metadata["run_ids"].split(",")) == set(ids)
+        assert all("\n".join(tmi.lines).count(i) == 1 for i in ids)
+
+
+class TestParentWithoutJobs:
+    """An invocation that ends with no jobs must not show the previous one's ids."""
+
+    def _stale(self):
+        tmi = FakeTMI()
+        inv.open_invocation(tmi, "tm1", "old", ["old:a"], datetime.now(UTC))
+        inv.record_run_id(tmi, "tm1", "old:a", "11111111-1111-4111-8111-111111111111")
+        return tmi
+
+    def _run_parent(self, tmi, targets=None, error=None, profile_error=False):
+        pool, _ = _pool()
+        patches = [
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.resolve_fanout_targets",
+                side_effect=error,
+                return_value=targets or [],
+            ),
+        ]
+        if profile_error:
+            from tmi_tf.llm_profiles import ProfileError
+
+            patches.append(
+                patch("tmi_tf.worker.select_profile", side_effect=ProfileError("x"))
+            )
+        from contextlib import ExitStack
+
+        with ExitStack() as st:
+            for p in patches:
+                st.enter_context(p)
+            asyncio.run(
+                pool._run_job(
+                    _job(job_id="new", scope="all", event_type="addon.invoked"),
+                    receipt="rc",
+                )
+            )
+
+    def _assert_fresh(self, tmi):
+        assert tmi.metadata["invocation_id"] == "new"
+        assert "run_ids" not in tmi.metadata
+        assert not any(k.startswith("tf_run_") for k in tmi.metadata)
+        assert "11111111-1111-4111-8111-111111111111" not in "\n".join(tmi.lines[-1:])
+        assert "new" in tmi.lines[-1]
+
+    def test_no_environments_matched(self):
+        tmi = self._stale()
+        self._run_parent(tmi, targets=[])
+        self._assert_fresh(tmi)
+
+    def test_profile_error(self):
+        tmi = self._stale()
+        self._run_parent(tmi, profile_error=True)
+        self._assert_fresh(tmi)
+
+    def test_target_resolution_raises(self):
+        tmi = self._stale()
+        self._run_parent(tmi, error=RuntimeError("boom"))
+        self._assert_fresh(tmi)

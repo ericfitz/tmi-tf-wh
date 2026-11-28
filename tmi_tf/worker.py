@@ -15,6 +15,7 @@ from tmi_tf.artifact_metadata import new_run_id, validate_run_id
 from tmi_tf.config import Config
 from tmi_tf.invocation import (
     all_reported,
+    begin_invocation,
     close_invocation,
     compute_deadline,
     invocation_summary,
@@ -275,6 +276,17 @@ class WorkerPool:
     ) -> None:
         """Resolve fan-out targets and enqueue one child job per environment."""
         try:
+            async with lock_for(job.threat_model_id):
+                await asyncio.to_thread(
+                    begin_invocation, tmi_client, job.threat_model_id, job.job_id
+                )
+        except Exception as e:
+            logger.warning(
+                "Invocation start not recorded for %s: %s",
+                job.job_id,
+                type(e).__name__,
+            )
+        try:
             profile = select_profile(
                 self.config.llm_profiles, job.profile, self.config.llm_profile
             )
@@ -479,7 +491,12 @@ class WorkerPool:
         try:
             async with lock_for(job.threat_model_id):
                 recorded = await asyncio.to_thread(
-                    record_run_id, tmi_client, job.threat_model_id, job.job_id, run_id
+                    record_run_id,
+                    tmi_client,
+                    job.threat_model_id,
+                    job.job_id,
+                    run_id,
+                    job.repo_id or job.repo_name or "",
                 )
             try:
                 return validate_run_id(recorded)

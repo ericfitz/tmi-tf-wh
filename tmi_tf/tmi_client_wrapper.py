@@ -1046,6 +1046,21 @@ class TMIClient:
             )
         )
 
+    def set_status_note_run_id(self, threat_model_id: str, run_id: str) -> None:
+        """Put ``run_id`` in the metadata of this client's status note.
+
+        Needs update_status_note to have run once (it finds or creates the note).
+        """
+        if not self._status_note_id:
+            logger.warning("Status note not initialized; run_id not set on it")
+            return
+        try:
+            self.upsert_note_metadata(
+                threat_model_id, self._status_note_id, {"run_id": run_id}
+            )
+        except Exception as e:
+            logger.warning(f"Failed to set status note run_id: {type(e).__name__}")
+
     def append_status_line(self, threat_model_id: str, message: str) -> None:
         """Append a timestamped line to the parent status note without resetting it.
 

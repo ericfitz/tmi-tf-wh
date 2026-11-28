@@ -378,7 +378,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         parts = ["## Analysis Job Information"]
 
         # Job summary
-        run_line = f"Run ID: {run_id}\n" if run_id else ""
+        run_line = f"**Run ID**: {run_id}\n" if run_id else ""
         parts.append(
             f"**Threat Model ID**: `{threat_model_id}`\n"
             f"{run_line}"

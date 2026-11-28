@@ -5,6 +5,7 @@ the in-process lock serializes read-modify-write (one replica, see spec).
 """
 
 import asyncio
+import hashlib
 import logging
 import math
 import re
@@ -79,8 +80,15 @@ def child_key(job_id: str) -> str:
     return CHILD_PREFIX + _KEY_BAD_CHARS.sub("_", job_id)
 
 
-def run_key(job_id: str) -> str:
-    return RUN_PREFIX + _KEY_BAD_CHARS.sub("_", job_id)
+def run_key(job_id: str, repo: str = "") -> str:
+    """Collision-free metadata key for one job's run record.
+
+    Sibling child jobs can share a job id (same environment name in two
+    repositories, or "all"), so the repository is part of the identity. A hash
+    keeps the key inside TMI's key alphabet and length whatever the ids hold.
+    """
+    digest = hashlib.sha256(f"{job_id}\0{repo}".encode()).hexdigest()[:32]
+    return RUN_PREFIX + digest
 
 
 def compute_deadline(
@@ -93,6 +101,48 @@ def compute_deadline(
 def _note_id(tmi: TMILike, threat_model_id: str) -> str | None:
     note = tmi.find_note_by_name(threat_model_id, STATUS_NOTE_NAME)
     return note.id if note else None
+
+
+def _clear_run_state(tmi: TMILike, threat_model_id: str, note_id: str) -> None:
+    """Delete a previous invocation's (or run's) run ids and invocation id."""
+    for key in tmi.get_note_metadata(threat_model_id, note_id):
+        if key.startswith(RUN_PREFIX) or key in (KEY_RUN_IDS, KEY_INVOCATION_ID):
+            tmi.delete_note_metadata(threat_model_id, note_id, key)
+
+
+def begin_invocation(tmi: TMILike, threat_model_id: str, invocation_id: str) -> None:
+    """Mark the start of an invocation before any fan-out work (#115).
+
+    Writes the invocation id and drops the previous invocation's run ids, so an
+    invocation that ends up with no jobs (nothing matched, bad profile, an
+    error while resolving targets) never shows stale ids. Call under
+    lock_for(threat_model_id).
+    """
+    tmi.append_status_line(threat_model_id, f"Invocation {invocation_id} started")
+    note_id = _note_id(tmi, threat_model_id)
+    if note_id is None:
+        raise RuntimeError("status note missing after append_status_line")
+    _clear_run_state(tmi, threat_model_id, note_id)
+    tmi.upsert_note_metadata(
+        threat_model_id, note_id, {KEY_INVOCATION_ID: invocation_id}
+    )
+
+
+def begin_cli_run(tmi: TMILike, threat_model_id: str, run_id: str) -> None:
+    """Prepare the shared status note for a CLI run (no invocation, one job).
+
+    Removes a previous addon invocation's invocation id and run ids and records
+    this run's id as ``run_ids``. The note text carries the run id through the
+    "Run ID" status row that run_analysis writes.
+    """
+    validate_run_id(run_id)
+    if _note_id(tmi, threat_model_id) is None:
+        tmi.append_status_line(threat_model_id, f"CLI run started: run id {run_id}")
+    note_id = _note_id(tmi, threat_model_id)
+    if note_id is None:
+        raise RuntimeError("status note missing after append_status_line")
+    _clear_run_state(tmi, threat_model_id, note_id)
+    tmi.upsert_note_metadata(threat_model_id, note_id, {KEY_RUN_IDS: run_id})
 
 
 def open_invocation(
@@ -111,14 +161,13 @@ def open_invocation(
     if note_id is None:
         raise RuntimeError("status note missing after append_status_line")
     # Old child marks would make a fresh invocation look complete; delete them
-    # rather than blanking, so the note's metadata count doesn't grow unbounded
+    # rather than blanking, so the note's metadata does not grow without bound
     # (parent job ids are per-delivery, so every invocation would otherwise add
-    # ~N new keys and eventually hit TMI's metadata cap).
+    # ~N new keys; TMI caps the entries per bulk request, not per note).
     for key in tmi.get_note_metadata(threat_model_id, note_id):
-        if key.startswith((CHILD_PREFIX, GAPS_PREFIX, RUN_PREFIX)) or (
-            key == KEY_RUN_IDS
-        ):
+        if key.startswith((CHILD_PREFIX, GAPS_PREFIX)):
             tmi.delete_note_metadata(threat_model_id, note_id, key)
+    _clear_run_state(tmi, threat_model_id, note_id)
     tmi.upsert_note_metadata(
         threat_model_id,
         note_id,
@@ -155,13 +204,16 @@ def bound_run_ids(run_ids: list[str]) -> tuple[str, int]:
     return value, kept
 
 
-def record_run_id(tmi: TMILike, threat_model_id: str, job_id: str, run_id: str) -> str:
+def record_run_id(
+    tmi: TMILike, threat_model_id: str, job_id: str, run_id: str, repo: str = ""
+) -> str:
     """Record a starting job's run id on the invocation status note.
 
     Call under lock_for(threat_model_id). Returns the run id the job must use:
     the one already recorded when the job's start is processed twice (nothing
     is written then, so a job is listed exactly once), else ``run_id``. A job
-    that does not belong to the note's invocation is not recorded.
+    that does not belong to the note's invocation is not recorded. A job is
+    identified by its id and repository (``repo``), since siblings can share an id.
     """
     note_id = _note_id(tmi, threat_model_id)
     if note_id is None:
@@ -174,23 +226,24 @@ def record_run_id(tmi: TMILike, threat_model_id: str, job_id: str, run_id: str) 
             "Job %s is not in the open invocation; run id not recorded", job_id
         )
         return run_id
-    existing = meta.get(run_key(job_id))
+    existing = meta.get(run_key(job_id, repo))
     if existing is not None and _valid_run_id(existing):
         return existing
     # A corrupt recorded value is skipped here and replaced for this job below.
     recorded = {
         k: v
         for k, v in meta.items()
-        if k.startswith(RUN_PREFIX) and k != run_key(job_id) and _valid_run_id(v)
+        if k.startswith(RUN_PREFIX) and k != run_key(job_id, repo) and _valid_run_id(v)
     }
     already_truncated = bound_run_ids(list(recorded.values()))[1] < len(recorded)
-    recorded[run_key(job_id)] = run_id
+    recorded[run_key(job_id, repo)] = run_id
     ordered = [recorded[k] for k in sorted(recorded)]
     value, kept = bound_run_ids(ordered)
     tmi.upsert_note_metadata(
-        threat_model_id, note_id, {run_key(job_id): run_id, KEY_RUN_IDS: value}
+        threat_model_id, note_id, {run_key(job_id, repo): run_id, KEY_RUN_IDS: value}
     )
-    tmi.append_status_line(threat_model_id, f"Job {job_id} started: run id {run_id}")
+    who = f"{job_id} ({repo})" if repo else job_id
+    tmi.append_status_line(threat_model_id, f"Job {who} started: run id {run_id}")
     if kept < len(ordered) and not already_truncated:
         # Once, when the bound is first exceeded; later starts add no repeat.
         tmi.append_status_line(

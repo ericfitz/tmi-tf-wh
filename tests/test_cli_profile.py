@@ -86,3 +86,18 @@ def test_cli_prints_nothing_about_gaps_on_a_clean_run():
     ):
         r = CliRunner().invoke(cli, ["analyze", "tm", "-e", "x"])
     assert "with gaps" not in r.output
+
+
+def test_cli_run_gets_its_own_run_id_and_clears_stale_ids():
+    result = MagicMock(success=True, gaps=[])
+    with (
+        patch("tmi_tf.cli.get_config", return_value=_cfg()),
+        patch("tmi_tf.cli.TMIClient"),
+        patch("tmi_tf.cli.begin_cli_run") as begin,
+        patch("tmi_tf.cli.run_analysis", return_value=result) as ra,
+    ):
+        r = CliRunner().invoke(cli, ["analyze", "tm", "-e", "x"])
+    assert r.exit_code == 0
+    rid = ra.call_args.kwargs["run_id"]
+    begin.assert_called_once()
+    assert begin.call_args.args[1:] == ("tm", rid)
