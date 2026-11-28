@@ -395,5 +395,17 @@ def test_over_limit_text_stays_complete_and_states_the_metadata_bound():
     assert len(tmi.metadata["run_ids"].split(",")) == 27
     for rid in ids:
         assert _text(tmi).count(rid) == 1  # visible text lists every job
-    assert "first 27 of 30" in tmi.lines[-1]
-    assert "1024" in tmi.lines[-1]
+    bound_lines = [ln for ln in tmi.lines if "bounded" in ln]
+    assert len(bound_lines) == 1  # written once, not on every later start
+    assert "1024" in bound_lines[0]
+
+
+def test_corrupt_recorded_run_id_is_skipped_in_the_list_and_replaced():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    tmi.metadata["tf_run_inv1_b"] = "garbage"
+    assert inv.record_run_id(tmi, "tm1", "inv1:c", RUN_2) == RUN_2
+    assert tmi.metadata["run_ids"].split(",") == [RUN_1, RUN_2]
+    # the corrupt job's own start replaces its bad value
+    assert inv.record_run_id(tmi, "tm1", "inv1:b", RUN_2) == RUN_2
+    assert tmi.metadata["tf_run_inv1_b"] == RUN_2

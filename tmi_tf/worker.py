@@ -11,7 +11,7 @@ from pathlib import Path
 
 from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.analyzer import resolve_fanout_targets, run_analysis
-from tmi_tf.artifact_metadata import new_run_id
+from tmi_tf.artifact_metadata import new_run_id, validate_run_id
 from tmi_tf.config import Config
 from tmi_tf.invocation import (
     all_reported,
@@ -478,9 +478,14 @@ class WorkerPool:
         run_id = new_run_id()
         try:
             async with lock_for(job.threat_model_id):
-                return await asyncio.to_thread(
+                recorded = await asyncio.to_thread(
                     record_run_id, tmi_client, job.threat_model_id, job.job_id, run_id
                 )
+            try:
+                return validate_run_id(recorded)
+            except ValueError:
+                logger.warning("Recorded run id for %s is invalid", job.job_id)
+                return run_id
         except Exception as e:
             logger.warning(
                 "Run id not recorded for %s: %s", job.job_id, type(e).__name__

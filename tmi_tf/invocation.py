@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from tmi_tf.artifact_metadata import validate_run_id
 from tmi_tf.cell_schema import METADATA_VALUE_MAX
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME
 
@@ -130,6 +131,14 @@ def open_invocation(
     )
 
 
+def _valid_run_id(value: str | None) -> bool:
+    try:
+        validate_run_id(value)
+    except ValueError:
+        return False
+    return True
+
+
 def bound_run_ids(run_ids: list[str]) -> tuple[str, int]:
     """Comma-separated run ids for the metadata value, and how many fit.
 
@@ -166,9 +175,15 @@ def record_run_id(tmi: TMILike, threat_model_id: str, job_id: str, run_id: str) 
         )
         return run_id
     existing = meta.get(run_key(job_id))
-    if existing:
+    if existing is not None and _valid_run_id(existing):
         return existing
-    recorded = {k: v for k, v in meta.items() if k.startswith(RUN_PREFIX) and v}
+    # A corrupt recorded value is skipped here and replaced for this job below.
+    recorded = {
+        k: v
+        for k, v in meta.items()
+        if k.startswith(RUN_PREFIX) and k != run_key(job_id) and _valid_run_id(v)
+    }
+    already_truncated = bound_run_ids(list(recorded.values()))[1] < len(recorded)
     recorded[run_key(job_id)] = run_id
     ordered = [recorded[k] for k in sorted(recorded)]
     value, kept = bound_run_ids(ordered)
@@ -176,12 +191,13 @@ def record_run_id(tmi: TMILike, threat_model_id: str, job_id: str, run_id: str) 
         threat_model_id, note_id, {run_key(job_id): run_id, KEY_RUN_IDS: value}
     )
     tmi.append_status_line(threat_model_id, f"Job {job_id} started: run id {run_id}")
-    if kept < len(ordered):
+    if kept < len(ordered) and not already_truncated:
+        # Once, when the bound is first exceeded; later starts add no repeat.
         tmi.append_status_line(
             threat_model_id,
-            f"Metadata {KEY_RUN_IDS} holds the first {kept} of {len(ordered)} run ids "
-            f"(ordered by job id, whole ids only, at most {RUN_IDS_MAX} characters); "
-            "the text of this note lists every run id",
+            f"Metadata {KEY_RUN_IDS} is bounded: whole run ids in job id order, "
+            f"at most {RUN_IDS_MAX} characters, so later jobs may be missing from "
+            "it; the text of this note lists every run id",
         )
     return run_id
 

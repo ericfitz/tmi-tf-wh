@@ -226,6 +226,16 @@ The parent job tracks its fan-out on the `TMI-TF Analysis Status` note's
 metadata: `tf_invocation` (invocation id), `tf_open` (`true` while children
 are outstanding), `tf_deadline` (ISO timestamp), and one `tf_child_<job_id>`
 key per child recording its outcome (`success`, `failed`, or `aborted`). The
+note's metadata also carries `invocation_id` (same value as `tf_invocation`),
+`tf_run_<job_id>` (the run id each child job generated when it started), and
+`run_ids`, the comma-separated list of those run ids (whole ids in job id
+order, at most 1024 characters; if that is exceeded, a note line says so and
+the note text, which gets one `Job <job_id> started: run id <uuid>` line per
+job, stays complete). A redelivered job start reuses its recorded run id.
+Every object a job creates (inventory and analysis notes, the DFD diagram,
+each threat; never DFD cells) has a `run_id` metadata entry, and the analysis
+report shows `Run ID: <uuid>`; model, provider, profile, token, and cost
+details are no longer in any object's metadata. The
 deadline is set when children are enqueued to `enqueue_time + ceil(N /
 MAX_CONCURRENT_JOBS) * JOB_TIMEOUT + 300s`, where N is the number of child
 jobs. The addon callback fires `in_progress` with "enqueued N of M

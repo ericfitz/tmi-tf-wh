@@ -1235,3 +1235,31 @@ class TestRunId:
                 )
             )
         assert ra.call_args.kwargs["run_id"]
+
+    def test_corrupt_recorded_id_is_replaced_by_a_fresh_uuid(self):
+        ra, _ = self._run_child("p1:aws-public", rec_return="garbage")
+        rid = ra.call_args.kwargs["run_id"]
+        assert rid != "garbage" and str(uuid.UUID(rid)) == rid
+
+    def test_real_record_path_reaches_run_analysis_and_status_note(self):
+        pool, _ = _pool()
+        tmi = FakeTMI()
+        inv.open_invocation(tmi, "tm1", "p1", ["p1:aws-public"], datetime.now(UTC))
+        with (
+            patch("tmi_tf.worker.TMIClient.create_authenticated", return_value=tmi),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
+            ) as ra,
+            patch("tmi_tf.worker.AddonCallback"),
+        ):
+            tmi.update_status_note = MagicMock()  # pyright: ignore[reportAttributeAccessIssue]
+            asyncio.run(
+                pool._run_job(
+                    _job(job_id="p1:aws-public", environment="aws-public"),
+                    receipt="rc",
+                )
+            )
+        rid = ra.call_args.kwargs["run_id"]
+        assert tmi.metadata["run_ids"] == rid
+        assert tmi.metadata["tf_run_p1_aws-public"] == rid
+        assert sum(rid in ln for ln in tmi.lines) == 1
