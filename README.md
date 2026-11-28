@@ -229,8 +229,8 @@ key per child recording its outcome (`success`, `failed`, or `aborted`). The
 note's metadata also carries `invocation_id` (same value as `tf_invocation`),
 `tf_run_<hash>` (the run id each child job generated when it started; the key
 hashes the job id and repository, because sibling jobs can share a job id), and
-`run_ids`, the comma-separated list of those run ids (whole ids in job id
-order, at most 1024 characters; if that is exceeded, a note line says so and
+`run_ids`, the comma-separated list of those run ids (whole ids in an
+arbitrary but stable order, at most 1024 characters; if that is exceeded, a note line says so and
 the note text, which gets one `Job <job_id> started: run id <uuid>` line per
 job, stays complete). `invocation_id` is written when the parent job starts,
 before targets are resolved, and the previous invocation's run ids are cleared

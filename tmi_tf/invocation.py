@@ -106,7 +106,11 @@ def _note_id(tmi: TMILike, threat_model_id: str) -> str | None:
 def _clear_run_state(tmi: TMILike, threat_model_id: str, note_id: str) -> None:
     """Delete a previous invocation's (or run's) run ids and invocation id."""
     for key in tmi.get_note_metadata(threat_model_id, note_id):
-        if key.startswith(RUN_PREFIX) or key in (KEY_RUN_IDS, KEY_INVOCATION_ID):
+        if key.startswith(RUN_PREFIX) or key in (
+            KEY_RUN_IDS,
+            KEY_INVOCATION_ID,
+            "run_id",  # a CLI run's id on the shared note
+        ):
             tmi.delete_note_metadata(threat_model_id, note_id, key)
 
 
@@ -248,7 +252,7 @@ def record_run_id(
         # Once, when the bound is first exceeded; later starts add no repeat.
         tmi.append_status_line(
             threat_model_id,
-            f"Metadata {KEY_RUN_IDS} is bounded: whole run ids in job id order, "
+            f"Metadata {KEY_RUN_IDS} is bounded: whole run ids in an arbitrary but stable order (sorted by hashed key), "
             f"at most {RUN_IDS_MAX} characters, so later jobs may be missing from "
             "it; the text of this note lists every run id",
         )

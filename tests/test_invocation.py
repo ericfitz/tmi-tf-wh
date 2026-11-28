@@ -462,9 +462,31 @@ def test_begin_cli_run_rejects_a_bad_run_id():
         inv.begin_cli_run(FakeTMI(), "tm1", "nope")
 
 
-def test_begin_cli_run_creates_the_note_text_when_there_is_none():
-    tmi = FakeTMI()
+class _CreatingTMI(FakeTMI):
+    """Like TMI's append_status_line: creates the status note when missing."""
+
+    def append_status_line(self, tm, message):
+        super().append_status_line(tm, message)
+        if self.note is None:
+            self.note = MagicMock(id="note-1", name=STATUS_NOTE_NAME)
+
+
+def test_begin_cli_run_creates_the_note_when_there_is_none():
+    tmi = _CreatingTMI()
     tmi.note = None
-    with pytest.raises(RuntimeError):  # FakeTMI cannot create a note
-        inv.begin_cli_run(tmi, "tm1", RUN_1)
+    inv.begin_cli_run(tmi, "tm1", RUN_1)
+    assert tmi.note is not None
     assert RUN_1 in tmi.lines[-1]
+    assert tmi.metadata == {"run_ids": RUN_1}
+
+
+def test_cli_run_id_does_not_survive_into_the_next_invocation():
+    tmi = _opened()
+    inv.begin_cli_run(tmi, "tm1", RUN_1)
+    tmi.metadata["run_id"] = RUN_1  # written by TMIClient.set_status_note_run_id
+    inv.begin_invocation(tmi, "tm1", "inv2")
+    assert "run_id" not in tmi.metadata
+    assert tmi.metadata["invocation_id"] == "inv2"
+    tmi.metadata["run_id"] = RUN_1
+    inv.open_invocation(tmi, "tm1", "inv3", ["inv3:a"], NOW)
+    assert "run_id" not in tmi.metadata
