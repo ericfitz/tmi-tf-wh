@@ -501,7 +501,8 @@ def test_refused_chunk_is_split_and_only_the_refused_script_flagged():
     assert "script review: 1 script(s)" in result.refusals
 
 
-def _review_row(result, review_text, tf=TF):
+def _review_run(review_text, tf=TF):
+    """(analysis, status rows, provider.complete call list)."""
     provider = MagicMock()
     provider.model, provider.provider = "anthropic/m", "anthropic"
     result_rows: list[str] = []
@@ -517,7 +518,7 @@ def _review_row(result, review_text, tf=TF):
         ),
         _resp({"relationships": [], "data_flows": [], "trust_boundaries": []}),
         _resp([]),
-        review_text,
+        *(review_text if isinstance(review_text, list) else [review_text]),
         *[
             _resp({"threat_type": "Tampering", "severity": "High", "cwe_id": []})
             for _ in range(10)
@@ -530,7 +531,12 @@ def _review_row(result, review_text, tf=TF):
     analysis = LLMAnalyzer(provider).analyze_repository(
         repo, status_callback=result_rows.append
     )
-    return analysis, result_rows
+    return analysis, result_rows, provider.complete.call_args_list
+
+
+def _review_row(result, review_text, tf=TF):
+    analysis, rows, _ = _review_run(review_text, tf)
+    return analysis, rows
 
 
 def _llm_text(text, finish_reason="stop"):
@@ -545,7 +551,7 @@ def _llm_text(text, finish_reason="stop"):
 
 def test_review_garbage_is_a_failed_step():
     garbage = "SECRET-MODEL-PROSE no array here"
-    analysis, rows = _review_row(None, _llm_text(garbage))
+    analysis, rows = _review_row(None, [_llm_text(garbage), _llm_text(garbage)])
     assert analysis.script_review_error == "script review failed: unparseable response"
     assert "Script review: failed: script review failed: unparseable response" in rows
     assert not any(r.startswith("Script review: succeeded") for r in rows)
@@ -553,10 +559,37 @@ def test_review_garbage_is_a_failed_step():
     assert analysis.success  # static findings are kept
 
 
-def test_review_truncated_is_a_failed_step():
-    analysis, rows = _review_row(None, _llm_text('[{"script_id": "x', "length"))
+def test_review_truncated_twice_is_a_failed_step():
+    cut = _llm_text('[{"script_id": "x', "length")
+    analysis, rows = _review_row(None, [cut, cut])
     assert analysis.script_review_error == "script review failed: unparseable response"
     assert any(r.startswith("Script review: failed:") for r in rows)
+
+
+def test_review_truncated_answer_is_retried_once_and_kept():
+    """#111: thinking counts toward max_tokens on Fable/Mythos, so a cut-off
+    or unparseable review gets one retry, as phase 3b does (#110)."""
+    cut = _llm_text('[{"script_id": "x', "length")
+    analysis, rows, calls = _review_run([cut, _llm_text("[]")])
+    assert analysis.script_review_error == ""
+    assert any(r.startswith("Script review: succeeded") for r in rows)
+    review_calls = [c for c in calls if "nonce" in str(c.args[1]).lower()]
+    assert len(review_calls) == 2
+
+
+def test_review_garbage_answer_is_retried_once_and_kept():
+    analysis, rows = _review_row(None, [_llm_text("no array"), _llm_text("[]")])
+    assert analysis.script_review_error == ""
+    assert any(r.startswith("Script review: succeeded") for r in rows)
+
+
+def test_review_output_cap_leaves_room_for_thinking():
+    _, _, calls = _review_run(_llm_text("[]"))
+    caps = [c.args[2] for c in calls]
+    timeouts = [c.args[3] for c in calls]
+    i = 3  # inventory, infrastructure, 3a, then the script review
+    assert caps[i] >= 32000
+    assert timeouts[i] >= 600.0
 
 
 def test_review_valid_empty_array_is_a_success():

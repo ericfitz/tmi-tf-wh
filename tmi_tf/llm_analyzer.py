@@ -64,6 +64,12 @@ logger = logging.getLogger(__name__)
 # extra; the timeout covers ~16k tokens at observed output speeds.
 PHASE3B_MAX_TOKENS = 16000
 PHASE3B_TIMEOUT = 300.0
+# Script review answers for up to 60k chars of scripts in one call, with the
+# same thinking overhead (#111); ~32k tokens fit the timeout at observed speeds.
+SCRIPT_REVIEW_MAX_TOKENS = 32000
+SCRIPT_REVIEW_TIMEOUT = 600.0
+# Total calls per chunk: a truncated or unparseable answer is retried once.
+SCRIPT_REVIEW_ATTEMPTS = 2
 
 
 def format_terraform_contents(tf_contents: dict[str, str]) -> str:
@@ -514,8 +520,8 @@ class LLMAnalyzer:
             self.script_review_system,
             user,
             "script_review",
-            max_tokens=16000,
-            timeout=600.0,
+            max_tokens=SCRIPT_REVIEW_MAX_TOKENS,
+            timeout=SCRIPT_REVIEW_TIMEOUT,
         )
         return response, included
 
@@ -539,8 +545,11 @@ class LLMAnalyzer:
         # ponytail: one call per script of a refused chunk; batch if repos with
         # many scripts hit refusals often.
         pending: list[list[ScriptBlob]] = [blobs]
+        tries: dict[tuple[str, ...], int] = {}
         while pending:
             chunk = pending.pop(0)
+            key = tuple(b.id for b in chunk)
+            tries[key] = tries.get(key, 0) + 1
             try:
                 response, included = self._review_call(repo_name, chunk, static_hits)
             except LLMRefusalError as e:
@@ -568,8 +577,17 @@ class LLMAnalyzer:
             if response.finish_reason == "length" or not is_review_array(
                 response.text or ""
             ):
-                logger.error("Script review: truncated or unparseable response")
-                errors.append("script review failed: unparseable response")
+                logger.error(
+                    "Script review: truncated or unparseable response "
+                    "(finish_reason=%s, attempt %d/%d)",
+                    response.finish_reason,
+                    tries[key],
+                    SCRIPT_REVIEW_ATTEMPTS,
+                )
+                if tries[key] < SCRIPT_REVIEW_ATTEMPTS:
+                    pending.insert(0, chunk)
+                else:
+                    errors.append("script review failed: unparseable response")
                 continue
             findings += parse_review(response.text or "", included, self.rules)
         if refused:
