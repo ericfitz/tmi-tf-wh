@@ -11,6 +11,7 @@ from pathlib import Path
 
 from tmi_tf.addon_callback import AddonCallback
 from tmi_tf.analyzer import resolve_fanout_targets, run_analysis
+from tmi_tf.artifact_metadata import new_run_id
 from tmi_tf.config import Config
 from tmi_tf.invocation import (
     all_reported,
@@ -22,6 +23,7 @@ from tmi_tf.invocation import (
     open_invocation,
     outcome_of,
     read_state,
+    record_run_id,
 )
 from tmi_tf.job import Job
 from tmi_tf.llm_profiles import ProfileError, resolve_key, select_profile
@@ -222,6 +224,7 @@ class WorkerPool:
                 profile = select_profile(
                     self.config.llm_profiles, job.profile, self.config.llm_profile
                 )
+                run_id = await self._start_run(job, tmi_client)
                 result = await asyncio.to_thread(
                     run_analysis,
                     config=self.config,
@@ -233,6 +236,7 @@ class WorkerPool:
                     callback=callback,
                     environment=job.environment,
                     deadline=deadline,
+                    run_id=run_id,
                 )
                 outcome = (
                     "failed"
@@ -463,6 +467,25 @@ class WorkerPool:
         except Exception as e:
             logger.error(f"Abort bookkeeping failed for {invocation_id}: {e}")
         return len(victims)
+
+    async def _start_run(self, job: Job, tmi_client: TMIClient) -> str:
+        """The job's run id, recorded on the invocation status note (#115).
+
+        Always a fresh UUID unless this job's start was already recorded (a
+        redelivered message), in which case the recorded id is reused. A failed
+        write must not stop the analysis.
+        """
+        run_id = new_run_id()
+        try:
+            async with lock_for(job.threat_model_id):
+                return await asyncio.to_thread(
+                    record_run_id, tmi_client, job.threat_model_id, job.job_id, run_id
+                )
+        except Exception as e:
+            logger.warning(
+                "Run id not recorded for %s: %s", job.job_id, type(e).__name__
+            )
+            return run_id
 
     async def _finish_child(self, job: Job, outcome: str, gaps: str = "") -> None:
         """Mark a child done; the last sibling closes the invocation."""

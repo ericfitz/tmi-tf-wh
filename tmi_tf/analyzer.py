@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from tmi_tf.artifact_metadata import (
-    aggregate_analysis_metadata,
     create_artifact_metadata,
+    new_run_id,
+    validate_run_id,
 )
 from tmi_tf.config import Config
 from tmi_tf.dfd_llm_generator import DFDLLMGenerator
@@ -286,6 +287,7 @@ def run_analysis(
     skip_threats: bool = False,
     environment: str | None = None,
     deadline: float | None = None,
+    run_id: str | None = None,
 ) -> AnalysisResult:
     """Run the full Terraform analysis pipeline.
 
@@ -305,12 +307,15 @@ def run_analysis(
         skip_threats: Skip threat creation.
         environment: If given, filter to this Terraform environment name.
         deadline: Absolute ``time.monotonic()`` job deadline; bounds LLM retries.
+        run_id: UUID identifying this job; stamped on every object it creates
+            and shown in the report. Generated when not given (CLI runs).
 
     Returns:
         AnalysisResult with success flag, analyses, and generated content.
     """
     errors: list[str] = []
     step = "Initialization"
+    run_id = new_run_id() if run_id is None else validate_run_id(run_id)
 
     try:
         analysis_budget, dfd_budget = _retry_budgets(deadline, time.monotonic())
@@ -553,6 +558,7 @@ def run_analysis(
             analyses=analyses,
             environment_name=selected_env_name,
             inventory_note_name=inventory_note_name,
+            run_id=run_id,
         )
 
         # Create notes in TMI
@@ -571,12 +577,7 @@ def run_analysis(
         )
         logger.info(f"Inventory note created/updated: {inv_note.id}")
 
-        artifact_metadata = aggregate_analysis_metadata(
-            analyses=analyses,
-            provider=llm_analyzer.provider,
-            model=llm_analyzer.model,
-            profile=llm_provider.profile,
-        )
+        artifact_metadata = create_artifact_metadata(run_id)
         try:
             tmi_client.set_note_metadata(
                 threat_model_id=threat_model_id,
@@ -615,6 +616,7 @@ def run_analysis(
                     analyses=analyses,
                     environment_name=selected_env_name,
                     inventory_note_name=inventory_note_name,
+                    run_id=run_id,
                     dfd_refused=dfd_refused,
                     dfd_error=dfd_error,
                 )
@@ -708,14 +710,7 @@ def run_analysis(
                     logger.info(f"Diagram created/updated successfully: {diagram_id}")
                     logger.info(f"Diagram contains {len(cells)} cells")
 
-                    diagram_metadata = create_artifact_metadata(
-                        provider=dfd_generator.provider,
-                        model=dfd_generator.model,
-                        input_tokens=dfd_generator.input_tokens,
-                        output_tokens=dfd_generator.output_tokens,
-                        cost_estimate_usd=dfd_generator.total_cost,
-                        profile=llm_provider.profile,
-                    )
+                    diagram_metadata = create_artifact_metadata(run_id)
                     try:
                         tmi_client.set_diagram_metadata(
                             threat_model_id=threat_model_id,
@@ -799,21 +794,7 @@ def run_analysis(
                         except Exception as e:
                             logger.warning(f"Could not get diagram ID: {e}")
 
-                    sec_input = sum(
-                        a.security_input_tokens for a in analyses if a.success
-                    )
-                    sec_output = sum(
-                        a.security_output_tokens for a in analyses if a.success
-                    )
-                    sec_cost = sum(a.security_cost for a in analyses if a.success)
-                    threat_metadata = create_artifact_metadata(
-                        provider=llm_analyzer.provider,
-                        model=llm_analyzer.model,
-                        input_tokens=sec_input,
-                        output_tokens=sec_output,
-                        cost_estimate_usd=sec_cost,
-                        profile=llm_provider.profile,
-                    )
+                    threat_metadata = create_artifact_metadata(run_id)
                     created_threats = threat_processor.create_threats_in_tmi(
                         threats=all_threats,
                         threat_model_id=threat_model_id,

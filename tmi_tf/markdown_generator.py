@@ -366,6 +366,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         analyses: list[TerraformAnalysis],
         dfd_refused: bool = False,
         dfd_error: str = "",
+        run_id: str = "",
     ) -> str:
         """Generate Analysis Job Information section combining all metadata."""
         # UTC, explicitly labelled: these reports are read by people in other
@@ -377,8 +378,10 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         parts = ["## Analysis Job Information"]
 
         # Job summary
+        run_line = f"Run ID: {run_id}\n" if run_id else ""
         parts.append(
             f"**Threat Model ID**: `{threat_model_id}`\n"
+            f"{run_line}"
             f"**Generated**: {timestamp}\n"
             f"**Repositories Analyzed**: {len(analyses)} "
             f"({len(successful)} successful, {len(failed)} failed)"
@@ -513,11 +516,13 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         inventory_note_name: str | None = None,
         dfd_refused: bool = False,
         dfd_error: str = "",
+        run_id: str = "",
     ) -> str:
         """Analysis note: architecture narrative, diagram, pointer to the
         inventory note, security findings, consolidated findings, job info.
         dfd_refused lists the DFD call under model refusals; dfd_error (any
-        other DFD failure) is listed under analysis gaps."""
+        other DFD failure) is listed under analysis gaps. run_id, when given,
+        is shown with the job facts."""
         sections = []
         title = "Terraform Infrastructure Analysis"
         if environment_name:
@@ -552,7 +557,7 @@ Based on the analyzed infrastructure, consider focusing threat modeling efforts 
         sections.append(self._generate_consolidated_findings(analyses))
         sections.append(
             self._generate_analysis_job_info(
-                threat_model_id, analyses, dfd_refused, dfd_error
+                threat_model_id, analyses, dfd_refused, dfd_error, run_id
             )
         )
         return "\n\n---\n\n".join(sections)

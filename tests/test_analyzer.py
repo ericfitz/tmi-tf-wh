@@ -335,7 +335,6 @@ class TestDFDRefusal:
             llm_cls as llm,
             md as md_cls,
             val,
-            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
             patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
         ):
             llm.return_value.analyze_repository = MagicMock(return_value=analysis)
@@ -422,7 +421,6 @@ class TestRunAnalysisDeadline:
             llm_cls as llm,
             md,
             val,
-            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
             patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
         ):
             llm.return_value.analyze_repository = MagicMock(return_value=analysis)
@@ -478,7 +476,6 @@ class TestStepRows:
             llm_cls as llm,
             md as md_cls,
             val,
-            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
             patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
             patch("tmi_tf.analyzer.DFDBuilder") as builder_cls,
             patch("tmi_tf.analyzer.ThreatProcessor") as tp_cls,
@@ -674,7 +671,6 @@ class TestStepRows:
             llm_cls as llm,
             md,
             val,
-            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
         ):
             llm.return_value.analyze_repository = MagicMock(return_value=analysis)
             result = run_analysis(Config(), "tm1", tmi, PROFILE)
@@ -873,7 +869,6 @@ class TestRunGaps:
             llm_cls as llm,
             md as md_cls,
             val,
-            patch("tmi_tf.analyzer.aggregate_analysis_metadata"),
             patch("tmi_tf.analyzer.DFDLLMGenerator") as dfd_cls,
             patch("tmi_tf.analyzer.DFDBuilder") as builder_cls,
             patch("tmi_tf.analyzer.ThreatProcessor") as tp_cls,

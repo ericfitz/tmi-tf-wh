@@ -4,6 +4,7 @@ This module provides utilities for generating consistent metadata
 for all artifacts created by tmi-tf (notes, diagrams, threats).
 """
 
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -12,45 +13,55 @@ from tmi_tf.cell_schema import clean_metadata
 # Version identifier for tmi-tf
 TMI_TF_VERSION = "0.1.0"
 
+# Metadata key carrying the creating job's run id (#115)
+RUN_ID_KEY = "run_id"
+
 
 @dataclass
 class ArtifactMetadata:
-    """Metadata for an artifact created by tmi-tf."""
+    """Metadata for an artifact created by tmi-tf.
 
+    ``run_id`` identifies the analysis job that created the artifact; model,
+    token and cost details live in the report note text, not in metadata.
+    """
+
+    run_id: str
     creation_agent: str = "tmi-tf"
     creation_timestamp: str = ""
-    llm_provider: str = ""
-    llm_model: str = ""
-    llm_profile: str = ""
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cost_estimate_usd: float = 0.0
 
     def __post_init__(self):
-        """Set creation timestamp if not provided."""
+        """Validate the run id and set the creation timestamp if not provided."""
+        validate_run_id(self.run_id)
         if not self.creation_timestamp:
             self.creation_timestamp = get_rfc3339_timestamp()
 
     def to_metadata_list(self) -> list[dict]:
-        """
-        Convert to list of metadata key-value dicts for TMI API.
-
-        Returns:
-            List of dicts with 'key' and 'value' keys; an empty field (such as
-            an unset profile) is omitted, since TMI rejects empty values
-        """
+        """Convert to a list of metadata key-value dicts for the TMI API."""
         return clean_metadata(
             [
                 ("creation-agent", self.creation_agent),
                 ("creation-timestamp", self.creation_timestamp),
-                ("llm-provider", self.llm_provider),
-                ("llm-model", self.llm_model),
-                ("llm-profile", self.llm_profile),
-                ("input-tokens", str(self.input_tokens)),
-                ("output-tokens", str(self.output_tokens)),
-                ("cost-estimate-usd", f"{self.cost_estimate_usd:.3f}"),
+                (RUN_ID_KEY, self.run_id),
             ]
         )
+
+
+def new_run_id() -> str:
+    """A globally unique id for one analysis job (TMI supplies none per job)."""
+    return str(uuid.uuid4())
+
+
+def validate_run_id(run_id: object) -> str:
+    """Return ``run_id`` if it is a canonical UUID string, else raise ValueError."""
+    if not isinstance(run_id, str):
+        raise ValueError(f"run_id must be a UUID string, got {type(run_id).__name__}")  # noqa: TRY004
+    try:
+        canonical = str(uuid.UUID(run_id))
+    except ValueError:
+        raise ValueError(f"run_id is not a UUID: {run_id!r}") from None
+    if canonical != run_id:
+        raise ValueError(f"run_id is not a canonical UUID: {run_id!r}")
+    return run_id
 
 
 def get_rfc3339_timestamp() -> str:
@@ -65,75 +76,6 @@ def get_rfc3339_timestamp() -> str:
     return now.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-def create_artifact_metadata(
-    provider: str,
-    model: str,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    cost_estimate_usd: float = 0.0,
-    profile: str = "",
-) -> ArtifactMetadata:
-    """
-    Create artifact metadata with the given LLM information.
-
-    Args:
-        provider: LLM provider name (e.g., 'anthropic', 'openai')
-        model: LLM model name (e.g., 'claude-opus-4-6')
-        input_tokens: Number of input tokens used
-        output_tokens: Number of output tokens generated
-        cost_estimate_usd: Estimated cost in USD
-        profile: LLM profile name (e.g. 'claude-fable-5-2')
-
-    Returns:
-        ArtifactMetadata instance
-    """
-    return ArtifactMetadata(
-        creation_agent="tmi-tf",
-        creation_timestamp=get_rfc3339_timestamp(),
-        llm_provider=provider,
-        llm_model=model,
-        llm_profile=profile,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cost_estimate_usd=cost_estimate_usd,
-    )
-
-
-def aggregate_analysis_metadata(
-    analyses: list,
-    provider: str,
-    model: str,
-    profile: str = "",
-) -> ArtifactMetadata:
-    """
-    Create aggregated metadata from multiple analysis results.
-
-    Args:
-        analyses: List of TerraformAnalysis objects
-        provider: LLM provider name
-        model: LLM model name
-        profile: LLM profile name
-
-    Returns:
-        ArtifactMetadata with aggregated token counts and costs
-    """
-    total_input_tokens = sum(
-        getattr(a, "input_tokens", 0) for a in analyses if getattr(a, "success", False)
-    )
-    total_output_tokens = sum(
-        getattr(a, "output_tokens", 0) for a in analyses if getattr(a, "success", False)
-    )
-    total_cost = sum(
-        getattr(a, "total_cost", 0.0) for a in analyses if getattr(a, "success", False)
-    )
-
-    return ArtifactMetadata(
-        creation_agent="tmi-tf",
-        creation_timestamp=get_rfc3339_timestamp(),
-        llm_provider=provider,
-        llm_model=model,
-        llm_profile=profile,
-        input_tokens=total_input_tokens,
-        output_tokens=total_output_tokens,
-        cost_estimate_usd=total_cost,
-    )
+def create_artifact_metadata(run_id: str) -> ArtifactMetadata:
+    """Create artifact metadata stamped with the creating job's run id."""
+    return ArtifactMetadata(run_id=run_id)

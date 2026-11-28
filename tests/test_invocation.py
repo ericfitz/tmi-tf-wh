@@ -1,5 +1,6 @@
 """Tests for invocation state kept as metadata on the parent status note."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from itertools import product
 from unittest.mock import MagicMock
@@ -292,3 +293,107 @@ def test_invocation_summary_status_is_only_completed_or_failed():
         gaps = {j: "t" for j, o in children.items() if o == "gaps"}
         status, _ = inv.invocation_summary(st(children, gaps), ["p1:a", "p1:b"])
         assert status in ("completed", "failed")
+
+
+# --- run ids and invocation id on the status note (#115) ---------------------
+
+RUN_1 = "11111111-1111-4111-8111-111111111111"
+RUN_2 = "22222222-2222-4222-8222-222222222222"
+
+
+def _opened(tmi=None):
+    tmi = tmi or FakeTMI()
+    inv.open_invocation(tmi, "tm1", "inv1", ["inv1:a", "inv1:b"], NOW)
+    return tmi
+
+
+def _text(tmi):
+    return "\n".join(tmi.lines)
+
+
+def test_open_records_the_invocation_id_in_metadata_and_text():
+    tmi = _opened()
+    assert tmi.metadata["invocation_id"] == "inv1"
+    assert "inv1" in tmi.lines[-1]
+    assert "run_ids" not in tmi.metadata  # no jobs have started yet
+
+
+def test_job_start_records_run_id_in_metadata_and_text():
+    tmi = _opened()
+    assert inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1) == RUN_1
+    assert tmi.metadata["run_ids"] == RUN_1
+    assert _text(tmi).count(RUN_1) == 1
+
+
+def test_list_grows_as_jobs_start_and_each_job_appears_once():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    inv.record_run_id(tmi, "tm1", "inv1:b", RUN_2)
+    assert tmi.metadata["run_ids"].split(",") == [RUN_1, RUN_2]
+    assert _text(tmi).count(RUN_1) == 1
+    assert _text(tmi).count(RUN_2) == 1
+
+
+def test_duplicate_start_is_idempotent_and_keeps_the_first_run_id():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    lines_before = list(tmi.lines)
+    assert inv.record_run_id(tmi, "tm1", "inv1:a", RUN_2) == RUN_1
+    assert tmi.metadata["run_ids"] == RUN_1
+    assert tmi.lines == lines_before
+    assert RUN_2 not in _text(tmi)
+
+
+def test_run_id_for_a_job_outside_the_open_invocation_is_not_recorded():
+    tmi = _opened()
+    assert inv.record_run_id(tmi, "tm1", "other:a", RUN_1) == RUN_1
+    assert "run_ids" not in tmi.metadata
+    assert RUN_1 not in _text(tmi)
+
+
+def test_run_id_without_a_status_note_is_returned_unrecorded():
+    tmi = FakeTMI()
+    tmi.note = None
+    assert inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1) == RUN_1
+
+
+def test_open_clears_the_previous_invocations_run_ids():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    inv.open_invocation(tmi, "tm1", "inv2", ["inv2:a"], NOW)
+    assert "run_ids" not in tmi.metadata
+    assert not any(k.startswith("tf_run_") for k in tmi.metadata)
+    assert inv.record_run_id(tmi, "tm1", "inv2:a", RUN_2) == RUN_2
+    assert tmi.metadata["run_ids"] == RUN_2
+
+
+def test_run_id_keys_do_not_count_as_child_outcomes():
+    tmi = _opened()
+    inv.record_run_id(tmi, "tm1", "inv1:a", RUN_1)
+    assert inv.read_state(tmi, "tm1").children == {}
+
+
+def test_bound_run_ids_keeps_whole_ids_up_to_the_limit():
+    ids = [str(uuid.uuid4()) for _ in range(40)]
+    value, kept = inv.bound_run_ids(ids)
+    assert kept == 27  # 27 * 36 + 26 commas = 998; a 28th would need 1035
+    assert len(value) <= inv.RUN_IDS_MAX
+    assert value.split(",") == ids[:27]
+
+
+def test_bound_run_ids_untouched_when_it_fits():
+    ids = [RUN_1, RUN_2]
+    assert inv.bound_run_ids(ids) == (f"{RUN_1},{RUN_2}", 2)
+
+
+def test_over_limit_text_stays_complete_and_states_the_metadata_bound():
+    tmi = _opened()
+    ids = [str(uuid.uuid4()) for _ in range(30)]
+    for i, rid in enumerate(ids):
+        inv.record_run_id(tmi, "tm1", f"inv1:j{i:02d}", rid)
+    assert len(tmi.metadata["run_ids"]) <= inv.RUN_IDS_MAX
+    assert len(tmi.metadata["run_ids"].split(",")) == 27
+    for rid in ids:
+        assert _text(tmi).count(rid) == 1  # visible text lists every job
+    assert "first 27 of 30" in tmi.lines[-1]
+    assert "1024" in tmi.lines[-1]

@@ -3,6 +3,7 @@
 import asyncio
 import threading
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import ANY, MagicMock, patch
 
@@ -1161,3 +1162,76 @@ class TestJobDeadline:
         deadline = ra.call_args.kwargs["deadline"]
         assert isinstance(deadline, float)
         assert 0 < deadline - time.monotonic() <= pool.config.job_timeout
+
+
+class TestRunId:
+    """Each child job gets its own run id, recorded on the status note (#115)."""
+
+    def _run_child(self, job_id, rec_return=None):
+        pool, _ = _pool()
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
+            ) as ra,
+            patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+            patch(
+                "tmi_tf.worker.record_run_id",
+                side_effect=lambda tmi, tm, jid, rid: rec_return or rid,
+            ) as rec,
+        ):
+            asyncio.run(
+                pool._run_job(
+                    _job(job_id=job_id, environment=job_id.split(":")[1]),
+                    receipt="rc",
+                )
+            )
+        return ra, rec
+
+    def test_child_gets_a_fresh_uuid_recorded_before_it_runs(self):
+        ra, rec = self._run_child("p1:aws-public")
+        rid = ra.call_args.kwargs["run_id"]
+        assert str(uuid.UUID(rid)) == rid
+        assert rec.call_args.args[2:] == ("p1:aws-public", rid)
+
+    def test_sibling_children_get_different_ids(self):
+        ra1, _ = self._run_child("p1:aws-public")
+        ra2, _ = self._run_child("p1:gcp-public")
+        assert ra1.call_args.kwargs["run_id"] != ra2.call_args.kwargs["run_id"]
+
+    def test_a_duplicate_start_reuses_the_recorded_id(self):
+        existing = str(uuid.uuid4())
+        ra, _ = self._run_child("p1:aws-public", rec_return=existing)
+        assert ra.call_args.kwargs["run_id"] == existing
+
+    def test_recording_failure_does_not_stop_the_job(self):
+        pool, _ = _pool()
+        with (
+            patch(
+                "tmi_tf.worker.TMIClient.create_authenticated",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "tmi_tf.worker.run_analysis", return_value=AnalysisResult(success=True)
+            ) as ra,
+            patch("tmi_tf.worker.AddonCallback"),
+            patch(
+                "tmi_tf.worker.mark_child",
+                return_value=InvocationState("p1", True, None, {}),
+            ),
+            patch("tmi_tf.worker.record_run_id", side_effect=RuntimeError("boom")),
+        ):
+            asyncio.run(
+                pool._run_job(
+                    _job(job_id="p1:aws-public", environment="aws-public"),
+                    receipt="rc",
+                )
+            )
+        assert ra.call_args.kwargs["run_id"]

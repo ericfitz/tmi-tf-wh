@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
+from tmi_tf.cell_schema import METADATA_VALUE_MAX
 from tmi_tf.tmi_client_wrapper import STATUS_NOTE_NAME
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,12 @@ class TMILike(Protocol):
 KEY_INVOCATION = "tf_invocation"
 KEY_OPEN = "tf_open"
 KEY_DEADLINE = "tf_deadline"
+# #115: the invocation id and the run ids of its jobs, readable on the note.
+KEY_INVOCATION_ID = "invocation_id"
+KEY_RUN_IDS = "run_ids"
+RUN_PREFIX = "tf_run_"
+# TMI caps a metadata value at 1024 characters (cell_schema.METADATA_VALUE_MAX).
+RUN_IDS_MAX = METADATA_VALUE_MAX
 CHILD_PREFIX = "tf_child_"
 GAPS_PREFIX = "tf_gaps_"
 GAP_TEXT_MAX = 300
@@ -69,6 +76,10 @@ def lock_for(threat_model_id: str) -> asyncio.Lock:
 
 def child_key(job_id: str) -> str:
     return CHILD_PREFIX + _KEY_BAD_CHARS.sub("_", job_id)
+
+
+def run_key(job_id: str) -> str:
+    return RUN_PREFIX + _KEY_BAD_CHARS.sub("_", job_id)
 
 
 def compute_deadline(
@@ -103,17 +114,76 @@ def open_invocation(
     # (parent job ids are per-delivery, so every invocation would otherwise add
     # ~N new keys and eventually hit TMI's metadata cap).
     for key in tmi.get_note_metadata(threat_model_id, note_id):
-        if key.startswith((CHILD_PREFIX, GAPS_PREFIX)):
+        if key.startswith((CHILD_PREFIX, GAPS_PREFIX, RUN_PREFIX)) or (
+            key == KEY_RUN_IDS
+        ):
             tmi.delete_note_metadata(threat_model_id, note_id, key)
     tmi.upsert_note_metadata(
         threat_model_id,
         note_id,
         {
             KEY_INVOCATION: invocation_id,
+            KEY_INVOCATION_ID: invocation_id,
             KEY_OPEN: "true",
             KEY_DEADLINE: deadline.isoformat(),
         },
     )
+
+
+def bound_run_ids(run_ids: list[str]) -> tuple[str, int]:
+    """Comma-separated run ids for the metadata value, and how many fit.
+
+    Rule: whole ids in the given order, as many as fit in RUN_IDS_MAX
+    characters; an id is never cut in half.
+    """
+    value = ""
+    kept = 0
+    for rid in run_ids:
+        candidate = f"{value},{rid}" if kept else rid
+        if len(candidate) > RUN_IDS_MAX:
+            break
+        value, kept = candidate, kept + 1
+    return value, kept
+
+
+def record_run_id(tmi: TMILike, threat_model_id: str, job_id: str, run_id: str) -> str:
+    """Record a starting job's run id on the invocation status note.
+
+    Call under lock_for(threat_model_id). Returns the run id the job must use:
+    the one already recorded when the job's start is processed twice (nothing
+    is written then, so a job is listed exactly once), else ``run_id``. A job
+    that does not belong to the note's invocation is not recorded.
+    """
+    note_id = _note_id(tmi, threat_model_id)
+    if note_id is None:
+        logger.warning("No status note for %s; run id not recorded", threat_model_id)
+        return run_id
+    meta = tmi.get_note_metadata(threat_model_id, note_id)
+    invocation_id = meta.get(KEY_INVOCATION)
+    if not invocation_id or not job_id.startswith(f"{invocation_id}:"):
+        logger.warning(
+            "Job %s is not in the open invocation; run id not recorded", job_id
+        )
+        return run_id
+    existing = meta.get(run_key(job_id))
+    if existing:
+        return existing
+    recorded = {k: v for k, v in meta.items() if k.startswith(RUN_PREFIX) and v}
+    recorded[run_key(job_id)] = run_id
+    ordered = [recorded[k] for k in sorted(recorded)]
+    value, kept = bound_run_ids(ordered)
+    tmi.upsert_note_metadata(
+        threat_model_id, note_id, {run_key(job_id): run_id, KEY_RUN_IDS: value}
+    )
+    tmi.append_status_line(threat_model_id, f"Job {job_id} started: run id {run_id}")
+    if kept < len(ordered):
+        tmi.append_status_line(
+            threat_model_id,
+            f"Metadata {KEY_RUN_IDS} holds the first {kept} of {len(ordered)} run ids "
+            f"(ordered by job id, whole ids only, at most {RUN_IDS_MAX} characters); "
+            "the text of this note lists every run id",
+        )
+    return run_id
 
 
 def read_state(tmi: TMILike, threat_model_id: str) -> InvocationState:
